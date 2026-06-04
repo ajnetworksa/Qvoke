@@ -1,0 +1,50 @@
+{
+  "name": "new-erp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-pdf/renderer": "^3.4.4",
+    "@tanstack/react-table": "^8.16.0",
+    "adm-zip": "^0.5.17",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.4.1",
+    "date-fns": "^3.6.0",
+    "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
+    "lucide-react": "^0.378.0",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.1",
+    "openai": "^6.34.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0-beta.8",
+    "@types/bcrypt": "^6.0.0",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^22.14.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^4.0.0-beta.8",
+    "tsx": "^4.21.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0"
+  }
+}
