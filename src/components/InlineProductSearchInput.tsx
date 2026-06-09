@@ -24,6 +24,7 @@ export const InlineProductSearchInput: React.FC<InlineProductSearchInputProps> =
   const { products } = useERPStore();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -45,11 +46,15 @@ export const InlineProductSearchInput: React.FC<InlineProductSearchInputProps> =
   const handleSelectProduct = (p: Product) => {
     onProductSelect(p);
     setIsOpen(false);
+    setTimeout(() => {
+      textareaRef.current?.blur();
+    }, 0);
   };
 
   return (
     <div ref={containerRef} className="relative w-full">
       <textarea
+        ref={textareaRef}
         rows={1}
         value={value}
         onChange={(e) => {
@@ -72,7 +77,10 @@ export const InlineProductSearchInput: React.FC<InlineProductSearchInputProps> =
               <button
                 key={p.id}
                 type="button"
-                onClick={() => handleSelectProduct(p)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleSelectProduct(p);
+                }}
                 className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-offset)]/70 transition-colors flex flex-col gap-0.5 cursor-pointer"
               >
                 <div className="flex justify-between items-center text-xs">

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useERPStore, calculateTotals } from '../store';
 import { Customer, Product, LineItem, Quotation } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { useAutoSave } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
 import { InlineProductSearchInput } from '../components/InlineProductSearchInput';
@@ -50,6 +52,9 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
   const isNew = id === 'new';
   const canOverridePrice = currentUser?.role === 'admin' || !!currentUser?.permissions?.canOverridePrice;
+  const canUseWatermark = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUseWatermark;
+  const canUsePricingControls = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUsePricingControls;
+  const canUseMarkup = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUseMarkup;
   const existingQuote = quotations.find((q) => q.id === id);
 
   // Core Quote Form State
@@ -77,7 +82,14 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   const [activeTab, setActiveTab] = useState<'items' | 'terms'>('items');
 
   // Populate data on load
+  const skipSyncRef = useRef(false);
+  const [newId] = useState(() => `qt-${Date.now()}`);
+
   useEffect(() => {
+    if (skipSyncRef.current) {
+      skipSyncRef.current = false;
+      return;
+    }
     if (existingQuote) {
       setNumber(existingQuote.number);
       setCustomerId(existingQuote.customerId);
@@ -130,6 +142,22 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       setIsDirty(false);
     }
   }, [id, existingQuote]);
+
+  useEffect(() => {
+    if (isNew) {
+      const token = useERPStore.getState().token;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      fetch('/api/settings/defaultMarkupPercentage', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.value) {
+            setMarkup(parseFloat(data.value) || 0);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [id, isNew]);
 
   // Pricing Markup State (M.U. %)
   const [markup, setMarkup] = useState<number>(8);
@@ -320,6 +348,57 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     };
   }, [storeTotals, baseTotal, markupProfit]);
 
+  const getPayload = (): Quotation => {
+    const finalTotal = manualTotal !== '' ? Number(manualTotal) : totals.total;
+    const finalSubtotal = manualTotal !== '' ? Math.round((finalTotal / 1.15) * 100) / 100 : totals.subtotal;
+    const finalTaxTotal = manualTotal !== '' ? Math.round((finalTotal - finalSubtotal) * 100) / 100 : totals.taxTotal;
+
+    return {
+      id: isNew ? newId : id,
+      number,
+      customerId,
+      date,
+      validUntil,
+      status,
+      lineItems,
+      notes,
+      terms,
+      subject,
+      subjectAr,
+      currency,
+      subtotal: finalSubtotal,
+      discountTotal: manualTotal !== '' ? 0 : totals.discountTotal,
+      taxTotal: finalTaxTotal,
+      total: finalTotal,
+      createdAt: existingQuote ? existingQuote.createdAt : new Date(),
+      updatedAt: new Date(),
+      watermarkText,
+      watermarkType,
+      hidePrices,
+      manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
+    };
+  };
+
+  const { status: autoSaveStatus, performSave } = useAutoSave<Quotation>({
+    isDirty,
+    getPayload,
+    saveFn: async (payload) => {
+      if (isNew) {
+        return await addQuotation(payload);
+      } else {
+        return await updateQuotation(payload);
+      }
+    },
+    onSaveSuccess: (payload) => {
+      setIsDirty(false);
+      if (isNew) {
+        skipSyncRef.current = true;
+        setRoute('quotation-detail', payload.id);
+      }
+    },
+    isReady: !!customerId
+  });
+
   // Line Item actions
   const handleAddLine = () => {
     const newItem: LineItem = {
@@ -476,49 +555,18 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   };
 
   // Form persistence
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!customerId) {
       alert('Please select a customer / الرجاء اختيار عميل');
       return;
     }
 
-    const finalTotal = manualTotal !== '' ? Number(manualTotal) : totals.total;
-    const finalSubtotal = manualTotal !== '' ? Math.round((finalTotal / 1.15) * 100) / 100 : totals.subtotal;
-    const finalTaxTotal = manualTotal !== '' ? Math.round((finalTotal - finalSubtotal) * 100) / 100 : totals.taxTotal;
-
-    const payload: Quotation = {
-      id: isNew ? `qt-${Date.now()}` : id,
-      number,
-      customerId,
-      date,
-      validUntil,
-      status,
-      lineItems,
-      notes,
-      terms,
-      subject,
-      subjectAr,
-      currency,
-      subtotal: finalSubtotal,
-      discountTotal: manualTotal !== '' ? 0 : totals.discountTotal,
-      taxTotal: finalTaxTotal,
-      total: finalTotal,
-      createdAt: existingQuote ? existingQuote.createdAt : new Date(),
-      updatedAt: new Date(),
-      watermarkText,
-      watermarkType,
-      hidePrices,
-      manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
-    };
-
-    if (isNew) {
-      addQuotation(payload);
+    const success = await performSave();
+    if (success) {
+      setRoute('quotations');
     } else {
-      updateQuotation(payload);
+      alert('Failed to save quotation / فشل حفظ عرض السعر');
     }
-
-    setIsDirty(false);
-    setRoute('quotations');
   };
 
   const handleConfirm = () => {
@@ -723,12 +771,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
         ]}
         actions={
           <div className="flex gap-2 items-center">
-            {isDirty && (
-              <span className="text-xs text-[var(--color-warning)] font-semibold flex items-center gap-1 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 px-2.5 py-1 rounded">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                Unsaved Changes / تعديلات غير محفوظة
-              </span>
-            )}
+            <AutoSaveIndicator status={autoSaveStatus} onRetry={performSave} />
 
             <button
               onClick={handleAutoTranslateAll}
@@ -841,48 +884,52 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
             </div>
 
             {/* PDF Watermark Configuration */}
-            <div className="border-t border-[var(--color-divider)]/40 my-4" />
+            {canUseWatermark && (
+              <>
+                <div className="border-t border-[var(--color-divider)]/40 my-4" />
 
-            <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
-              PDF Watermark Configuration / إعدادات العلامة المائية
-            </span>
+                <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
+                  PDF Watermark Configuration / إعدادات العلامة المائية
+                </span>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                  Watermark Placement / نمط العلامة المائية
-                </label>
-                <select
-                  value={watermarkType}
-                  onChange={(e) => {
-                    setWatermarkType(e.target.value as any);
-                    setIsDirty(true);
-                  }}
-                  className="w-full premium-input font-bold"
-                >
-                  <option value="none">Disabled / معطل</option>
-                  <option value="center">Center / في المنتصف</option>
-                  <option value="multi">Repeated Grid / شبكة متكررة</option>
-                </select>
-              </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+                      Watermark Placement / نمط العلامة المائية
+                    </label>
+                    <select
+                      value={watermarkType}
+                      onChange={(e) => {
+                        setWatermarkType(e.target.value as any);
+                        setIsDirty(true);
+                      }}
+                      className="w-full premium-input font-bold"
+                    >
+                      <option value="none">Disabled / معطل</option>
+                      <option value="center">Center / في المنتصف</option>
+                      <option value="multi">Repeated Grid / شبكة متكررة</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                  Watermark Text / نص العلامة المائية
-                </label>
-                <input
-                  type="text"
-                  value={watermarkText}
-                  onChange={(e) => {
-                    setWatermarkText(e.target.value);
-                    setIsDirty(true);
-                  }}
-                  disabled={watermarkType === 'none'}
-                  className="w-full premium-input font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="e.g. PAID, DRAFT, CONFIDENTIAL"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+                      Watermark Text / نص العلامة المائية
+                    </label>
+                    <input
+                      type="text"
+                      value={watermarkText}
+                      onChange={(e) => {
+                        setWatermarkText(e.target.value);
+                        setIsDirty(true);
+                      }}
+                      disabled={watermarkType === 'none'}
+                      className="w-full premium-input font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                      placeholder="e.g. PAID, DRAFT, CONFIDENTIAL"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="premium-card p-6">
@@ -1027,7 +1074,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
           {activeTab === 'items' ? (
             <div className="w-full">
               {/* M.U. % sits above the MU column so line-item headers align */}
-              {canOverridePrice && (
+              {canUseMarkup && (
                 <div className="hidden lg:flex w-full mb-0">
                   <div className="flex-1" />
                   <div className="w-[320px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
@@ -1284,7 +1331,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 </div>
 
                 {/* Analysis Sidebar — row heights synced with line items table */}
-                {canOverridePrice && (
+                {canUseMarkup && (
                   <div className="w-full lg:w-[320px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
                     {/* M.U. % on mobile/tablet (desktop uses bar above) */}
                     <div className="lg:hidden h-9 shrink-0 flex justify-between items-center px-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -1474,55 +1521,57 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
             </span>
 
             {/* Custom Settings (Hide Prices & Manual Total) */}
-            <div className="border-b border-[var(--color-border)]/50 pb-3 mb-3 flex flex-col gap-3">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={hidePrices}
-                  onChange={(e) => {
-                    setHidePrices(e.target.checked);
-                    setIsDirty(true);
-                  }}
-                  className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)] w-4 h-4 cursor-pointer"
-                />
-                <span className="text-xs font-bold text-[var(--color-text)]">
-                  Hide Table Prices on PDF / إخفاء أسعار البنود
-                </span>
-              </label>
-
-              <div>
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">
-                  Manual Grand Total Override / إجمالي يدوي مخصص
-                </label>
-                <div className="relative">
+            {canUsePricingControls && (
+              <div className="border-b border-[var(--color-border)]/50 pb-3 mb-3 flex flex-col gap-3">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="number"
-                    step="0.01"
-                    placeholder="Auto-calculated / تلقائي"
-                    value={manualTotal}
-                    disabled={!canOverridePrice}
+                    type="checkbox"
+                    checked={hidePrices}
                     onChange={(e) => {
-                      const val = e.target.value === '' ? '' : parseFloat(e.target.value);
-                      setManualTotal(val);
+                      setHidePrices(e.target.checked);
                       setIsDirty(true);
                     }}
-                    className="w-full premium-input py-1.5 px-3 text-xs font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)] w-4 h-4 cursor-pointer"
                   />
-                  {manualTotal !== '' && canOverridePrice && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setManualTotal('');
+                  <span className="text-xs font-bold text-[var(--color-text)]">
+                    Hide Table Prices on PDF / إخفاء أسعار البنود
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">
+                    Manual Grand Total Override / إجمالي يدوي مخصص
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Auto-calculated / تلقائي"
+                      value={manualTotal}
+                      disabled={!canOverridePrice}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                        setManualTotal(val);
                         setIsDirty(true);
                       }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-red-500 hover:text-red-600 font-bold"
-                    >
-                      Clear
-                    </button>
-                  )}
+                      className="w-full premium-input py-1.5 px-3 text-xs font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
+                    />
+                    {manualTotal !== '' && canOverridePrice && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualTotal('');
+                          setIsDirty(true);
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-red-500 hover:text-red-600 font-bold"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <div className="flex flex-col gap-3 text-sm">
               <div className="flex justify-between text-[var(--color-text-muted)]">
@@ -1560,9 +1609,9 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 </span>
               </div>
 
-              <div className="flex justify-between items-baseline pt-2">
-                <span className="text-sm font-bold text-[var(--color-text)]">Grand Total / الإجمالي العام:</span>
-                <span className="text-xl font-black text-[var(--color-primary)] font-mono">
+              <div className="flex justify-between items-center rounded-xl p-4 bg-[#97F2B7] text-black shadow-inner mt-4">
+                <span className="text-sm font-black uppercase tracking-wider">Grand Total / الإجمالي العام:</span>
+                <span className="text-2xl font-black font-mono">
                   {(manualTotal !== '' ? Number(manualTotal) : totals.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
                 </span>
               </div>

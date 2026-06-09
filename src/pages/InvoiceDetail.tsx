@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useERPStore, calculateTotals } from '../store';
 import { Customer, Product, LineItem, Invoice, Payment } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { useAutoSave } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
 import { InlineProductSearchInput } from '../components/InlineProductSearchInput';
@@ -51,6 +53,8 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
   const isNew = id === 'new';
   const canOverridePrice = currentUser?.role === 'admin' || !!currentUser?.permissions?.canOverridePrice;
+  const canUseWatermark = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUseWatermark;
+  const canUsePricingControls = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUsePricingControls;
   const existingInv = invoices.find((i) => i.id === id);
 
   // Form State
@@ -86,7 +90,14 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const [payRef, setPayRef] = useState('');
   const [payNote, setPayNote] = useState('');
 
+  const skipSyncRef = useRef(false);
+  const [newId] = useState(() => `inv-${Date.now()}`);
+
   useEffect(() => {
+    if (skipSyncRef.current) {
+      skipSyncRef.current = false;
+      return;
+    }
     if (existingInv) {
       setNumber(existingInv.number);
       setCustomerId(existingInv.customerId);
@@ -152,6 +163,60 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   }, [paymentTerms, date]);
 
   const totals = calculateTotals(lineItems);
+
+  const getPayload = (): Invoice => {
+    const finalTotal = manualTotal !== '' ? Number(manualTotal) : totals.total;
+    const finalSubtotal = manualTotal !== '' ? Math.round((finalTotal / 1.15) * 100) / 100 : totals.subtotal;
+    const finalTaxTotal = manualTotal !== '' ? Math.round((finalTotal - finalSubtotal) * 100) / 100 : totals.taxTotal;
+
+    return {
+      id: isNew ? newId : id,
+      number,
+      customerId,
+      date,
+      dueDate,
+      status,
+      paymentTerms,
+      lineItems,
+      notes,
+      terms,
+      subject,
+      subjectAr,
+      currency,
+      subtotal: finalSubtotal,
+      discountTotal: manualTotal !== '' ? 0 : totals.discountTotal,
+      taxTotal: finalTaxTotal,
+      total: finalTotal,
+      payments: existingInv ? existingInv.payments : [],
+      linkedQuoteId,
+      createdAt: existingInv ? existingInv.createdAt : new Date(),
+      updatedAt: new Date(),
+      watermarkText,
+      watermarkType,
+      hidePrices,
+      manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
+    };
+  };
+
+  const { status: autoSaveStatus, performSave } = useAutoSave<Invoice>({
+    isDirty,
+    getPayload,
+    saveFn: async (payload) => {
+      if (isNew) {
+        return await addInvoice(payload);
+      } else {
+        return await updateInvoice(payload);
+      }
+    },
+    onSaveSuccess: (payload) => {
+      setIsDirty(false);
+      if (isNew) {
+        skipSyncRef.current = true;
+        setRoute('invoice-detail', payload.id);
+      }
+    },
+    isReady: !!customerId
+  });
 
   // Line item manipulation
   const handleAddLine = () => {
@@ -256,50 +321,18 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     setIsDirty(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!customerId) {
       alert('Please select a customer / الرجاء اختيار العميل');
       return;
     }
 
-    const payload: Invoice = {
-      id: isNew ? `inv-${Date.now()}` : id,
-      number,
-      customerId,
-      date,
-      dueDate,
-      status,
-      paymentTerms,
-      lineItems,
-      notes,
-      terms,
-      subject,
-      subjectAr,
-      currency,
-      linkedQuoteId,
-      subtotal: manualTotal !== '' ? Number(manualTotal) / 1.15 : totals.subtotal,
-      discountTotal: manualTotal !== '' ? 0 : totals.discountTotal,
-      taxTotal: manualTotal !== '' ? Number(manualTotal) - (Number(manualTotal) / 1.15) : totals.taxTotal,
-      total: manualTotal !== '' ? Number(manualTotal) : totals.total,
-      payments: existingInv ? existingInv.payments : [],
-      amountPaid: existingInv ? existingInv.amountPaid : 0,
-      amountDue: existingInv ? existingInv.amountDue : (manualTotal !== '' ? Number(manualTotal) : totals.total),
-      createdAt: existingInv ? existingInv.createdAt : new Date(),
-      updatedAt: new Date(),
-      watermarkText,
-      watermarkType,
-      hidePrices,
-      manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
-    };
-
-    if (isNew) {
-      addInvoice(payload);
+    const success = await performSave();
+    if (success) {
+      setRoute('invoices');
     } else {
-      updateInvoice(payload);
+      alert('Failed to save invoice / فشل حفظ الفاتورة');
     }
-
-    setIsDirty(false);
-    setRoute('invoices');
   };
 
   const handlePost = () => {
@@ -464,12 +497,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
         ]}
         actions={
           <div className="flex gap-2 items-center">
-            {isDirty && (
-              <span className="text-xs text-[var(--color-warning)] font-semibold flex items-center gap-1 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 px-2.5 py-1 rounded">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                Unsaved Changes
-              </span>
-            )}
+            <AutoSaveIndicator status={autoSaveStatus} onRetry={performSave} />
             
             <button
               onClick={handleAutoTranslateAll}
@@ -591,116 +619,124 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
             </div>
 
             {/* PDF Watermark Configuration */}
-            <div className="border-t border-[var(--color-divider)]/40 my-4" />
+            {canUseWatermark && (
+              <>
+                <div className="border-t border-[var(--color-divider)]/40 my-4" />
 
-            <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
-              PDF Watermark Configuration / إعدادات العلامة المائية
-            </span>
+                <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
+                  PDF Watermark Configuration / إعدادات العلامة المائية
+                </span>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                  Watermark Placement / نمط العلامة المائية
-                </label>
-                <select
-                  value={watermarkType}
-                  onChange={(e) => {
-                    setWatermarkType(e.target.value as any);
-                    setIsDirty(true);
-                  }}
-                  className="w-full premium-input font-bold"
-                >
-                  <option value="none">Disabled / معطل</option>
-                  <option value="center">Center / في المنتصف</option>
-                  <option value="multi">Repeated Grid / شبكة متكررة</option>
-                </select>
-              </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+                      Watermark Placement / نمط العلامة المائية
+                    </label>
+                    <select
+                      value={watermarkType}
+                      onChange={(e) => {
+                        setWatermarkType(e.target.value as any);
+                        setIsDirty(true);
+                      }}
+                      className="w-full premium-input font-bold"
+                    >
+                      <option value="none">Disabled / معطل</option>
+                      <option value="center">Center / في المنتصف</option>
+                      <option value="multi">Repeated Grid / شبكة متكررة</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                  Watermark Text / نص العلامة المائية
-                </label>
-                <input
-                  type="text"
-                  value={watermarkText}
-                  onChange={(e) => {
-                    setWatermarkText(e.target.value);
-                    setIsDirty(true);
-                  }}
-                  disabled={watermarkType === 'none'}
-                  className="w-full premium-input font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="e.g. PAID, DRAFT, CONFIDENTIAL"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+                      Watermark Text / نص العلامة المائية
+                    </label>
+                    <input
+                      type="text"
+                      value={watermarkText}
+                      onChange={(e) => {
+                        setWatermarkText(e.target.value);
+                        setIsDirty(true);
+                      }}
+                      disabled={watermarkType === 'none'}
+                      className="w-full premium-input font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
+                      placeholder="e.g. PAID, DRAFT, CONFIDENTIAL"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Pricing Override Controls */}
-            <div className="border-t border-[var(--color-divider)]/40 my-4" />
+            {canUsePricingControls && (
+              <>
+                <div className="border-t border-[var(--color-divider)]/40 my-4" />
 
-            <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
-              Summary Calculations / ملخص الحساب
-            </span>
+                <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider mb-3 block">
+                  Summary Calculations / ملخص الحساب
+                </span>
 
-            <div className="flex flex-col gap-4">
-              {/* Hide Prices Toggle */}
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={hidePrices}
-                    onChange={(e) => {
-                      setHidePrices(e.target.checked);
-                      setIsDirty(true);
-                    }}
-                    className="sr-only"
-                    id="inv-hide-prices-toggle"
-                  />
-                  <div
-                    className={`w-9 h-5 rounded-full transition-colors ${hidePrices ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]'}`}
-                  />
-                  <div
-                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${hidePrices ? 'translate-x-4' : 'translate-x-0'}`}
-                  />
+                <div className="flex flex-col gap-4">
+                  {/* Hide Prices Toggle */}
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={hidePrices}
+                        onChange={(e) => {
+                          setHidePrices(e.target.checked);
+                          setIsDirty(true);
+                        }}
+                        className="sr-only"
+                        id="inv-hide-prices-toggle"
+                      />
+                      <div
+                        className={`w-9 h-5 rounded-full transition-colors ${hidePrices ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]'}`}
+                      />
+                      <div
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${hidePrices ? 'translate-x-4' : 'translate-x-0'}`}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-[var(--color-text)] block">
+                        Hide Table Prices on PDF / إخفاء أسعار البنود
+                      </span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        Hides Unit Price and Net Price columns from the PDF document
+                      </span>
+                    </div>
+                  </label>
+
+                  {/* Manual Total Override */}
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+                      Manual Grand Total Override / إجمالي يدوي مخصص
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={manualTotal}
+                      disabled={!canOverridePrice}
+                      onChange={(e) => {
+                        setManualTotal(e.target.value);
+                        setIsDirty(true);
+                      }}
+                      className="w-full premium-input font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
+                      placeholder={`Auto-calculated / تلقائي (${totals.total.toFixed(2)} ${currency})`}
+                    />
+                    {manualTotal !== '' && canOverridePrice && (
+                      <button
+                        type="button"
+                        onClick={() => { setManualTotal(''); setIsDirty(true); }}
+                        className="mt-1 text-[10px] text-[var(--color-error)] hover:underline cursor-pointer font-semibold"
+                      >
+                        ✕ Clear override / مسح التعديل
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <span className="text-xs font-bold text-[var(--color-text)] block">
-                    Hide Table Prices on PDF / إخفاء أسعار البنود
-                  </span>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
-                    Hides Unit Price and Net Price columns from the PDF document
-                  </span>
-                </div>
-              </label>
-
-              {/* Manual Total Override */}
-              <div>
-                <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                  Manual Grand Total Override / إجمالي يدوي مخصص
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={manualTotal}
-                  disabled={!canOverridePrice}
-                  onChange={(e) => {
-                    setManualTotal(e.target.value);
-                    setIsDirty(true);
-                  }}
-                  className="w-full premium-input font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
-                  placeholder={`Auto-calculated / تلقائي (${totals.total.toFixed(2)} ${currency})`}
-                />
-                {manualTotal !== '' && canOverridePrice && (
-                  <button
-                    type="button"
-                    onClick={() => { setManualTotal(''); setIsDirty(true); }}
-                    className="mt-1 text-[10px] text-[var(--color-error)] hover:underline cursor-pointer font-semibold"
-                  >
-                    ✕ Clear override / مسح التعديل
-                  </button>
-                )}
-              </div>
-            </div>
+              </>
+            )}
           </div>
 
           <div className="premium-card p-6">
@@ -1167,9 +1203,9 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                 </span>
               </div>
 
-              <div className="flex justify-between items-baseline py-1">
-                <span className="text-xs font-bold text-[var(--color-text)]">Invoice Total / الإجمالي:</span>
-                <span className="text-xl font-black text-[var(--color-primary)] font-mono">
+              <div className="flex justify-between items-center rounded-xl p-4 bg-[#97F2B7] text-black shadow-inner mt-4">
+                <span className="text-sm font-black uppercase tracking-wider">Invoice Total / الإجمالي العام:</span>
+                <span className="text-2xl font-black font-mono">
                   {(manualTotal !== '' ? Number(manualTotal) : totals.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
                 </span>
               </div>

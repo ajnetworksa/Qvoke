@@ -732,7 +732,7 @@ export function QuotePdfDocument({
 
           {/* ── TERMS ───────────────────────────────────────────────── */}
           {termsRows.length > 0 ? (
-            <View style={styles.termsSection}>
+            <View wrap={false} style={styles.termsSection}>
               {termsRows.map((row) => (
                 <View key={row.label} style={styles.termRow}>
                   <View style={styles.termLeft}>

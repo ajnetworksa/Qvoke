@@ -48,15 +48,15 @@ interface ERPState {
   deleteSupplier: (id: string) => Promise<void>;
   
   // Quotations CRUD & Business Logic
-  addQuotation: (quotation: Quotation) => Promise<void>;
-  updateQuotation: (quotation: Quotation) => Promise<void>;
+  addQuotation: (quotation: Quotation) => Promise<boolean>;
+  updateQuotation: (quotation: Quotation) => Promise<boolean>;
   deleteQuotation: (id: string) => Promise<void>;
   confirmQuotation: (id: string) => Promise<void>;
   convertToInvoice: (id: string) => Promise<string | null>; // returns invoice id if successful
   
   // Invoices CRUD & Business Logic
-  addInvoice: (invoice: Invoice) => Promise<void>;
-  updateInvoice: (invoice: Invoice) => Promise<void>;
+  addInvoice: (invoice: Invoice) => Promise<boolean>;
+  updateInvoice: (invoice: Invoice) => Promise<boolean>;
   deleteInvoice: (id: string) => Promise<void>;
   postInvoice: (id: string) => Promise<void>;
   recordPayment: (invoiceId: string, payment: Payment) => Promise<void>;
@@ -472,9 +472,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ quotations: [quotation, ...quotations] });
+        return true;
       }
+      return false;
     } catch (err) {
       console.error(err);
+      return false;
     }
   },
 
@@ -487,9 +490,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ quotations: quotations.map((q) => (q.id === quotation.id ? quotation : q)) });
+        return true;
       }
+      return false;
     } catch (err) {
       console.error(err);
+      return false;
     }
   },
 
@@ -597,9 +603,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ invoices: [invoice, ...invoices] });
+        return true;
       }
+      return false;
     } catch (err) {
       console.error(err);
+      return false;
     }
   },
 
@@ -612,9 +621,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ invoices: invoices.map((i) => (i.id === invoice.id ? invoice : i)) });
+        return true;
       }
+      return false;
     } catch (err) {
       console.error(err);
+      return false;
     }
   },
 

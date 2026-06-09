@@ -30,6 +30,9 @@ interface Permissions {
   canShareQuote?: boolean;
   canEditSharedQuote?: boolean;
   canUseKanban?: boolean;
+  canUseWatermark?: boolean;
+  canUsePricingControls?: boolean;
+  canUseMarkup?: boolean;
 }
 
 interface AppUser {
@@ -74,6 +77,9 @@ const ALL_PERMISSIONS: { key: keyof Permissions; label: string; icon: React.Reac
   { key: 'canChangeAuthor', label: 'Change Prepared By', icon: <UserCheck size={14} />, description: 'Allow modifying the "Prepared By" name on quotes.' },
   { key: 'canShareQuote', label: 'Share Quotes', icon: <Users size={14} />, description: 'Allow sharing specific quotes with selected users or groups.' },
   { key: 'canEditSharedQuote', label: 'Edit Shared Quotes', icon: <Eye size={14} />, description: 'Allow editing and saving quotes that were shared with this user (not just viewing).' },
+  { key: 'canUseWatermark', label: 'Document Watermark', icon: <FileText size={14} />, description: 'Access watermark controls to add status text overlay on document PDFs.' },
+  { key: 'canUsePricingControls', label: 'Pricing Controls', icon: <Bot size={14} />, description: 'Access pricing controls like hiding price columns and manual total overrides.' },
+  { key: 'canUseMarkup', label: 'Pricing Markup', icon: <Bookmark size={14} />, description: 'Access and update the quotation default markup percentage and markup sidebar calculations.' },
 ];
 
 const getAuthHeaders = () => {

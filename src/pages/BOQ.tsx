@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useERPStore } from '../store';
+import { useAutoSave } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { PageHeader } from '../components/PageHeader';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { InlineProductSearchInput } from '../components/InlineProductSearchInput';
@@ -64,8 +66,6 @@ export const BOQ: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveOk, setSaveOk] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'all' | 'boq' | 'bom'>('all');
 
@@ -96,6 +96,65 @@ export const BOQ: React.FC = () => {
   const calcTotal = (sections: BOQSection[]) =>
     sections.reduce((sum, s) => sum + calcSection(s), 0);
 
+  const [isDirty, setIsDirty] = useState(false);
+  const isFirstChangeRef = useRef(true);
+
+  useEffect(() => {
+    if (!editDoc) {
+      setIsDirty(false);
+      return;
+    }
+    if (isFirstChangeRef.current) {
+      isFirstChangeRef.current = false;
+      return;
+    }
+    setIsDirty(true);
+  }, [editDoc]);
+
+  const getPayload = (): Partial<BOQDoc> => {
+    const subtotal = calcTotal(editDoc?.sections || []);
+    return {
+      ...editDoc,
+      subtotal,
+      total: subtotal,
+      createdBy: currentUser?.id
+    };
+  };
+
+  const { status: autoSaveStatus, performSave } = useAutoSave<Partial<BOQDoc>>({
+    isDirty,
+    getPayload,
+    saveFn: async (payload) => {
+      try {
+        const subtotal = payload.subtotal || 0;
+        const finalPayload = { ...payload, subtotal, total: subtotal };
+        let res: Response;
+        if (detailId === 'new') {
+          res = await fetch('/api/boq', { method: 'POST', headers: authH(), body: JSON.stringify(finalPayload) });
+        } else {
+          res = await fetch(`/api/boq/${detailId}`, { method: 'PUT', headers: authH(), body: JSON.stringify(finalPayload) });
+        }
+        if (res.ok) {
+          fetchDocs();
+          if (detailId === 'new') {
+            const data = await res.json();
+            setDetailId(data.id || detailId);
+          }
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error(err);
+        return false;
+      }
+    },
+    onSaveSuccess: () => {
+      setIsDirty(false);
+      isFirstChangeRef.current = true;
+    },
+    isReady: !!(editDoc && editDoc.title?.trim())
+  });
+
   const openNew = (defaultType: 'boq' | 'bom' = 'boq') => {
     const prefix = defaultType === 'bom' ? 'BOM' : 'BOQ';
     const num = `${prefix}-${new Date().getFullYear()}-${String(docs.length + 1).padStart(4, '0')}`;
@@ -109,11 +168,15 @@ export const BOQ: React.FC = () => {
       type: defaultType
     });
     setDetailId('new');
+    isFirstChangeRef.current = true;
+    setIsDirty(false);
   };
 
   const openEdit = (d: BOQDoc) => {
     setEditDoc({ ...d });
     setDetailId(d.id);
+    isFirstChangeRef.current = true;
+    setIsDirty(false);
   };
 
   const updateItem = (secIdx: number, itemIdx: number, field: keyof BOQItem, val: any) => {
@@ -157,29 +220,12 @@ export const BOQ: React.FC = () => {
 
   const handleSave = async () => {
     if (!editDoc || !editDoc.title?.trim()) return alert('Title is required');
-    setSaving(true);
-    const subtotal = calcTotal(editDoc.sections || []);
-    const payload = { ...editDoc, subtotal, total: subtotal, createdBy: currentUser?.id };
-    try {
-      let res: Response;
-      if (detailId === 'new') {
-        res = await fetch('/api/boq', { method: 'POST', headers: authH(), body: JSON.stringify(payload) });
-      } else {
-        res = await fetch(`/api/boq/${detailId}`, { method: 'PUT', headers: authH(), body: JSON.stringify(payload) });
-      }
-      if (res.ok) {
-        setSaveOk(true);
-        setTimeout(() => setSaveOk(false), 2500);
-        fetchDocs();
-        if (detailId === 'new') {
-          const data = await res.json();
-          setDetailId(data.id || detailId);
-        }
-      } else {
-        const d = await res.json();
-        alert(d.error || 'Save failed');
-      }
-    } finally { setSaving(false); }
+    const success = await performSave();
+    if (success) {
+      setDetailId(null);
+    } else {
+      alert('Save failed');
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -209,7 +255,8 @@ export const BOQ: React.FC = () => {
           title={detailId === 'new' ? `New ${docTypeLabel} Document` : `Edit ${docTypeLabel} — ${editDoc.number}`}
           breadcrumbs={[{ label: docTypeLabel }, { label: editDoc.number || 'New' }]}
           actions={
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <AutoSaveIndicator status={autoSaveStatus} onRetry={performSave} />
               <button onClick={() => setDetailId(null)} className="border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text)] text-xs font-semibold py-2 px-3 rounded-md flex items-center gap-1.5 cursor-pointer">
                 <X className="w-3.5 h-3.5" /> Back
               </button>
@@ -218,9 +265,8 @@ export const BOQ: React.FC = () => {
                   <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               )}
-              <button onClick={handleSave} disabled={saving} className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 cursor-pointer disabled:opacity-60">
-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saveOk ? <CheckCircle className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-                {saving ? 'Saving...' : saveOk ? 'Saved!' : `Save ${docTypeLabel}`}
+              <button onClick={handleSave} className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 cursor-pointer">
+                <Save className="w-3.5 h-3.5" /> Save {docTypeLabel}
               </button>
             </div>
           }

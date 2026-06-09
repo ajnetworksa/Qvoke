@@ -46,6 +46,9 @@ export const Settings: React.FC = () => {
   const [currentFooterImage, setCurrentFooterImage] = useState<string | null>(null);
   const [footerImageStatus, setFooterImageStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
+  const [defaultMarkupPercentage, setDefaultMarkupPercentage] = useState<number>(8);
+  const [defaultMarkupStatus, setDefaultMarkupStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
   const [usersList, setUsersList] = useState(mockUsers);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<UserRole>('salesperson');
@@ -178,6 +181,11 @@ export const Settings: React.FC = () => {
       .then(res => res.json())
       .then(data => { if (data.value) setCurrentFooterImage(data.value); })
       .catch(console.error);
+
+    fetch('/api/settings/defaultMarkupPercentage', { headers })
+      .then(res => res.json())
+      .then(data => { if (data.value) setDefaultMarkupPercentage(parseFloat(data.value)); })
+      .catch(console.error);
   }, []);
 
   // Accent presets
@@ -200,6 +208,31 @@ export const Settings: React.FC = () => {
       currency
     });
     alert('Company configurations updated successfully!');
+  };
+
+  const handleSaveDefaultMarkup = async () => {
+    setDefaultMarkupStatus('loading');
+    try {
+      const token = useERPStore.getState().token;
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ key: 'defaultMarkupPercentage', value: String(defaultMarkupPercentage) })
+      });
+      if (res.ok) {
+        setDefaultMarkupStatus('success');
+        setTimeout(() => setDefaultMarkupStatus('idle'), 3000);
+      } else {
+        setDefaultMarkupStatus('error');
+        setTimeout(() => setDefaultMarkupStatus('idle'), 5000);
+      }
+    } catch {
+      setDefaultMarkupStatus('error');
+      setTimeout(() => setDefaultMarkupStatus('idle'), 5000);
+    }
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -698,6 +731,48 @@ export const Settings: React.FC = () => {
                       className="w-full premium-input text-xs font-mono leading-relaxed"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Pricing Settings (Default Markup) */}
+              <div className="border-t border-[var(--color-divider)]/30 pt-6">
+                <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-text)] mb-1">
+                  Pricing Settings / إعدادات التسعير
+                </h4>
+                <p className="text-[11px] text-[var(--color-text-muted)] mb-4">
+                  Configure the global default pricing markup percentage applied to quotations.
+                </p>
+                <div className="flex items-center gap-3 max-w-sm">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      value={defaultMarkupPercentage}
+                      onChange={(e) => setDefaultMarkupPercentage(parseFloat(e.target.value) || 0)}
+                      className="w-full premium-input text-xs font-mono font-bold pr-10"
+                      min="0"
+                      max="100"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-[var(--color-text-muted)]">%</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveDefaultMarkup}
+                    disabled={defaultMarkupStatus === 'loading'}
+                    className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md flex items-center gap-1.5 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+                  >
+                    {defaultMarkupStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Save Markup
+                  </button>
+                </div>
+                <div className="mt-2 h-4">
+                  {defaultMarkupStatus === 'success' && (
+                    <span className="text-emerald-500 text-[10px] font-bold flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" /> Saved default markup successfully!
+                    </span>
+                  )}
+                  {defaultMarkupStatus === 'error' && (
+                    <span className="text-red-500 text-[10px] font-bold">Failed to save default markup.</span>
+                  )}
                 </div>
               </div>
             </div>
