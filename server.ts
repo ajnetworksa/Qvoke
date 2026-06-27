@@ -195,7 +195,328 @@ db.exec(`
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
   );
+
+  CREATE TABLE IF NOT EXISTS sequences (
+    docType TEXT PRIMARY KEY,
+    prefix TEXT NOT NULL,
+    lastNumber INTEGER NOT NULL DEFAULT 0,
+    padding INTEGER NOT NULL DEFAULT 4,
+    resetPeriod TEXT NOT NULL DEFAULT 'yearly',
+    lastYear INTEGER
+  );
+
+  -- Per-document audit trail: created/updated/status/diff history with actor attribution
+  CREATE TABLE IF NOT EXISTS document_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    docType TEXT NOT NULL,        -- 'quotation' | 'invoice' | 'boq' | 'bom'
+    docId TEXT NOT NULL,
+    docNumber TEXT,
+    action TEXT NOT NULL,         -- 'created' | 'updated' | 'status_changed' | 'deleted'
+    changes TEXT,                 -- JSON array of { field, from, to }
+    actorId TEXT,
+    actorName TEXT,
+    timestamp TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_doc_activity ON document_activity(docType, docId);
+
+  -- In-app notifications
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,                  -- null = broadcast to all users
+    type TEXT NOT NULL,          -- 'quote_expiring' | 'invoice_overdue' | 'doc_created' | 'doc_updated' | 'system'
+    title TEXT NOT NULL,
+    body TEXT,
+    link TEXT,                    -- e.g. 'quotation:qt-123' for client-side routing
+    isRead INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(userId, isRead);
 `);
+
+// Attribution columns on documents (who created / last updated)
+addColumnIfNotExists('quotations', 'createdBy', 'TEXT');
+addColumnIfNotExists('quotations', 'createdByName', 'TEXT');
+addColumnIfNotExists('quotations', 'updatedBy', 'TEXT');
+addColumnIfNotExists('quotations', 'updatedByName', 'TEXT');
+addColumnIfNotExists('invoices', 'createdBy', 'TEXT');
+addColumnIfNotExists('invoices', 'createdByName', 'TEXT');
+addColumnIfNotExists('invoices', 'updatedBy', 'TEXT');
+addColumnIfNotExists('invoices', 'updatedByName', 'TEXT');
+
+// Seed default numbering sequences
+const seedSequences = () => {
+  const defaults: { docType: string; prefix: string }[] = [
+    { docType: 'quotation', prefix: 'QT' },
+    { docType: 'invoice', prefix: 'INV' },
+    { docType: 'boq', prefix: 'BOQ' },
+    { docType: 'bom', prefix: 'BOM' },
+  ];
+  const insertSeq = db.prepare(`
+    INSERT INTO sequences (docType, prefix, lastNumber, padding, resetPeriod, lastYear)
+    VALUES (?, ?, 0, 4, 'yearly', ?)
+    ON CONFLICT(docType) DO NOTHING
+  `);
+  for (const d of defaults) {
+    insertSeq.run(d.docType, d.prefix, new Date().getFullYear());
+  }
+};
+seedSequences();
+
+// One-time: detect the existing numbering convention (prefix / padding / year-reset / max)
+// from documents already in the DB, so a new install on legacy data continues the same
+// series instead of starting a parallel one. Guarded by a settings flag; after this runs,
+// the sequence config is owned by the user (editable via Settings) and never auto-changed.
+const reconcileSequences = () => {
+  const flag = db.prepare("SELECT value FROM settings WHERE key = 'sequencesReconciled'").get() as { value: string } | undefined;
+  if (flag?.value === 'true') return;
+
+  const sources: { docType: string; query: string }[] = [
+    { docType: 'quotation', query: 'SELECT number FROM quotations' },
+    { docType: 'invoice', query: 'SELECT number FROM invoices' },
+    { docType: 'boq', query: "SELECT number FROM boq WHERE type = 'boq'" },
+    { docType: 'bom', query: "SELECT number FROM boq WHERE type = 'bom'" },
+  ];
+
+  for (const src of sources) {
+    let rows: { number: string }[] = [];
+    try { rows = db.prepare(src.query).all() as any[]; } catch { continue; }
+
+    // Parse: PREFIX-[YYYY-]NNNN
+    const re = /^([A-Za-z]+)-(?:(\d{4})-)?(\d+)$/;
+    const prefixCount: Record<string, number> = {};
+    const parsed: { prefix: string; year?: string; seq: number; pad: number }[] = [];
+    for (const r of rows) {
+      const m = re.exec((r.number || '').trim());
+      if (!m) continue;
+      const [, prefix, year, seqStr] = m;
+      prefixCount[prefix] = (prefixCount[prefix] || 0) + 1;
+      parsed.push({ prefix, year, seq: parseInt(seqStr, 10), pad: seqStr.length });
+    }
+    if (parsed.length === 0) continue; // keep seeded default
+
+    // Dominant prefix wins
+    const dominant = Object.entries(prefixCount).sort((a, b) => b[1] - a[1])[0][0];
+    const group = parsed.filter(p => p.prefix === dominant);
+    const yearly = group.some(p => p.year);
+    const currentYear = String(new Date().getFullYear());
+    // For yearly series only count this year's max; for non-yearly count all
+    const relevant = yearly ? group.filter(p => p.year === currentYear) : group;
+    const maxSeq = relevant.length ? Math.max(...relevant.map(p => p.seq)) : 0;
+    const padding = Math.max(...group.map(p => p.pad));
+
+    db.prepare(`
+      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ?, lastNumber = ?, lastYear = ?
+      WHERE docType = ?
+    `).run(dominant, padding, yearly ? 'yearly' : 'never', maxSeq, Number(currentYear), src.docType);
+    console.log(`🔢 Reconciled ${src.docType} numbering → ${dominant}, pad ${padding}, ${yearly ? 'yearly' : 'never'}, next ${maxSeq + 1}`);
+  }
+
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('sequencesReconciled', 'true')").run();
+};
+reconcileSequences();
+
+// Atomically reserve and format the next number for a document type
+function getNextDocumentNumber(docType: string): string {
+  const seq = db.prepare('SELECT * FROM sequences WHERE docType = ?').get(docType) as
+    | { docType: string; prefix: string; lastNumber: number; padding: number; resetPeriod: string; lastYear: number | null }
+    | undefined;
+  if (!seq) {
+    throw new Error(`Unknown document type for numbering: ${docType}`);
+  }
+  const currentYear = new Date().getFullYear();
+  const shouldReset = seq.resetPeriod === 'yearly' && seq.lastYear !== currentYear;
+  const nextNumber = shouldReset ? 1 : seq.lastNumber + 1;
+
+  db.prepare(`
+    UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
+  `).run(nextNumber, currentYear, docType);
+
+  const padded = String(nextNumber).padStart(seq.padding, '0');
+  return seq.resetPeriod === 'yearly'
+    ? `${seq.prefix}-${currentYear}-${padded}`
+    : `${seq.prefix}-${padded}`;
+}
+
+// ── DOCUMENT ACTIVITY / AUDIT TRAIL ───────────────────────────────────────────
+interface DocChange { field: string; from: string; to: string; }
+
+function logDocumentActivity(
+  docType: string,
+  docId: string,
+  docNumber: string | null,
+  action: string,
+  actor: { id?: string; name?: string } | undefined,
+  changes?: DocChange[]
+) {
+  try {
+    db.prepare(`
+      INSERT INTO document_activity (docType, docId, docNumber, action, changes, actorId, actorName, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      docType,
+      docId,
+      docNumber || null,
+      action,
+      changes && changes.length ? JSON.stringify(changes) : null,
+      actor?.id || null,
+      actor?.name || null,
+      new Date().toISOString()
+    );
+  } catch (err) {
+    console.error('Failed to log document activity:', err);
+  }
+}
+
+const fmtVal = (v: any): string => {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'number') return Number(v).toLocaleString();
+  return String(v);
+};
+
+// Compute a human-readable diff between an existing document row and incoming body.
+// Compares scalar fields plus a line-item / section diff (added / removed / changed).
+function computeDocumentDiff(existing: any, incoming: any, scalarFields: string[]): DocChange[] {
+  const changes: DocChange[] = [];
+  for (const f of scalarFields) {
+    const oldV = existing[f];
+    const newV = incoming[f];
+    if (fmtVal(oldV) !== fmtVal(newV)) {
+      changes.push({ field: f, from: fmtVal(oldV), to: fmtVal(newV) });
+    }
+  }
+
+  // Line-item diff (quotation/invoice use lineItems; boq/bom flatten sections)
+  const extractItems = (doc: any): { description: string; quantity: number; unitPrice: number }[] => {
+    let items: any[] = [];
+    if (doc.lineItems) {
+      const parsed = typeof doc.lineItems === 'string' ? JSON.parse(doc.lineItems) : doc.lineItems;
+      items = (parsed || []).filter((i: any) => i.type === 'item' || !i.type);
+    } else if (doc.sections) {
+      const secs = typeof doc.sections === 'string' ? JSON.parse(doc.sections) : doc.sections;
+      items = (secs || []).flatMap((s: any) => s.items || []);
+    }
+    return items.map((i: any) => ({
+      description: (i.description || '').trim(),
+      quantity: Number(i.quantity) || 0,
+      unitPrice: Number(i.unitPrice) || 0,
+    }));
+  };
+
+  try {
+    const oldItems = extractItems(existing);
+    const newItems = extractItems(incoming);
+    const norm = (s: string) => s.toLowerCase();
+    const fmtItem = (i: { description: string; quantity: number; unitPrice: number }) =>
+      `${i.description} × ${i.quantity} @ ${i.unitPrice.toLocaleString()}`;
+    const oldMap = new Map(oldItems.map(i => [norm(i.description), i]));
+    const newMap = new Map(newItems.map(i => [norm(i.description), i]));
+
+    for (const [k, o] of oldMap) {
+      if (!newMap.has(k)) changes.push({ field: 'Item removed', from: fmtItem(o), to: '—' });
+    }
+    for (const [k, n] of newMap) {
+      if (!oldMap.has(k)) changes.push({ field: 'Item added', from: '—', to: fmtItem(n) });
+    }
+    for (const [k, o] of oldMap) {
+      const n = newMap.get(k);
+      if (n && (o.quantity !== n.quantity || o.unitPrice !== n.unitPrice)) {
+        changes.push({ field: `Item changed: ${o.description}`, from: fmtItem(o), to: fmtItem(n) });
+      }
+    }
+  } catch (err) {
+    // Non-fatal: skip line-item diff on parse error
+  }
+
+  return changes;
+}
+
+// ── PLANS & FEATURE TOGGLES ───────────────────────────────────────────────────
+// Catalog of toggleable modules/features. Core ones can't be turned off.
+const FEATURE_CATALOG = [
+  { key: 'quotations', label: 'Quotations', core: true },
+  { key: 'invoices', label: 'Invoices', core: false },
+  { key: 'boq', label: 'BOQ (Bill of Quantities)', core: false },
+  { key: 'bom', label: 'BOM (Bill of Materials)', core: false },
+  { key: 'reports', label: 'Financial Reports', core: false },
+  { key: 'customers', label: 'Customers', core: true },
+  { key: 'suppliers', label: 'Suppliers', core: false },
+  { key: 'products', label: 'Product Catalog', core: true },
+  { key: 'tracking', label: 'Activity Timeline & Audit', core: false },
+  { key: 'notifications', label: 'Notifications', core: false },
+  { key: 'usage', label: 'Usage Analytics', core: false },
+  { key: 'kanban', label: 'Kanban Pipeline', core: false },
+  { key: 'aiAssistant', label: 'AI Assistant', core: false },
+] as const;
+
+type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
+
+// Subscription plans bundle a set of enabled features.
+const PLANS: Record<string, { label: string; features: FeatureKey[] }> = {
+  starter: {
+    label: 'Starter',
+    features: ['quotations', 'invoices', 'customers', 'products', 'notifications'],
+  },
+  professional: {
+    label: 'Professional',
+    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage'],
+  },
+  enterprise: {
+    label: 'Enterprise',
+    features: FEATURE_CATALOG.map(f => f.key),
+  },
+};
+
+const featuresFromPlan = (plan: string): Record<string, boolean> => {
+  const enabled = new Set(PLANS[plan]?.features || PLANS.enterprise.features);
+  const out: Record<string, boolean> = {};
+  for (const f of FEATURE_CATALOG) out[f.key] = f.core || enabled.has(f.key);
+  return out;
+};
+
+// Seed plan + feature flags on first run (default: enterprise / everything on)
+const seedFeatures = () => {
+  const planRow = db.prepare("SELECT value FROM settings WHERE key = 'activePlan'").get() as { value: string } | undefined;
+  if (!planRow) {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('activePlan', 'enterprise')").run();
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('featureFlags', ?)").run(JSON.stringify(featuresFromPlan('enterprise')));
+  }
+};
+seedFeatures();
+
+const getActiveFeatures = (): Record<string, boolean> => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'featureFlags'").get() as { value: string } | undefined;
+  if (row) { try { return JSON.parse(row.value); } catch { /* fall through */ } }
+  return featuresFromPlan('enterprise');
+};
+
+// Middleware factory: block API access to a disabled feature.
+const requireFeature = (feature: FeatureKey) => {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const features = getActiveFeatures();
+    if (features[feature] === false) {
+      return res.status(403).json({ error: `Feature '${feature}' is not enabled on the current plan.` });
+    }
+    next();
+  };
+};
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+function createNotification(
+  userId: string | null,
+  type: string,
+  title: string,
+  body?: string,
+  link?: string
+) {
+  try {
+    db.prepare(`
+      INSERT INTO notifications (userId, type, title, body, link, isRead, createdAt)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(userId, type, title, body || null, link || null, new Date().toISOString());
+  } catch (err) {
+    console.error('Failed to create notification:', err);
+  }
+}
 
 // Perform migrations for subject columns
 addColumnIfNotExists('quotations', 'subject', 'TEXT');
@@ -233,7 +554,9 @@ const seedDatabase = () => {
       canOverridePrice: true,
       canUseKanban: true,
       canUseRFQ: true,
-      canUseAI: true
+      canUseAI: true,
+      canViewHistory: true,
+      canViewCreatedBy: true
     }), 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80');
 
     insertUser.run('u-2', 'sarah', 'Sarah Rahman (Accountant)', 'sarah.r@ajnetwork.sa', hashedDefault, 'accountant', JSON.stringify({
@@ -797,6 +1120,33 @@ app.delete('/api/products/:id', requireAuth, requirePermission('canDeleteData'),
 });
 
 // ── QUOTATIONS CRUD ───────────────────────────────────────────────────────────
+// ── DOCUMENT NUMBERING ────────────────────────────────────────────────────────
+app.get('/api/sequences/next/:docType', requireAuth, (req, res) => {
+  try {
+    const number = getNextDocumentNumber(req.params.docType);
+    res.json({ number });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/sequences', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM sequences').all();
+  res.json(rows);
+});
+
+app.put('/api/sequences/:docType', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+  const { prefix, padding, resetPeriod } = req.body;
+  try {
+    db.prepare(`
+      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ? WHERE docType = ?
+    `).run(prefix, padding, resetPeriod, req.params.docType);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/quotes', requireAuth, (req, res) => {
   const quotes = db.prepare('SELECT * FROM quotations ORDER BY date DESC').all() as any[];
   const parsed = quotes.map(q => ({
@@ -820,14 +1170,15 @@ app.post('/api/quotes', requireAuth, (req, res) => {
   }
 
   const {
-    id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency,
+    id, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency,
     subtotal, discountTotal, taxTotal, total, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
     const qId = id || `qt-${Date.now()}`;
+    const number = getNextDocumentNumber('quotation');
     db.prepare(`
-      INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       qId,
       number,
@@ -851,9 +1202,11 @@ app.post('/api/quotes', requireAuth, (req, res) => {
       watermarkText || 'PAID',
       watermarkType || 'none',
       hidePrices ? 1 : 0,
-      manualTotal !== undefined && manualTotal !== null ? manualTotal : null
+      manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
+      user.id, user.name, user.id, user.name
     );
-    res.json({ id: qId });
+    logDocumentActivity('quotation', qId, number, 'created', user);
+    res.json({ id: qId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -874,9 +1227,10 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, linkedInvoiceId, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
+    const before = db.prepare('SELECT * FROM quotations WHERE id = ?').get(req.params.id) as any;
     db.prepare(`
       UPDATE quotations
-      SET number = ?, customerId = ?, date = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedInvoiceId = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?
+      SET number = ?, customerId = ?, date = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedInvoiceId = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
       WHERE id = ?
     `).run(
       number,
@@ -901,8 +1255,18 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
       watermarkType || 'none',
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
+      user.id, user.name,
       req.params.id
     );
+    if (before) {
+      const changes = computeDocumentDiff(
+        before,
+        { subject, status, total, discountTotal, notes, lineItems },
+        ['subject', 'status', 'total', 'discountTotal', 'notes']
+      );
+      const statusChanged = before.status !== status;
+      logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -910,7 +1274,10 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/quotes/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const user = (req as any).user;
+  const before = db.prepare('SELECT number FROM quotations WHERE id = ?').get(req.params.id) as any;
   db.prepare('DELETE FROM quotations WHERE id = ?').run(req.params.id);
+  logDocumentActivity('quotation', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
 });
 
@@ -939,14 +1306,15 @@ app.post('/api/invoices', requireAuth, (req, res) => {
   }
 
   const {
-    id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency,
+    id, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency,
     subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
     const invId = id || `inv-${Date.now()}`;
+    const number = getNextDocumentNumber('invoice');
     db.prepare(`
-      INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       invId,
       number,
@@ -975,9 +1343,11 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       watermarkText || 'PAID',
       watermarkType || 'none',
       hidePrices ? 1 : 0,
-      manualTotal !== undefined && manualTotal !== null ? manualTotal : null
+      manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
+      user.id, user.name, user.id, user.name
     );
-    res.json({ id: invId });
+    logDocumentActivity('invoice', invId, number, 'created', user);
+    res.json({ id: invId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -998,9 +1368,10 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
+    const before = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id) as any;
     db.prepare(`
       UPDATE invoices
-      SET number = ?, customerId = ?, date = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedQuoteId = ?, payments = ?, amountPaid = ?, amountDue = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?
+      SET number = ?, customerId = ?, date = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedQuoteId = ?, payments = ?, amountPaid = ?, amountDue = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
       WHERE id = ?
     `).run(
       number,
@@ -1029,8 +1400,18 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
       watermarkType || 'none',
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
+      user.id, user.name,
       req.params.id
     );
+    if (before) {
+      const changes = computeDocumentDiff(
+        before,
+        { subject, status, total, amountPaid, notes, lineItems },
+        ['subject', 'status', 'total', 'amountPaid', 'notes']
+      );
+      const statusChanged = before.status !== status;
+      logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1038,7 +1419,10 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/invoices/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const user = (req as any).user;
+  const before = db.prepare('SELECT number FROM invoices WHERE id = ?').get(req.params.id) as any;
   db.prepare('DELETE FROM invoices WHERE id = ?').run(req.params.id);
+  logDocumentActivity('invoice', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
 });
 
@@ -1049,6 +1433,36 @@ app.get('/api/settings/company', (req, res) => {
     res.json(JSON.parse(companyRow.value));
   } else {
     res.status(404).json({ error: 'Company settings not found' });
+  }
+});
+
+// ── PLANS & FEATURE FLAGS API ─────────────────────────────────────────────────
+app.get('/api/features', requireAuth, (req, res) => {
+  const planRow = db.prepare("SELECT value FROM settings WHERE key = 'activePlan'").get() as { value: string } | undefined;
+  res.json({
+    activePlan: planRow?.value || 'enterprise',
+    features: getActiveFeatures(),
+    catalog: FEATURE_CATALOG,
+    plans: Object.entries(PLANS).map(([key, p]) => ({ key, label: p.label, features: p.features })),
+  });
+});
+
+app.put('/api/features', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+  try {
+    const { activePlan, features } = req.body as { activePlan?: string; features?: Record<string, boolean> };
+    if (activePlan && PLANS[activePlan]) {
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('activePlan', ?)").run(activePlan);
+      // Switching plan resets flags to that plan's defaults unless explicit features given
+      const flags = features || featuresFromPlan(activePlan);
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('featureFlags', ?)").run(JSON.stringify(flags));
+    } else if (features) {
+      // Manual per-feature override; force core features on
+      for (const f of FEATURE_CATALOG) if (f.core) features[f.key] = true;
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('featureFlags', ?)").run(JSON.stringify(features));
+    }
+    res.json({ success: true, features: getActiveFeatures() });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1474,6 +1888,9 @@ db.exec(`
     type TEXT NOT NULL DEFAULT 'boq'
   );
 `);
+addColumnIfNotExists('boq', 'createdByName', 'TEXT');
+addColumnIfNotExists('boq', 'updatedBy', 'TEXT');
+addColumnIfNotExists('boq', 'updatedByName', 'TEXT');
 
 app.get('/api/boq', requireAuth, (req, res) => {
   try {
@@ -1498,30 +1915,48 @@ app.get('/api/boq/:id', requireAuth, (req, res) => {
 });
 
 app.post('/api/boq', requireAuth, (req, res) => {
-  const { id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdBy, type } = req.body;
+  const user = (req as any).user;
+  const { id, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, type } = req.body;
   try {
     const boqId = id || `boq-${Date.now()}`;
-    db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, type)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    const docType = type === 'bom' ? 'bom' : 'boq';
+    const number = getNextDocumentNumber(docType);
+    db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, createdByName, updatedBy, updatedByName, type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       boqId, number, title, titleAr || '', customerId || null, projectRef || '',
       status || 'draft', JSON.stringify(sections || []), notes || '',
       currency || 'SAR', subtotal || 0, total || 0,
-      new Date().toISOString(), new Date().toISOString(), createdBy || null,
-      type || 'boq'
+      new Date().toISOString(), new Date().toISOString(),
+      user.id, user.name, user.id, user.name,
+      docType
     );
-    res.json({ id: boqId });
+    logDocumentActivity(docType, boqId, number, 'created', user);
+    res.json({ id: boqId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.put('/api/boq/:id', requireAuth, (req, res) => {
+  const user = (req as any).user;
   const { number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, type } = req.body;
   try {
-    db.prepare(`UPDATE boq SET number=?, title=?, titleAr=?, customerId=?, projectRef=?, status=?, sections=?, notes=?, currency=?, subtotal=?, total=?, type=?, updatedAt=? WHERE id=?`)
+    const before = db.prepare('SELECT * FROM boq WHERE id = ?').get(req.params.id) as any;
+    db.prepare(`UPDATE boq SET number=?, title=?, titleAr=?, customerId=?, projectRef=?, status=?, sections=?, notes=?, currency=?, subtotal=?, total=?, type=?, updatedAt=?, updatedBy=?, updatedByName=? WHERE id=?`)
       .run(number, title, titleAr || '', customerId || null, projectRef || '', status || 'draft',
         JSON.stringify(sections || []), notes || '', currency || 'SAR',
-        subtotal || 0, total || 0, type || 'boq', new Date().toISOString(), req.params.id);
+        subtotal || 0, total || 0, type || 'boq', new Date().toISOString(),
+        user.id, user.name, req.params.id);
+    if (before) {
+      const docType = (type === 'bom' ? 'bom' : 'boq');
+      const changes = computeDocumentDiff(
+        before,
+        { title, status, total, notes, sections },
+        ['title', 'status', 'total', 'notes']
+      );
+      const statusChanged = before.status !== (status || 'draft');
+      logDocumentActivity(docType, req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1529,8 +1964,151 @@ app.put('/api/boq/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/boq/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const user = (req as any).user;
+  const before = db.prepare('SELECT number, type FROM boq WHERE id = ?').get(req.params.id) as any;
   db.prepare('DELETE FROM boq WHERE id = ?').run(req.params.id);
+  logDocumentActivity(before?.type === 'bom' ? 'bom' : 'boq', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
+});
+
+// ── DOCUMENT TIMELINE / AUDIT LOG ─────────────────────────────────────────────
+// Per-document history (who created, who changed what). Gated by canViewHistory.
+app.get('/api/activity/:docType/:docId', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
+  try {
+    const logs = db.prepare(
+      'SELECT * FROM document_activity WHERE docType = ? AND docId = ? ORDER BY timestamp ASC'
+    ).all(req.params.docType, req.params.docId) as any[];
+    res.json(logs.map(l => ({ ...l, changes: l.changes ? JSON.parse(l.changes) : [] })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Global audit log across all documents (admin / canViewHistory). Supports ?docType=&actorId=&limit=
+app.get('/api/audit', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
+  try {
+    const { docType, actorId } = req.query as Record<string, string>;
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (docType) { conditions.push('docType = ?'); params.push(docType); }
+    if (actorId) { conditions.push('actorId = ?'); params.push(actorId); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const logs = db.prepare(
+      `SELECT * FROM document_activity ${where} ORDER BY timestamp DESC LIMIT ?`
+    ).all(...params, limit) as any[];
+    res.json(logs.map(l => ({ ...l, changes: l.changes ? JSON.parse(l.changes) : [] })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── USAGE STATISTICS ──────────────────────────────────────────────────────────
+// Aggregated from the document_activity audit trail. Gated by canViewRevenue.
+app.get('/api/usage', requireAuth, requireFeature('usage'), requirePermission('canViewRevenue'), (req, res) => {
+  try {
+    const since = (req.query.since as string) || '1970-01-01';
+    const byType = db.prepare(`
+      SELECT docType, action, COUNT(*) as count
+      FROM document_activity WHERE timestamp >= ?
+      GROUP BY docType, action
+    `).all(since);
+    const byUser = db.prepare(`
+      SELECT actorId, actorName, COUNT(*) as count
+      FROM document_activity WHERE timestamp >= ? AND action = 'created'
+      GROUP BY actorId ORDER BY count DESC
+    `).all(since);
+    const liveCounts = {
+      quotations: (db.prepare('SELECT COUNT(*) as c FROM quotations').get() as any).c,
+      invoices: (db.prepare('SELECT COUNT(*) as c FROM invoices').get() as any).c,
+      boq: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'boq'").get() as any).c,
+      bom: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'bom'").get() as any).c,
+      customers: (db.prepare('SELECT COUNT(*) as c FROM customers').get() as any).c,
+      products: (db.prepare('SELECT COUNT(*) as c FROM products').get() as any).c,
+      users: (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c,
+    };
+    res.json({ byType, byUser, liveCounts });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+app.get('/api/notifications', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user;
+    const rows = db.prepare(`
+      SELECT * FROM notifications
+      WHERE userId = ? OR userId IS NULL
+      ORDER BY createdAt DESC LIMIT 100
+    `).all(user.id);
+    res.json(rows.map((r: any) => ({ ...r, isRead: r.isRead === 1 })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/notifications/:id/read', requireAuth, (req, res) => {
+  try {
+    db.prepare('UPDATE notifications SET isRead = 1 WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/notifications/read-all', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user;
+    db.prepare('UPDATE notifications SET isRead = 1 WHERE userId = ? OR userId IS NULL').run(user.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generate notifications for expiring quotations & overdue invoices (idempotent-ish: dedupes by link+type for the day)
+app.post('/api/notifications/refresh', requireAuth, (req, res) => {
+  try {
+    const today = new Date();
+    const in7 = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const nowIso = today.toISOString();
+    const todayKey = nowIso.slice(0, 10);
+
+    const expiring = db.prepare(`
+      SELECT id, number, validUntil FROM quotations
+      WHERE status NOT IN ('confirmed','cancelled','expired')
+        AND validUntil IS NOT NULL AND validUntil <= ? AND validUntil >= ?
+    `).all(in7, nowIso) as any[];
+
+    const overdue = db.prepare(`
+      SELECT id, number, dueDate FROM invoices
+      WHERE status NOT IN ('paid','cancelled')
+        AND dueDate IS NOT NULL AND dueDate < ? AND amountDue > 0
+    `).all(nowIso) as any[];
+
+    const existsToday = db.prepare(
+      "SELECT 1 FROM notifications WHERE link = ? AND type = ? AND createdAt LIKE ? LIMIT 1"
+    );
+    let created = 0;
+    for (const q of expiring) {
+      const link = `quotation:${q.id}`;
+      if (!existsToday.get(link, 'quote_expiring', `${todayKey}%`)) {
+        createNotification(null, 'quote_expiring', `Quotation ${q.number} is expiring soon`, `Valid until ${String(q.validUntil).slice(0, 10)}`, link);
+        created++;
+      }
+    }
+    for (const inv of overdue) {
+      const link = `invoice:${inv.id}`;
+      if (!existsToday.get(link, 'invoice_overdue', `${todayKey}%`)) {
+        createNotification(null, 'invoice_overdue', `Invoice ${inv.number} is overdue`, `Due ${String(inv.dueDate).slice(0, 10)}`, link);
+        created++;
+      }
+    }
+    res.json({ success: true, created });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 
@@ -1538,8 +2116,9 @@ app.delete('/api/boq/:id', requireAuth, requirePermission('canDeleteData'), (req
 // This is the ONLY reliable way to serve PDFs with proper filenames.
 // Client-side blob/data URLs cannot reliably set filenames in Chrome/Edge.
 
-async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' | 'invoice') {
+async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' | 'invoice' | 'boq' | 'bom') {
   const isInvoice = type === 'invoice';
+  const isProjectDoc = type === 'boq' || type === 'bom';
   const custRow = db.prepare('SELECT * FROM customers WHERE id = ?').get(docData.customerId) as any;
   const cust = custRow ? {
     company: custRow.companyName || '',
@@ -1579,7 +2158,24 @@ async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' |
     ...pdfConf,
   };
 
-  const lineItems = typeof docData.lineItems === 'string' ? JSON.parse(docData.lineItems) : (docData.lineItems || []);
+  let lineItems: any[];
+  if (isProjectDoc) {
+    // Flatten BOQ/BOM sections into the same flat lineItems shape the PDF template expects
+    const sections = typeof docData.sections === 'string' ? JSON.parse(docData.sections) : (docData.sections || []);
+    lineItems = sections.flatMap((s: any) => [
+      { type: 'section', description: s.title || '' },
+      ...(s.items || []).map((i: any) => ({
+        type: 'item',
+        description: i.description || '',
+        quantity: i.quantity,
+        unit: i.unit,
+        unitPrice: i.unitPrice,
+        discountPercent: 0,
+      })),
+    ]);
+  } else {
+    lineItems = typeof docData.lineItems === 'string' ? JSON.parse(docData.lineItems) : (docData.lineItems || []);
+  }
   const lines = lineItems
     .filter((i: any) => i.type !== 'note')
     .map((i: any) => {
@@ -1602,8 +2198,8 @@ async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' |
     createdAt: docData.date || docData.createdAt,
     validUntil: isInvoice ? (docData.dueDate || null) : (docData.validUntil || null),
     currency: docData.currency || 'SAR',
-    subject: docData.subject || null,
-    subjectAr: docData.subjectAr || null,
+    subject: docData.subject || (isProjectDoc ? docData.title : null) || null,
+    subjectAr: docData.subjectAr || (isProjectDoc ? docData.titleAr : null) || null,
     notes: docData.notes || docData.terms || null,
     notesAr: docData.notesAr || null,
     payment: isInvoice ? (docData.paymentTerms || null) : (docData.payment || null),
@@ -1676,6 +2272,24 @@ app.get('/api/pdf/invoice/:id', requireAuth, async (req, res) => {
     if (!row) return res.status(404).json({ error: 'Invoice not found' });
     const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
     const buffer = await buildPdfBuffer(row, compRow, 'invoice');
+    const filename = `${row.number || req.params.id}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  } catch (err: any) {
+    console.error('PDF generation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/pdf/boq/:id', requireAuth, async (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM boq WHERE id = ?').get(req.params.id) as any;
+    if (!row) return res.status(404).json({ error: 'Document not found' });
+    const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
+    const docType = row.type === 'bom' ? 'bom' : 'boq';
+    const buffer = await buildPdfBuffer(row, compRow, docType);
     const filename = `${row.number || req.params.id}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

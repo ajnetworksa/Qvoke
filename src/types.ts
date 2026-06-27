@@ -143,6 +143,30 @@ export interface User {
   email: string;
   role: UserRole;
   avatar?: string;
+  permissions?: Record<string, boolean>;
+}
+
+export interface DocumentActivity {
+  id: number;
+  docType: string;
+  docId: string;
+  docNumber?: string;
+  action: 'created' | 'updated' | 'status_changed' | 'deleted';
+  changes: { field: string; from: string; to: string }[];
+  actorId?: string;
+  actorName?: string;
+  timestamp: string;
+}
+
+export interface AppNotification {
+  id: number;
+  userId?: string | null;
+  type: string;
+  title: string;
+  body?: string;
+  link?: string;
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface DashboardStats {

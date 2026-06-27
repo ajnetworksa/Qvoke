@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cloud, CloudOff, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Cloud, CloudOff, Loader2, CheckCircle2, AlertCircle, HardDriveDownload } from 'lucide-react';
 import { AutoSaveStatus } from '../hooks/useAutoSave';
 
 interface AutoSaveIndicatorProps {
@@ -37,6 +37,13 @@ export const AutoSaveIndicator: React.FC<AutoSaveIndicatorProps> = ({ status, on
           labelEn: 'Unsaved changes',
           labelAr: 'تغييرات غير محفوظة',
           className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+        };
+      case 'local':
+        return {
+          icon: <HardDriveDownload className="w-3.5 h-3.5 text-sky-500" />,
+          labelEn: 'Draft saved on this device',
+          labelAr: 'تم حفظ المسودة على هذا الجهاز',
+          className: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20'
         };
       case 'idle':
       default:

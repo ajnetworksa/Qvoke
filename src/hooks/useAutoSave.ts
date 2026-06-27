@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'failed' | 'unsaved';
+export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'failed' | 'unsaved' | 'local';
 
 interface UseAutoSaveProps<T> {
   isDirty: boolean;
@@ -34,10 +34,17 @@ export function useAutoSave<T>({
 
   // Whenever isDirty or isReady changes, trigger debounce save
   useEffect(() => {
-    if (!isReady || !isDirty) {
-      if (!isDirty && status === 'unsaved') {
-        setStatus('idle');
-      }
+    if (!isDirty) {
+      // Clear only pending states; preserve a 'saved' confirmation.
+      setStatus((s) => (s === 'unsaved' || s === 'local' ? 'idle' : s));
+      return;
+    }
+
+    if (!isReady) {
+      // Not yet server-ready (e.g. no customer selected). Changes are still
+      // persisted to the local draft, so reflect that instead of pretending
+      // everything is saved to the server.
+      setStatus('local');
       return;
     }
 

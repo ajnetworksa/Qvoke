@@ -3,6 +3,7 @@ import { useERPStore, calculateTotals } from '../store';
 import { Customer, Product, LineItem, Quotation } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
+import { useDraft } from '../hooks/useDraft';
 import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
@@ -28,6 +29,7 @@ import {
 } from 'lucide-react';
 import { PDFPreviewModal } from '../components/PDFPreviewModal';
 import { EmailSendModal } from '../components/EmailSendModal';
+import { DocumentTimeline } from '../components/DocumentTimeline';
 import { getLineNumber } from '../utils/lineNumber';
 import type { LineNumberFormat } from '../utils/lineNumber';
 
@@ -83,11 +85,43 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
   // Populate data on load
   const skipSyncRef = useRef(false);
+  const committedRef = useRef(false); // true once this new quote has been created server-side
   const [newId] = useState(() => `qt-${Date.now()}`);
+
+  // localStorage-backed draft: survives navigation (e.g. jump to Products & back)
+  // and reloads, independent of server autosave. Keyed by the route id ('new' or real id).
+  const draft = useDraft<any>('quotation', id);
+
+  // Apply a draft/quote snapshot to all form fields.
+  const applySnapshot = (s: any) => {
+    setNumber(s.number ?? '');
+    setCustomerId(s.customerId ?? '');
+    setDate(s.date ? new Date(s.date) : new Date());
+    setValidUntil(s.validUntil ? new Date(s.validUntil) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000));
+    setStatus(s.status ?? 'draft');
+    setLineItems(s.lineItems ? JSON.parse(JSON.stringify(s.lineItems)) : []);
+    setNotes(s.notes ?? '');
+    setTerms(s.terms ?? '');
+    setCurrency(s.currency ?? company.currency);
+    setSubject(s.subject ?? '');
+    setSubjectAr(s.subjectAr ?? '');
+    setWatermarkText(s.watermarkText ?? 'DRAFT');
+    setWatermarkType(s.watermarkType ?? 'none');
+    setHidePrices(s.hidePrices ?? false);
+    setManualTotal(s.manualTotal !== undefined && s.manualTotal !== null ? s.manualTotal : '');
+    if (s.markup !== undefined && s.markup !== null) setMarkup(s.markup);
+  };
 
   useEffect(() => {
     if (skipSyncRef.current) {
       skipSyncRef.current = false;
+      return;
+    }
+    // Highest priority: an unsaved draft for this id (user navigated away mid-edit)
+    const saved = draft.load();
+    if (saved) {
+      applySnapshot(saved);
+      setIsDirty(true);
       return;
     }
     if (existingQuote) {
@@ -167,6 +201,17 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     zeroMarkup: ['Materials'],
     excluded: ['Installation']
   });
+
+  // Persist a draft snapshot on every edit while dirty; nothing lingers once saved.
+  useEffect(() => {
+    if (!isDirty) return;
+    draft.save({
+      number, customerId, date, validUntil, status, lineItems, notes, terms,
+      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices,
+      manualTotal, markup,
+    });
+  }, [isDirty, number, customerId, date, validUntil, status, lineItems, notes, terms,
+      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices, manualTotal, markup]);
 
   // Height synchronization states for side-by-side Analysis Sidebar
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
@@ -383,14 +428,20 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     isDirty,
     getPayload,
     saveFn: async (payload) => {
-      if (isNew) {
-        return await addQuotation(payload);
-      } else {
-        return await updateQuotation(payload);
+      // Create exactly once: committedRef prevents a second POST (the legacy
+      // bug where autosave + manual save raced and produced a duplicate/phantom
+      // quote). After the first successful create, every save is an update.
+      if (isNew && !committedRef.current) {
+        committedRef.current = true;
+        const ok = await addQuotation(payload);
+        if (!ok) committedRef.current = false; // allow retry on failure
+        return ok;
       }
+      return await updateQuotation(payload);
     },
     onSaveSuccess: (payload) => {
       setIsDirty(false);
+      draft.clear(); // committed to server — drop the local draft
       if (isNew) {
         skipSyncRef.current = true;
         setRoute('quotation-detail', payload.id);
@@ -563,6 +614,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
     const success = await performSave();
     if (success) {
+      draft.clear();
       setRoute('quotations');
     } else {
       alert('Failed to save quotation / فشل حفظ عرض السعر');
@@ -581,7 +633,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     const finalTaxTotal = manualTotal !== '' ? Math.round((finalTotal - finalSubtotal) * 100) / 100 : totals.taxTotal;
 
     const payload: Quotation = {
-      id: isNew ? `qt-${Date.now()}` : id,
+      id: isNew ? newId : id,
       number,
       customerId,
       date,
@@ -605,13 +657,15 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
     };
 
-    if (isNew) {
+    if (isNew && !committedRef.current) {
+      committedRef.current = true;
       addQuotation(payload);
     } else {
       updateQuotation(payload);
     }
 
     setIsDirty(false);
+    draft.clear();
     alert('Quotation Confirmed! Ready to invoice.');
   };
 
@@ -731,6 +785,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
   const handleDelete = () => {
     deleteQuotation(id);
+    draft.clear();
     setRoute('quotations');
   };
 
@@ -1619,6 +1674,12 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
           </div>
         </div>
       </div>
+
+      {!isNew && id && (
+        <div className="mt-6">
+          <DocumentTimeline docType="quotation" docId={id} />
+        </div>
+      )}
 
       {/* Confirmation and Action Overlays */}
       <ConfirmDialog

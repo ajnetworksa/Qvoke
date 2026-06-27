@@ -19,7 +19,9 @@ import {
   Terminal,
   Settings as SettingsIcon,
   AlertTriangle,
-  Info
+  Info,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { mockUsers } from '../mockData';
 import { UserRole } from '../types';
@@ -28,7 +30,7 @@ import DatabaseBackupDB from '../components/DatabaseBackupDB';
 
 export const Settings: React.FC = () => {
   const { company, updateCompany, theme, setTheme } = useERPStore();
-  const [activeSubTab, setActiveSubTab] = useState<'company' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs'>('company');
+  const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs'>('company');
 
   // Local Form states (initialized from store)
   const [companyName, setCompanyName] = useState(company.name);
@@ -387,6 +389,17 @@ export const Settings: React.FC = () => {
           >
             <Building2 className="w-4 h-4 text-[var(--color-text-muted)]" />
             Company Profile / المؤسسة
+          </button>
+          <button
+            onClick={() => setActiveSubTab('plan')}
+            className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-left ${
+              activeSubTab === 'plan'
+                ? 'bg-[var(--color-primary-highlight)]/30 text-[var(--color-primary)]'
+                : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
+            }`}
+          >
+            <Layers className="w-4 h-4 text-[var(--color-text-muted)]" />
+            Plan & Features / الباقة والميزات
           </button>
           <button
             onClick={() => setActiveSubTab('document')}
@@ -779,6 +792,8 @@ export const Settings: React.FC = () => {
           )}
 
           {activeSubTab === 'users' && <UsersDB />}
+
+          {activeSubTab === 'plan' && <PlanFeaturesPanel />}
 
           {activeSubTab === 'appearance' && (
             <div className="premium-card p-6 flex flex-col gap-6">
@@ -1281,4 +1296,130 @@ export const Settings: React.FC = () => {
     </div>
   );
 };
+
+// ── Plan & Feature Toggles ────────────────────────────────────────────────────
+interface FeatureCatalogItem { key: string; label: string; core: boolean; }
+interface PlanOption { key: string; label: string; features: string[]; }
+
+const PlanFeaturesPanel: React.FC = () => {
+  const token = useERPStore((s) => s.token);
+  const setStoreFeatures = (features: Record<string, boolean>, activePlan: string) =>
+    useERPStore.setState({ features, activePlan });
+
+  const [catalog, setCatalog] = useState<FeatureCatalogItem[]>([]);
+  const [plans, setPlans] = useState<PlanOption[]>([]);
+  const [activePlan, setActivePlan] = useState('enterprise');
+  const [features, setFeatures] = useState<Record<string, boolean>>({});
+  const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+
+  const authH = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/features', { headers: authH });
+        if (res.ok) {
+          const d = await res.json();
+          setCatalog(d.catalog || []);
+          setPlans(d.plans || []);
+          setActivePlan(d.activePlan || 'enterprise');
+          setFeatures(d.features || {});
+        }
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const choosePlan = (planKey: string) => {
+    setActivePlan(planKey);
+    const plan = plans.find((p) => p.key === planKey);
+    if (plan) {
+      const next: Record<string, boolean> = {};
+      for (const f of catalog) next[f.key] = f.core || plan.features.includes(f.key);
+      setFeatures(next);
+    }
+  };
+
+  const toggle = (key: string, core: boolean) => {
+    if (core) return;
+    setFeatures((f) => ({ ...f, [key]: !f[key] }));
+  };
+
+  const save = async () => {
+    setStatus('saving');
+    try {
+      const res = await fetch('/api/features', {
+        method: 'PUT', headers: authH,
+        body: JSON.stringify({ activePlan, features }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setFeatures(d.features || features);
+        setStoreFeatures(d.features || features, activePlan);
+        setStatus('success');
+        setTimeout(() => setStatus('idle'), 2500);
+      } else setStatus('error');
+    } catch { setStatus('error'); }
+  };
+
+  return (
+    <div className="premium-card p-6 flex flex-col gap-6">
+      <div className="border-b border-[var(--color-divider)]/30 pb-4">
+        <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2"><Sparkles className="w-4 h-4 text-[var(--color-primary)]" /> Plan & Feature Access</h3>
+        <p className="text-xs text-[var(--color-text-muted)]">Choose a plan or fine-tune which modules are enabled. Disabled modules are hidden from everyone.</p>
+      </div>
+
+      {/* Plan selector */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {plans.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => choosePlan(p.key)}
+            className={`text-left p-4 rounded-lg border transition-all cursor-pointer ${
+              activePlan === p.key
+                ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/20'
+                : 'border-[var(--color-border)] hover:bg-[var(--color-surface-offset)]'
+            }`}
+          >
+            <div className="flex items-center gap-1.5 text-xs font-black text-[var(--color-text)] uppercase tracking-wider">
+              <Layers className="w-3.5 h-3.5 text-[var(--color-primary)]" /> {p.label}
+            </div>
+            <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{p.features.length} modules included</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Feature toggles */}
+      <div>
+        <p className="text-xs font-black text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Modules</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {catalog.map((f) => {
+            const on = features[f.key] !== false;
+            return (
+              <label
+                key={f.key}
+                className={`flex items-center justify-between gap-2 p-3 rounded-lg border select-none transition-all ${f.core ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} ${
+                  on ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/15' : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+                }`}
+              >
+                <span className="text-xs font-bold text-[var(--color-text)]">
+                  {f.label}{f.core && <span className="ml-1.5 text-[9px] font-black text-[var(--color-text-faint)] uppercase">core</span>}
+                </span>
+                <input type="checkbox" checked={on} disabled={f.core} onChange={() => toggle(f.key, f.core)} className="accent-[var(--color-primary)]" />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={status === 'saving'} className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-bold py-2 px-4 rounded-md flex items-center gap-1.5 cursor-pointer disabled:opacity-60">
+          {status === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save Plan & Features
+        </button>
+        {status === 'success' && <span className="text-xs text-emerald-500 font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Saved — reload to apply navigation changes</span>}
+        {status === 'error' && <span className="text-xs text-rose-500 font-bold">Save failed</span>}
+      </div>
+    </div>
+  );
+};
+
 export default Settings;
