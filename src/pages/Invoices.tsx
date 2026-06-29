@@ -4,16 +4,42 @@ import { PageHeader } from '../components/PageHeader';
 import { matchSearchQuery } from '../utils/search';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
-import { FileSpreadsheet, Plus, Search, Trash2, CheckCircle2 } from 'lucide-react';
+import { FileSpreadsheet, Plus, Search, Trash2, CheckCircle2, LayoutGrid, List, ExternalLink } from 'lucide-react';
 import { Invoice } from '../types';
 
 export const Invoices: React.FC = () => {
-  const { invoices, customers, setRoute, deleteInvoice, updateInvoice, company, currentUser } = useERPStore();
+  const { invoices, customers, setRoute, deleteInvoice, updateInvoice, kanbanView, setKanbanView, company, currentUser } = useERPStore();
   const canDelete = currentUser?.role === 'admin' || !!currentUser?.permissions?.canDeleteData;
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Kanban columns. 'partial'/'paid' are derived from recorded payments, so they
+  // are display-only — dragging a card there is ignored (status would be wrong).
+  const columns: { label: string; status: Invoice['status']; droppable: boolean }[] = [
+    { label: 'Draft / مسودة', status: 'draft', droppable: true },
+    { label: 'Posted / مرحلة', status: 'posted', droppable: true },
+    { label: 'Partial / جزئي', status: 'partial', droppable: false },
+    { label: 'Paid / مدفوع', status: 'paid', droppable: false },
+    { label: 'Overdue / متأخر', status: 'overdue', droppable: true },
+    { label: 'Cancelled / ملغي', status: 'cancelled', droppable: true }
+  ];
+
+  const handleDragStart = (e: React.DragEvent, invId: string) => {
+    e.dataTransfer.setData('text/plain', invId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+  const handleDrop = (e: React.DragEvent, target: Invoice['status'], droppable: boolean) => {
+    e.preventDefault();
+    if (!droppable) return;
+    const invId = e.dataTransfer.getData('text/plain');
+    const inv = invoices.find((i) => i.id === invId);
+    if (inv && inv.status !== target) {
+      updateInvoice({ ...inv, status: target, updatedAt: new Date() });
+    }
+  };
 
   // Filtering invoices
   const filteredInvoices = invoices.filter((i) => {
@@ -77,13 +103,37 @@ export const Invoices: React.FC = () => {
         title="Invoices / الفواتير"
         breadcrumbs={[{ label: 'Home' }, { label: 'Invoices' }]}
         actions={
-          <button
-            onClick={() => setRoute('invoice-detail', 'new')}
-            className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            New Invoice / فاتورة جديدة
-          </button>
+          <div className="flex gap-2">
+            {/* List / Kanban toggle */}
+            <div className="flex bg-[var(--color-surface-offset)] border border-[var(--color-border)] rounded-md p-0.5">
+              <button
+                onClick={() => setKanbanView(false)}
+                className={`p-1.5 rounded transition-colors cursor-pointer ${
+                  !kanbanView ? 'bg-[var(--color-surface)] text-[var(--color-primary)] font-bold shadow-sm' : 'text-[var(--color-text-muted)]'
+                }`}
+                aria-label="List View"
+              >
+                <List className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setKanbanView(true)}
+                className={`p-1.5 rounded transition-colors cursor-pointer ${
+                  kanbanView ? 'bg-[var(--color-surface)] text-[var(--color-primary)] font-bold shadow-sm' : 'text-[var(--color-text-muted)]'
+                }`}
+                aria-label="Kanban View"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+            </div>
+
+            <button
+              onClick={() => setRoute('invoice-detail', 'new')}
+              className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              New Invoice / فاتورة جديدة
+            </button>
+          </div>
         }
       />
 
@@ -144,7 +194,7 @@ export const Invoices: React.FC = () => {
         </div>
       )}
 
-      {/* Table view */}
+      {/* Main view area */}
       {filteredInvoices.length === 0 ? (
         <EmptyState
           icon={FileSpreadsheet}
@@ -153,6 +203,81 @@ export const Invoices: React.FC = () => {
           actionText="Create your first invoice"
           onAction={() => setRoute('invoice-detail', 'new')}
         />
+      ) : kanbanView ? (
+        /* Kanban Board */
+        <div className="flex gap-5 overflow-x-auto pb-3">
+          {columns.map((col) => {
+            const colInvoices = filteredInvoices.filter((i) => i.status === col.status);
+            return (
+              <div
+                key={col.status}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, col.status, col.droppable)}
+                className={`flex flex-col rounded-xl border p-4 min-h-[480px] w-72 shrink-0 ${
+                  col.droppable ? 'border-[var(--color-border)]/50 bg-[var(--color-surface-2)]' : 'border-dashed border-[var(--color-border)]/40 bg-[var(--color-surface-offset)]/30'
+                }`}
+              >
+                <div className="flex items-center justify-between border-b border-[var(--color-divider)]/40 pb-3 mb-4">
+                  <span className="text-xs font-bold text-[var(--color-text)] uppercase tracking-wider">
+                    {col.label}
+                  </span>
+                  <span className="bg-surface border border-border/40 text-[var(--color-text-muted)] text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
+                    {colInvoices.length}
+                  </span>
+                </div>
+
+                {!col.droppable && (
+                  <p className="text-[10px] text-[var(--color-text-faint)] italic mb-2 -mt-2">
+                    Auto-set from payments
+                  </p>
+                )}
+
+                <div className="flex flex-col gap-3 overflow-y-auto max-h-[520px]">
+                  {colInvoices.map((inv) => (
+                    <div
+                      key={inv.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, inv.id)}
+                      onClick={() => setRoute('invoice-detail', inv.id)}
+                      className="bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-primary)]/40 hover:shadow-sm rounded-lg p-4 cursor-grab active:cursor-grabbing text-left transition-all duration-[var(--transition-interactive)] animate-fade-in group"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors">
+                          {inv.number}
+                        </span>
+                        <ExternalLink className="w-3 h-3 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+
+                      <div className="text-sm font-semibold text-[var(--color-text)] line-clamp-1 mb-2">
+                        {getCustomerName(inv.customerId)}
+                      </div>
+
+                      {inv.amountDue > 0 && (
+                        <div className="text-[10px] font-bold text-[var(--color-error)] mb-1">
+                          Balance: {inv.amountDue.toLocaleString(undefined, { minimumFractionDigits: 2 })} {inv.currency}
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-end border-t border-[var(--color-divider)]/20 pt-3 mt-1">
+                        <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                          {new Date(inv.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </span>
+                        <span className="text-xs font-bold text-[var(--color-text)]">
+                          {inv.total.toLocaleString()} {inv.currency}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {colInvoices.length === 0 && (
+                    <div className="border border-dashed border-[var(--color-border)] rounded-lg p-6 text-center text-xs text-[var(--color-text-muted)]">
+                      {col.droppable ? 'Drop cards here' : 'Empty'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div className="premium-card overflow-hidden">
           <div className="overflow-x-auto w-full">

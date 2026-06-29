@@ -12,11 +12,9 @@ import {
   Search,
   Trash2,
   ExternalLink,
-  ChevronDown,
-  ArrowUpDown,
-  Filter,
   CheckCircle2,
-  FileCheck2
+  FileCheck2,
+  FileSpreadsheet
 } from 'lucide-react';
 
 export const Quotations: React.FC = () => {

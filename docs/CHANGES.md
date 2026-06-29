@@ -269,6 +269,21 @@ drives the guard in `App.renderActiveView`, complementing the already-hidden nav
 
 ---
 
+## 17. Kanban pipeline (invoices) + bug fix
+
+**How:**
+- **Invoices Kanban** board added (mirrors the existing Quotations board): list/board
+  toggle, columns by status, native HTML5 drag-to-change-status. `partial`/`paid`
+  columns are **display-only** (those statuses are derived from recorded payments),
+  so dropping there is ignored and the columns are visually marked.
+- **Fix:** `Quotations` used `FileSpreadsheet` in its empty-state without importing it
+  — an empty/filtered-to-zero quotations list would crash. Added the import (and
+  dropped genuinely unused icon imports).
+
+**Files:** `src/pages/Invoices.tsx`, `src/pages/Quotations.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
@@ -291,7 +306,6 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
 
 ### Legacy features still to port
 - **AI Assistant** (OpenRouter SQL chat) behind `canUseAI`.
-- **Kanban pipeline** board over quotations/invoices.
 - **Tracking page** (advanced filters, bulk status, follow-up date/note).
 - **Version diff viewer** + timeline "undo/restore" actions.
 
