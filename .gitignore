@@ -25,6 +25,7 @@ dist-ssr/
 # ── Backup snapshots ───────────────────────────────────────────────────────────
 backups/
 *.backup-*
+*.bak
 
 # ── Uploaded media / logos ─────────────────────────────────────────────────────
 uploads/

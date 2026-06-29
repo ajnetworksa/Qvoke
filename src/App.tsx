@@ -24,7 +24,10 @@ import {
   CheckSquare,
   Search,
   Rows3,
-  Radar
+  Radar,
+  ChevronDown,
+  Check,
+  Plus
 } from 'lucide-react';
 
 // Subpage views imports
@@ -62,12 +65,34 @@ export const App: React.FC = () => {
     authChecked,
     checkAuth,
     logout,
-    company
+    company,
+    companies,
+    activeCompanyId,
+    switchCompany,
+    createCompany
   } = useERPStore();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [identityDropdownOpen, setIdentityDropdownOpen] = useState(false);
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
+  const [newCompanyName, setNewCompanyName] = useState('');
+  const [creatingCompany, setCreatingCompany] = useState(false);
+
+  const activeCompany = companies.find((c) => c.id === activeCompanyId);
+
+  const handleCreateCompany = async () => {
+    const name = newCompanyName.trim();
+    if (!name || creatingCompany) return;
+    setCreatingCompany(true);
+    const id = await createCompany(name);
+    setCreatingCompany(false);
+    setNewCompanyName('');
+    if (id) {
+      setCompanyMenuOpen(false);
+      await switchCompany(id);
+    }
+  };
 
   // Check auth status on load
   useEffect(() => {
@@ -341,9 +366,66 @@ export const App: React.FC = () => {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-[var(--color-text-muted)]">
-              <Building className="w-4 h-4 text-[var(--color-text-faint)]" />
-              <span>{company.name}</span>
+            {/* Company switcher (multi-tenancy) */}
+            <div className="relative hidden lg:block">
+              <button
+                onClick={() => setCompanyMenuOpen((o) => !o)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-[var(--color-border)]/80 hover:bg-[var(--color-surface-offset)] text-xs font-semibold text-[var(--color-text)] transition-colors cursor-pointer"
+                title="Switch company"
+              >
+                <Building className="w-4 h-4 text-[var(--color-primary)]" />
+                <span className="max-w-[160px] truncate">{activeCompany?.name || company.name}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+              </button>
+
+              {companyMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setCompanyMenuOpen(false)} />
+                  <div className="absolute left-0 top-full mt-1.5 w-64 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg py-2 z-50 text-left animate-slide-in">
+                    <div className="px-3 py-1.5 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)] mb-1">
+                      Companies / الشركات
+                    </div>
+                    <div className="max-h-56 overflow-y-auto">
+                      {companies.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => { setCompanyMenuOpen(false); switchCompany(c.id); }}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-[var(--color-surface-offset)] transition-colors cursor-pointer ${
+                            c.id === activeCompanyId ? 'text-[var(--color-primary)] font-bold' : 'text-[var(--color-text)]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <Building className="w-3.5 h-3.5 shrink-0" />
+                            <span className="truncate">{c.name}</span>
+                          </span>
+                          {c.id === activeCompanyId
+                            ? <Check className="w-3.5 h-3.5 shrink-0" />
+                            : <span className="text-[9px] uppercase text-[var(--color-text-faint)] font-bold">{c.role}</span>}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="border-t border-[var(--color-border)] mt-1 pt-2 px-2">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          value={newCompanyName}
+                          onChange={(e) => setNewCompanyName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCompany(); }}
+                          placeholder="New company name…"
+                          className="flex-1 premium-input py-1.5 text-xs"
+                        />
+                        <button
+                          onClick={handleCreateCompany}
+                          disabled={!newCompanyName.trim() || creatingCompany}
+                          className="p-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors cursor-pointer disabled:opacity-50"
+                          title="Create company"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

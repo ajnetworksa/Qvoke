@@ -189,6 +189,15 @@ export interface Supplier {
   name: string;
 }
 
+export interface CompanyMembership {
+  id: string;
+  name: string;
+  slug?: string | null;
+  activePlan: string;
+  role: 'owner' | 'admin' | 'member';
+  createdAt?: string;
+}
+
 export interface PersonalTask {
   id: string;
   userId: string;

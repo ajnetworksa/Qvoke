@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask } from './types';
+import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask, CompanyMembership } from './types';
 
 interface ERPState {
   currentPage: string;
@@ -19,6 +19,8 @@ interface ERPState {
   invoices: Invoice[];
   suppliers: Supplier[];
   tasks: PersonalTask[];
+  companies: CompanyMembership[];
+  activeCompanyId: string | null;
   features: Record<string, boolean>;
   activePlan: string;
   kanbanView: boolean;
@@ -69,6 +71,11 @@ interface ERPState {
   deleteInvoice: (id: string) => Promise<void>;
   postInvoice: (id: string) => Promise<void>;
   recordPayment: (invoiceId: string, payment: Payment) => Promise<void>;
+
+  // Multi-company
+  fetchCompanies: () => Promise<void>;
+  switchCompany: (companyId: string) => Promise<void>;
+  createCompany: (name: string) => Promise<string | null>;
 
   // Follow-up tracking
   setFollowUp: (docType: 'quotation' | 'invoice', id: string, followUpDate: string | null, followUpNote: string | null) => Promise<void>;
@@ -127,6 +134,12 @@ const apiFetch = async (url: string, options: RequestInit = {}, token: string | 
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Scope every request to the active company (multi-tenancy).
+  const activeCompany = localStorage.getItem('erp_active_company');
+  if (activeCompany) {
+    headers['X-Company-Id'] = activeCompany;
+  }
+
   const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
   if (res.status === 401) {
     // Session token expired/invalid
@@ -166,6 +179,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
   invoices: [],
   suppliers: [],
   tasks: [],
+  companies: [],
+  activeCompanyId: localStorage.getItem('erp_active_company'),
   features: {},
   activePlan: 'enterprise',
   kanbanView: false,
@@ -347,6 +362,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
       } catch (e) {
         console.error('Failed to fetch feature flags:', e);
       }
+
+      // 8. Fetch companies the user belongs to (multi-tenancy)
+      await get().fetchCompanies();
 
       set({ initialized: true });
     } catch (err) {
@@ -755,6 +773,61 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }
     } catch (err) {
       console.error(err);
+    }
+  },
+
+  // ── MULTI-COMPANY ───────────────────────────────────────────────────────────
+  fetchCompanies: async () => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/companies', {}, token);
+      if (res.ok) {
+        const data = await res.json();
+        const companies: CompanyMembership[] = data.companies || [];
+        // Reconcile the persisted active company with what the server resolved.
+        let active = localStorage.getItem('erp_active_company') || data.activeCompanyId;
+        if (!companies.some((c) => c.id === active)) active = data.activeCompanyId;
+        if (active) localStorage.setItem('erp_active_company', active);
+        set({ companies, activeCompanyId: active });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  switchCompany: async (companyId) => {
+    if (get().activeCompanyId === companyId) return;
+    localStorage.setItem('erp_active_company', companyId);
+    // Clear active-document pointers (they belong to the previous company).
+    localStorage.removeItem('erp_active_quote');
+    localStorage.removeItem('erp_active_invoice');
+    // Reset all company-scoped data and re-initialize against the new company.
+    set({
+      activeCompanyId: companyId,
+      initialized: false,
+      customers: [], products: [], quotations: [], invoices: [], suppliers: [],
+      activeQuoteId: null, activeInvoiceId: null,
+      currentPage: 'dashboard', currentRecordId: null
+    });
+    await get().initializeStore();
+  },
+
+  createCompany: async (name) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/companies', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      }, token);
+      if (res.ok) {
+        const created = await res.json();
+        await get().fetchCompanies();
+        return created.id as string;
+      }
+      return null;
+    } catch (err) {
+      console.error(err);
+      return null;
     }
   },
 

@@ -309,6 +309,44 @@ follow-up date/note); requested under Remaining.
 
 ---
 
+## 19. Multi-company / multi-tenancy
+
+**Why:** the largest requested item — isolate data per company with a switcher.
+
+**How (backend):**
+- New `companies` and `user_companies` tables. A single **default company** is
+  seeded from existing settings (named after the current company profile), all
+  legacy rows are **backfilled** into it, and every existing user is enrolled
+  (admins as `owner`). Verified: 0 null-`companyId` rows post-migration.
+- `companyId` column added to the five scoped tables: `customers`, `products`,
+  `quotations`, `invoices`, `boq`. **Every** list/get/create/update/delete is
+  scoped by the active company (writes also guard `AND companyId = ?`).
+- Active company is resolved per request from an `X-Company-Id` header, with a
+  **deterministic fallback** to the default company (so legacy/headerless requests
+  keep working unchanged).
+- Endpoints: `GET /api/companies` (memberships + active), `POST /api/companies`
+  (creator becomes owner), `PUT /api/companies/:id` (owner/admin rename/replan).
+- The live DB was backed up to `quotes.db.pre-multitenancy.bak` before migrating.
+
+**How (frontend):**
+- `apiFetch` sends `X-Company-Id` from `localStorage` on every request.
+- Store: `companies` / `activeCompanyId`, `fetchCompanies`, `createCompany`, and
+  `switchCompany` (clears scoped data + active-doc pointers and re-initializes).
+- **Header company switcher**: lists memberships with the active one checked,
+  inline "new company" create that auto-switches.
+
+**Verified:** existing data stays in the default company (415 quotes / 232
+customers); a new company starts empty (0/0); switching back restores the original;
+isolation holds with explicit headers. No console errors.
+
+**Deferred (phase 2):** per-company numbering sequences, branding & feature flags
+(currently global; columns are company-ready); scoping suppliers (global UNIQUE
+name), audit/usage/exports/PDF-by-id; owner UI to invite users & assign plans.
+
+**Files:** `server.ts`, `src/store.ts`, `src/types.ts`, `src/App.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
@@ -321,13 +359,10 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
 
 ## Remaining work
 
-### Full multi-company / multi-tenancy (largest item)
-- `companies`, `user_companies`, `company_features` tables.
-- `companyId` on quotations, invoices, boq, customers, products, suppliers.
-- Scope **every** query by active company; company switcher in header.
-- Per-company settings, numbering sequences, branding, and feature flags
-  (current flags are global but built company-ready).
-- Owner surface to create companies, invite admins, assign plans.
+### Multi-tenancy — phase 2 (foundation shipped in §19)
+- Per-company numbering sequences, branding, and feature flags (currently global).
+- Scope the remaining surfaces: suppliers, audit/usage, Excel exports, PDF-by-id.
+- Owner surface to invite users to a company and assign plans/roles.
 
 ### Legacy features still to port
 - **AI Assistant** (OpenRouter SQL chat) behind `canUseAI`.
