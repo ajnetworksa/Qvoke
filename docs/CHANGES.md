@@ -284,6 +284,31 @@ drives the guard in `App.renderActiveView`, complementing the already-hidden nav
 
 ---
 
+## 18. Tracking & Follow-ups page
+
+**Why:** legacy had a dedicated tracking surface (advanced filters, bulk status,
+follow-up date/note); requested under Remaining.
+
+**How:**
+- New `followUpDate` / `followUpNote` columns on quotations & invoices, updated via
+  **dedicated** lightweight endpoints `PUT /api/quotes/:id/followup` and
+  `/api/invoices/:id/followup` (gated by `tracking`) — kept separate from the heavy
+  editor PUT so document saves never clobber follow-up data. `GET` already uses
+  `SELECT *`, so the fields flow through automatically.
+- `setFollowUp` store action (optimistic local update on success).
+- `Tracking` page: Quotations/Invoices toggle, search, status pills, date-range,
+  and a follow-up filter (has / due today / overdue / none) with an overdue badge.
+  Row-level follow-up chips (colour-coded: overdue/today/upcoming) + note, a
+  single/bulk follow-up editor modal, and bulk status changes (manual transitions
+  only — invoice `paid`/`partial` excluded as payment-derived).
+- Wired into nav (SALES), routing, the route-feature guard, and the ⌘K palette,
+  all gated by the existing `tracking` flag.
+
+**Files:** `server.ts`, `src/store.ts`, `src/types.ts`, `src/pages/Tracking.tsx`,
+`src/App.tsx`, `src/components/CommandPalette.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
@@ -306,7 +331,6 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
 
 ### Legacy features still to port
 - **AI Assistant** (OpenRouter SQL chat) behind `canUseAI`.
-- **Tracking page** (advanced filters, bulk status, follow-up date/note).
 - **Version diff viewer** + timeline "undo/restore" actions.
 
 ### Polish / smaller gaps

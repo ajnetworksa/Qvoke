@@ -19,7 +19,8 @@ import {
   ArrowDown,
   Command as CommandIcon,
   TrendingUp,
-  Building
+  Building,
+  Radar
 } from 'lucide-react';
 
 interface CommandItem {
@@ -73,6 +74,7 @@ export const CommandPalette: React.FC = () => {
       featureOn('quotations') && { id: 'nav-quotes', label: 'Quotations', group: 'Navigate', icon: FileSpreadsheet, run: go('quotations') },
       featureOn('invoices') && { id: 'nav-invoices', label: 'Invoices', group: 'Navigate', icon: FileText, run: go('invoices') },
       featureOn('boq') && { id: 'nav-boq', label: 'BOQ / BOM', group: 'Navigate', icon: ClipboardList, run: go('boq') },
+      featureOn('tracking') && { id: 'nav-tracking', label: 'Tracking & Follow-ups', group: 'Navigate', icon: Radar, run: go('tracking') },
       featureOn('reports') && { id: 'nav-reports', label: 'Financials', group: 'Navigate', icon: TrendingUp, run: go('reports') },
       featureOn('customers') && { id: 'nav-customers', label: 'Customers', group: 'Navigate', icon: Users, run: go('customers') },
       featureOn('suppliers') && { id: 'nav-suppliers', label: 'Suppliers', group: 'Navigate', icon: Building, run: go('suppliers') },

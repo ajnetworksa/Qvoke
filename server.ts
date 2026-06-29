@@ -550,6 +550,12 @@ addColumnIfNotExists('invoices', 'hidePrices', "INTEGER DEFAULT 0");
 addColumnIfNotExists('invoices', 'manualTotal', "REAL");
 addColumnIfNotExists('boq', 'type', "TEXT DEFAULT 'boq'");
 
+// Follow-up tracking (Tracking page): next-action date + free-text note
+addColumnIfNotExists('quotations', 'followUpDate', 'TEXT');
+addColumnIfNotExists('quotations', 'followUpNote', 'TEXT');
+addColumnIfNotExists('invoices', 'followUpDate', 'TEXT');
+addColumnIfNotExists('invoices', 'followUpNote', 'TEXT');
+
 // ── SEEDING MOCK DATA ─────────────────────────────────────────────────────────
 const seedDatabase = () => {
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
@@ -2204,6 +2210,26 @@ app.delete('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) =>
     res.status(500).json({ error: error.message });
   }
 });
+
+// ── FOLLOW-UP TRACKING ────────────────────────────────────────────────────────
+// Lightweight, dedicated updates for the Tracking page so the heavy editor PUT
+// (which rewrites a fixed column set) never clobbers these fields.
+const followUpHandler = (table: 'quotations' | 'invoices') =>
+  (req: express.Request, res: express.Response) => {
+    try {
+      const { followUpDate, followUpNote } = req.body;
+      const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(req.params.id);
+      if (!exists) return res.status(404).json({ error: 'Document not found.' });
+      db.prepare(`UPDATE ${table} SET followUpDate = ?, followUpNote = ? WHERE id = ?`)
+        .run(followUpDate || null, followUpNote || null, req.params.id);
+      res.json({ success: true, followUpDate: followUpDate || null, followUpNote: followUpNote || null });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+app.put('/api/quotes/:id/followup', requireAuth, requireFeature('tracking'), followUpHandler('quotations'));
+app.put('/api/invoices/:id/followup', requireAuth, requireFeature('tracking'), followUpHandler('invoices'));
 
 
 // ── SERVER-SIDE PDF GENERATION ────────────────────────────────────────────────

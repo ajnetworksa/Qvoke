@@ -92,6 +92,8 @@ export interface Quotation {
   watermarkType?: 'none' | 'center' | 'multi';
   hidePrices?: boolean;
   manualTotal?: number;
+  followUpDate?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface Invoice {
@@ -123,6 +125,8 @@ export interface Invoice {
   watermarkType?: 'none' | 'center' | 'multi';
   hidePrices?: boolean;
   manualTotal?: number;
+  followUpDate?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface Payment {

@@ -70,6 +70,9 @@ interface ERPState {
   postInvoice: (id: string) => Promise<void>;
   recordPayment: (invoiceId: string, payment: Payment) => Promise<void>;
 
+  // Follow-up tracking
+  setFollowUp: (docType: 'quotation' | 'invoice', id: string, followUpDate: string | null, followUpNote: string | null) => Promise<void>;
+
   // Personal Tasks
   fetchTasks: () => Promise<void>;
   addTask: (task: Partial<PersonalTask>) => Promise<void>;
@@ -749,6 +752,27 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ invoices: invoices.map((i) => (i.id === invoiceId ? updatedInvoice : i)) });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  // ── FOLLOW-UP TRACKING ──────────────────────────────────────────────────────
+  setFollowUp: async (docType, id, followUpDate, followUpNote) => {
+    const { token, quotations, invoices } = get();
+    const path = docType === 'quotation' ? `/quotes/${id}/followup` : `/invoices/${id}/followup`;
+    try {
+      const res = await apiFetch(path, {
+        method: 'PUT',
+        body: JSON.stringify({ followUpDate, followUpNote })
+      }, token);
+      if (res.ok) {
+        if (docType === 'quotation') {
+          set({ quotations: quotations.map((q) => (q.id === id ? { ...q, followUpDate, followUpNote } : q)) });
+        } else {
+          set({ invoices: invoices.map((i) => (i.id === id ? { ...i, followUpDate, followUpNote } : i)) });
+        }
       }
     } catch (err) {
       console.error(err);

@@ -23,7 +23,8 @@ import {
   FilePlus2,
   CheckSquare,
   Search,
-  Rows3
+  Rows3,
+  Radar
 } from 'lucide-react';
 
 // Subpage views imports
@@ -38,6 +39,7 @@ import { Products } from './pages/Products';
 import { Settings as SettingsPage } from './pages/Settings';
 import { Reports } from './pages/Reports';
 import { BOQ } from './pages/BOQ';
+import { Tracking } from './pages/Tracking';
 import { MyTasks } from './pages/MyTasks';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
@@ -109,6 +111,7 @@ export const App: React.FC = () => {
     { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES', feature: 'invoices' },
     { id: 'invoices', label: 'Invoices / سجل الفواتير', icon: FileText, category: 'SALES', feature: 'invoices' },
     { id: 'boq', label: 'BOQ / جدول الكميات', icon: ClipboardList, category: 'SALES', feature: 'boq' },
+    { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'SALES', feature: 'tracking' },
     { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL', feature: 'reports' },
     { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG', feature: 'customers' },
     { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG', feature: 'suppliers' },
@@ -131,6 +134,7 @@ export const App: React.FC = () => {
     invoices: 'invoices',
     'invoice-detail': 'invoices',
     boq: 'boq',
+    tracking: 'tracking',
     reports: 'reports',
     customers: 'customers',
     suppliers: 'suppliers',
@@ -179,6 +183,8 @@ export const App: React.FC = () => {
         return <Products />;
       case 'boq':
         return <BOQ />;
+      case 'tracking':
+        return <Tracking />;
       case 'tasks':
         return <MyTasks />;
       case 'settings':
