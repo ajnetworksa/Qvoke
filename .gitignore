@@ -59,3 +59,14 @@ Desktop.ini
 # ── Logs ───────────────────────────────────────────────────────────────────────
 logs/
 *.log
+
+# ── Claude Code / local tooling ────────────────────────────────────────────────
+.claude/settings.local.json
+.claude/projects/
+.claude/**/memory/
+# launch.json (preview dev-server config) is intentionally tracked
+
+# ── Scratch / temp ─────────────────────────────────────────────────────────────
+scratchpad/
+tmp/
+*.tmp

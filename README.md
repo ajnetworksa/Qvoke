@@ -14,10 +14,15 @@
 | **Customers** | Quick-create from quotation · Excel import/export · Full address book |
 | **Suppliers** | Catalog management · Bulk product copy/move · Excel import/export |
 | **Products** | Service & product catalog · Tax rate · Excel import/export · Quick-create from quote |
-| **Financials** | Revenue, outstanding, VAT summaries · Period filters |
-| **Settings** | Site logo · PDF logo · PDF header/footer styling · Watermark config · User RBAC |
+| **Financials** | Revenue, outstanding, VAT summaries · Period filters · Usage analytics (activity by type & user) |
+| **My Tasks** | Per-user task / pending-work tracker · priority, due dates & status board · overdue alerts |
+| **Command Palette** | ⌘K fuzzy search across documents, customers & actions · global keyboard shortcuts |
+| **Audit Trail** | Per-document timeline (who created / changed what) · global audit log · in-app notifications |
+| **Plans & Features** | Toggle modules on/off · Starter / Professional / Enterprise presets · route-level guards |
+| **Settings** | Site logo · PDF logo · PDF header/footer styling · Watermark config · User RBAC · Document numbering sequences |
 | **Backup & Restore** | SQLite snapshots · Download/upload .db files · Full Excel export (all tables) |
 | **Dual Logo** | Separate site logo (sidebar) vs PDF header logo |
+| **Appearance** | Light / dark / system theme · Comfortable / Compact density · modern UI refresh |
 
 ---
 
@@ -107,6 +112,20 @@ The app will be available at **http://localhost:3001**
 
 ---
 
+## ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl` / `⌘` + `K` | Open the command palette (search documents, customers & actions) |
+| `?` | Show the keyboard-shortcuts help overlay |
+| `n` | New quotation |
+| `g` then `d / q / i / b / c / p / t / r / s` | Jump to Dashboard / Quotations / Invoices / BOQ / Customers / Products / Tasks / Financials / Settings |
+| `Esc` | Close palette / overlay |
+
+> Shortcuts are suppressed while typing in an input, textarea, or select.
+
+---
+
 ## 🏗️ Project Structure
 
 ```
@@ -118,6 +137,9 @@ New ERP/
 │   ├── types.ts            # TypeScript interfaces
 │   ├── index.css           # Design tokens + dark/light theme
 │   ├── components/
+│   │   ├── CommandPalette.tsx      # ⌘K command palette + keyboard shortcuts
+│   │   ├── NotificationBell.tsx    # In-app notifications dropdown
+│   │   ├── DocumentTimeline.tsx    # Per-document audit/activity timeline
 │   │   ├── CustomerCombobox.tsx    # Customer selector with quick-create
 │   │   ├── ProductCombobox.tsx     # Product selector with quick-create
 │   │   ├── DatabaseBackupDB.tsx    # Backup/restore + full Excel export
@@ -125,20 +147,26 @@ New ERP/
 │   │   ├── PDFPreviewModal.tsx     # In-browser PDF preview
 │   │   ├── EmailSendModal.tsx      # Email delivery modal
 │   │   └── ...
+│   ├── hooks/
+│   │   ├── useAutoSave.ts          # Debounced autosave
+│   │   └── useDraft.ts             # localStorage-backed draft persistence
 │   ├── pages/
-│   │   ├── Dashboard.tsx
+│   │   ├── Dashboard.tsx           # Live KPIs, revenue chart, funnel, activity feed
+│   │   ├── MyTasks.tsx             # Personal task / pending-work tracker
 │   │   ├── QuotationDetail.tsx     # Full quotation editor
 │   │   ├── InvoiceDetail.tsx       # Full invoice editor
-│   │   ├── BOQ.tsx                 # Bill of Quantities
+│   │   ├── BOQ.tsx                 # Bill of Quantities / Materials
 │   │   ├── Customers.tsx
 │   │   ├── Suppliers.tsx
 │   │   ├── Products.tsx
-│   │   ├── Reports.tsx
-│   │   └── Settings.tsx
+│   │   ├── Reports.tsx             # Financials + usage analytics
+│   │   └── Settings.tsx            # Company, plan & features, numbering, appearance
 │   └── utils/
 │       └── search.ts               # Universal fuzzy search utility
 ├── pdf/
 │   └── quote-document.tsx          # @react-pdf/renderer document template
+├── docs/
+│   └── CHANGES.md                  # Detailed change log & implementation notes
 ├── backups/                        # SQLite backup snapshots (git-ignored)
 ├── quotes.db                       # Live SQLite database (git-ignored)
 ├── .env                            # Environment secrets (git-ignored)
@@ -199,9 +227,16 @@ Downloads a single `.xlsx` workbook with sheets for:
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/quotations` | List all quotations |
-| `POST` | `/api/quotations` | Create quotation |
-| `PUT` | `/api/quotations/:id` | Update quotation |
+| `GET` | `/api/quotes` | List all quotations |
+| `POST` | `/api/quotes` | Create quotation (number assigned server-side) |
+| `PUT` | `/api/quotes/:id` | Update quotation |
+| `GET` | `/api/invoices` · `/api/boq` | List invoices / BOQ-BOM |
+| `GET` | `/api/sequences` · `PUT /api/sequences/:docType` | Read / edit document numbering |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/tasks` | Personal task tracker (per user) |
+| `GET` | `/api/usage` | Usage analytics (activity by type & user) |
+| `GET` | `/api/activity/:docType/:docId` · `/api/audit` | Per-document & global audit trail |
+| `GET` / `PUT` | `/api/features` | Active plan & feature flags |
+| `GET` | `/api/notifications` · `POST /api/notifications/refresh` | In-app notifications |
 | `GET` | `/api/pdf/quotation/:id` | Download PDF |
 | `GET` | `/api/export/full` | Full Excel export |
 | `POST` | `/api/import/products` | Bulk import products |

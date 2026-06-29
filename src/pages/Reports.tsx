@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useERPStore } from '../store';
 import { PageHeader } from '../components/PageHeader';
-import { DollarSign, FileSpreadsheet, TrendingUp, AlertTriangle } from 'lucide-react';
+import { DollarSign, FileSpreadsheet, TrendingUp, AlertTriangle, BarChart3, Activity, Users } from 'lucide-react';
 
 export const Reports: React.FC = () => {
-  const { invoices, company } = useERPStore();
+  const { invoices, company, currentUser, features } = useERPStore();
+  const canViewRevenue = currentUser?.role === 'admin' || !!currentUser?.permissions?.canViewRevenue;
+  const usageEnabled = features['usage'] !== false;
 
   // Dynamic Financial aggregates
   const totalSales = invoices.reduce((sum, inv) => sum + inv.total, 0);
@@ -203,7 +205,151 @@ export const Reports: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {canViewRevenue && usageEnabled && <UsageAnalyticsPanel />}
     </div>
   );
 };
+
+// ── Usage Analytics ───────────────────────────────────────────────────────────
+interface UsageData {
+  byType: { docType: string; action: string; count: number }[];
+  byUser: { actorId: string; actorName: string; count: number }[];
+  liveCounts: Record<string, number>;
+}
+
+const RANGE_OPTIONS: { key: string; label: string; days: number }[] = [
+  { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '30d', label: 'Last 30 days', days: 30 },
+  { key: '90d', label: 'Last 90 days', days: 90 },
+  { key: 'all', label: 'All time', days: 0 }
+];
+
+const UsageAnalyticsPanel: React.FC = () => {
+  const token = useERPStore((s) => s.token);
+  const [data, setData] = useState<UsageData | null>(null);
+  const [range, setRange] = useState('30d');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const opt = RANGE_OPTIONS.find((r) => r.key === range)!;
+      const since = opt.days > 0
+        ? new Date(Date.now() - opt.days * 86400000).toISOString()
+        : '1970-01-01';
+      try {
+        const res = await fetch(`/api/usage?since=${encodeURIComponent(since)}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok && !cancelled) setData(await res.json());
+      } catch { /* ignore */ } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [range, token]);
+
+  const createdByType = (() => {
+    const map: Record<string, number> = {};
+    (data?.byType || []).filter((r) => r.action === 'created').forEach((r) => {
+      map[r.docType] = (map[r.docType] || 0) + r.count;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  })();
+  const maxCreated = Math.max(1, ...createdByType.map(([, c]) => c));
+  const maxUser = Math.max(1, ...(data?.byUser || []).map((u) => u.count));
+
+  return (
+    <div className="premium-card p-6 text-left mt-8">
+      <div className="border-b border-[var(--color-divider)]/40 pb-4 mb-5 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-[var(--color-primary)]" /> Usage Analytics / تحليلات الاستخدام
+          </h3>
+          <p className="text-xs text-[var(--color-text-muted)]">Document activity and creation volume by type and user.</p>
+        </div>
+        <select
+          value={range}
+          onChange={(e) => setRange(e.target.value)}
+          className="premium-input text-xs py-1.5 w-auto"
+        >
+          {RANGE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+      </div>
+
+      {/* Live totals */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
+        {Object.entries(data?.liveCounts || {}).map(([k, v]) => (
+          <div key={k} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)]/30 p-3 text-center">
+            <div className="text-lg font-bold font-mono text-[var(--color-text)]">{v}</div>
+            <div className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mt-0.5">{k}</div>
+          </div>
+        ))}
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-[var(--color-text-muted)] italic py-4">Loading analytics…</p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Documents created by type */}
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5" /> Documents Created
+            </p>
+            {createdByType.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-muted)] italic">No activity in this period.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {createdByType.map(([type, count]) => (
+                  <div key={type}>
+                    <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1.5 capitalize">
+                      <span>{type}</span>
+                      <span className="font-mono">{count}</span>
+                    </div>
+                    <div className="w-full bg-[var(--color-surface-2)] h-2 rounded overflow-hidden">
+                      <div
+                        className="bg-[var(--color-primary)] h-full rounded transition-all duration-500"
+                        style={{ width: `${(count / maxCreated) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Most active users */}
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-3 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" /> Most Active Users
+            </p>
+            {(data?.byUser || []).length === 0 ? (
+              <p className="text-xs text-[var(--color-text-muted)] italic">No activity in this period.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {(data?.byUser || []).slice(0, 8).map((u) => (
+                  <div key={u.actorId}>
+                    <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1.5">
+                      <span className="truncate">{u.actorName || u.actorId || 'Unknown'}</span>
+                      <span className="font-mono">{u.count}</span>
+                    </div>
+                    <div className="w-full bg-[var(--color-surface-2)] h-2 rounded overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-full rounded transition-all duration-500"
+                        style={{ width: `${(u.count / maxUser) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default Reports;

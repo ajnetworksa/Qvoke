@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useERPStore, calculateTotals } from '../store';
 import { Customer, Product, LineItem, Invoice, Payment } from '../types';
 import { PageHeader } from '../components/PageHeader';
@@ -41,6 +41,7 @@ interface InvoiceDetailProps {
 export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const {
     invoices,
+    quotations,
     customers,
     products,
     setRoute,
@@ -230,6 +231,8 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       taxTotal: finalTaxTotal,
       total: finalTotal,
       payments: existingInv ? existingInv.payments : [],
+      amountPaid: existingInv ? existingInv.amountPaid : 0,
+      amountDue: Math.round((finalTotal - (existingInv ? existingInv.amountPaid : 0)) * 100) / 100,
       linkedQuoteId,
       createdAt: existingInv ? existingInv.createdAt : new Date(),
       updatedAt: new Date(),

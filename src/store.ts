@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier } from './types';
+import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask } from './types';
 
 interface ERPState {
   currentPage: string;
@@ -9,6 +9,7 @@ interface ERPState {
   activeQuoteId: string | null;
   activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
+  density: 'comfortable' | 'compact';
   token: string | null;
   currentUser: User | null;
   company: Company;
@@ -17,6 +18,7 @@ interface ERPState {
   quotations: Quotation[];
   invoices: Invoice[];
   suppliers: Supplier[];
+  tasks: PersonalTask[];
   features: Record<string, boolean>;
   activePlan: string;
   kanbanView: boolean;
@@ -26,6 +28,7 @@ interface ERPState {
   setCurrentPage: (page: string) => void;
   setRoute: (page: string, id?: string | null) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setDensity: (density: 'comfortable' | 'compact') => void;
   setKanbanView: (val: boolean) => void;
   
   // Authentication & Session
@@ -66,6 +69,12 @@ interface ERPState {
   deleteInvoice: (id: string) => Promise<void>;
   postInvoice: (id: string) => Promise<void>;
   recordPayment: (invoiceId: string, payment: Payment) => Promise<void>;
+
+  // Personal Tasks
+  fetchTasks: () => Promise<void>;
+  addTask: (task: Partial<PersonalTask>) => Promise<void>;
+  updateTask: (id: string, patch: Partial<PersonalTask>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }
 
 // Helper: Calculate totals for Line Items
@@ -144,6 +153,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
   activeQuoteId: localStorage.getItem('erp_active_quote'),
   activeInvoiceId: localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
+  density: (localStorage.getItem('erp_density') as 'comfortable' | 'compact') || 'comfortable',
   token: localStorage.getItem('erp_token'),
   currentUser: null,
   company: defaultCompany,
@@ -152,6 +162,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
   quotations: [],
   invoices: [],
   suppliers: [],
+  tasks: [],
   features: {},
   activePlan: 'enterprise',
   kanbanView: false,
@@ -182,6 +193,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
     }
     localStorage.setItem('erp_theme', theme);
     set({ theme });
+  },
+
+  setDensity: (density) => {
+    document.documentElement.setAttribute('data-density', density);
+    localStorage.setItem('erp_density', density);
+    set({ density });
   },
 
   setKanbanView: (val) => set({ kanbanView: val }),
@@ -732,6 +749,63 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ invoices: invoices.map((i) => (i.id === invoiceId ? updatedInvoice : i)) });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  // ── PERSONAL TASKS ──────────────────────────────────────────────────────────
+  fetchTasks: async () => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/tasks', {}, token);
+      if (res.ok) {
+        set({ tasks: await res.json() });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  addTask: async (task) => {
+    const { token, tasks } = get();
+    try {
+      const res = await apiFetch('/tasks', {
+        method: 'POST',
+        body: JSON.stringify(task)
+      }, token);
+      if (res.ok) {
+        const saved = await res.json();
+        set({ tasks: [saved, ...tasks] });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  updateTask: async (id, patch) => {
+    const { token, tasks } = get();
+    try {
+      const res = await apiFetch(`/tasks/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch)
+      }, token);
+      if (res.ok) {
+        const saved = await res.json();
+        set({ tasks: tasks.map((t) => (t.id === id ? saved : t)) });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  deleteTask: async (id) => {
+    const { token, tasks } = get();
+    try {
+      const res = await apiFetch(`/tasks/${id}`, { method: 'DELETE' }, token);
+      if (res.ok) {
+        set({ tasks: tasks.filter((t) => t.id !== id) });
       }
     } catch (err) {
       console.error(err);

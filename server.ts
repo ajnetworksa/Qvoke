@@ -231,6 +231,22 @@ db.exec(`
     createdAt TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(userId, isRead);
+
+  -- Personal task / pending-work tracker (per user)
+  CREATE TABLE IF NOT EXISTS personal_tasks (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'in_progress' | 'done'
+    priority TEXT NOT NULL DEFAULT 'normal', -- 'low' | 'normal' | 'high'
+    dueDate TEXT,
+    link TEXT,                              -- optional doc link e.g. 'quotation:qt-123'
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    completedAt TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_personal_tasks_user ON personal_tasks(userId, status);
 `);
 
 // Attribution columns on documents (who created / last updated)
@@ -446,6 +462,7 @@ const FEATURE_CATALOG = [
   { key: 'usage', label: 'Usage Analytics', core: false },
   { key: 'kanban', label: 'Kanban Pipeline', core: false },
   { key: 'aiAssistant', label: 'AI Assistant', core: false },
+  { key: 'tasks', label: 'Personal Task Tracker', core: false },
 ] as const;
 
 type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
@@ -454,11 +471,11 @@ type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
 const PLANS: Record<string, { label: string; features: FeatureKey[] }> = {
   starter: {
     label: 'Starter',
-    features: ['quotations', 'invoices', 'customers', 'products', 'notifications'],
+    features: ['quotations', 'invoices', 'customers', 'products', 'notifications', 'tasks'],
   },
   professional: {
     label: 'Professional',
-    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage'],
+    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks'],
   },
   enterprise: {
     label: 'Enterprise',
@@ -2106,6 +2123,83 @@ app.post('/api/notifications/refresh', requireAuth, (req, res) => {
       }
     }
     res.json({ success: true, created });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── PERSONAL TASK TRACKER ─────────────────────────────────────────────────────
+// Each user owns their own task list; no cross-user visibility.
+app.get('/api/tasks', requireAuth, requireFeature('tasks'), (req, res) => {
+  try {
+    const user = (req as any).user;
+    const rows = db.prepare(`
+      SELECT * FROM personal_tasks WHERE userId = ?
+      ORDER BY
+        CASE status WHEN 'done' THEN 1 ELSE 0 END,
+        CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+        (dueDate IS NULL), dueDate,
+        createdAt DESC
+    `).all(user.id);
+    res.json(rows);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/tasks', requireAuth, requireFeature('tasks'), (req, res) => {
+  try {
+    const user = (req as any).user;
+    const { title, notes, status, priority, dueDate, link } = req.body;
+    if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title is required.' });
+    const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO personal_tasks (id, userId, title, notes, status, priority, dueDate, link, createdAt, updatedAt, completedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, user.id, String(title).trim(), notes || null,
+      status || 'open', priority || 'normal', dueDate || null, link || null,
+      now, now, status === 'done' ? now : null
+    );
+    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ?').get(id));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
+  try {
+    const user = (req as any).user;
+    const existing = db.prepare('SELECT * FROM personal_tasks WHERE id = ? AND userId = ?').get(req.params.id, user.id) as any;
+    if (!existing) return res.status(404).json({ error: 'Task not found.' });
+    const { title, notes, status, priority, dueDate, link } = req.body;
+    const now = new Date().toISOString();
+    const newStatus = status ?? existing.status;
+    const completedAt = newStatus === 'done'
+      ? (existing.completedAt || now)
+      : null;
+    db.prepare(`
+      UPDATE personal_tasks
+      SET title = ?, notes = ?, status = ?, priority = ?, dueDate = ?, link = ?, updatedAt = ?, completedAt = ?
+      WHERE id = ? AND userId = ?
+    `).run(
+      title ?? existing.title, notes ?? existing.notes, newStatus,
+      priority ?? existing.priority, dueDate ?? existing.dueDate, link ?? existing.link,
+      now, completedAt, req.params.id, user.id
+    );
+    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ?').get(req.params.id));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
+  try {
+    const user = (req as any).user;
+    const result = db.prepare('DELETE FROM personal_tasks WHERE id = ? AND userId = ?').run(req.params.id, user.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'Task not found.' });
+    res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

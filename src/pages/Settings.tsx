@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Info,
   Layers,
-  Sparkles
+  Sparkles,
+  Hash
 } from 'lucide-react';
 import { mockUsers } from '../mockData';
 import { UserRole } from '../types';
@@ -722,29 +723,9 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
 
-              {/* ── Document Prefixes ─────────────────────────────────────── */}
+              {/* ── Document Numbering Sequences ──────────────────────────── */}
               <div className="border-t border-[var(--color-divider)]/30 pt-6">
-                <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-text)] mb-4">Document Prefixes</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-semibold text-[var(--color-text-muted)]">
-                  <div>
-                    <label className="block mb-1.5">Quotation Prefix</label>
-                    <input type="text" defaultValue="QT-2026-" className="w-full premium-input font-mono" />
-                  </div>
-                  <div>
-                    <label className="block mb-1.5">Invoice Prefix</label>
-                    <input type="text" defaultValue="INV-2026-" className="w-full premium-input font-mono" />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block mb-1.5">Default Bank Coordinates &amp; Terms (Bilingual)</label>
-                    <textarea
-                      rows={6}
-                      defaultValue={company.defaultTax === 15 ?
-                        "ALINMA BANK - Account: 68206662020000\nIBAN: SA0305000068206662020000\nABDULMOSHIN ABDULAZIZ AL-JABR TRADING CO."
-                        : "Default terms applied..."}
-                      className="w-full premium-input text-xs font-mono leading-relaxed"
-                    />
-                  </div>
-                </div>
+                <NumberingSequencesPanel />
               </div>
 
               {/* Pricing Settings (Default Markup) */}
@@ -1418,6 +1399,148 @@ const PlanFeaturesPanel: React.FC = () => {
         {status === 'success' && <span className="text-xs text-emerald-500 font-bold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Saved — reload to apply navigation changes</span>}
         {status === 'error' && <span className="text-xs text-rose-500 font-bold">Save failed</span>}
       </div>
+    </div>
+  );
+};
+
+// ── Document Numbering Sequences ──────────────────────────────────────────────
+interface SequenceRow {
+  docType: string;
+  prefix: string;
+  lastNumber: number;
+  padding: number;
+  resetPeriod: string;
+  lastYear: number | null;
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  quotation: 'Quotation',
+  invoice: 'Invoice',
+  boq: 'BOQ',
+  bom: 'BOM'
+};
+
+const NumberingSequencesPanel: React.FC = () => {
+  const token = useERPStore((s) => s.token);
+  const authH = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  const [rows, setRows] = useState<SequenceRow[]>([]);
+  const [savingType, setSavingType] = useState<string | null>(null);
+  const [savedType, setSavedType] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch('/api/sequences', { headers: authH });
+      if (res.ok) setRows(await res.json());
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const patch = (docType: string, field: keyof SequenceRow, value: string | number) => {
+    setRows((rs) => rs.map((r) => (r.docType === docType ? { ...r, [field]: value } : r)));
+  };
+
+  const save = async (row: SequenceRow) => {
+    setSavingType(row.docType);
+    try {
+      const res = await fetch(`/api/sequences/${row.docType}`, {
+        method: 'PUT', headers: authH,
+        body: JSON.stringify({ prefix: row.prefix, padding: Number(row.padding), resetPeriod: row.resetPeriod })
+      });
+      if (res.ok) {
+        setSavedType(row.docType);
+        setTimeout(() => setSavedType((t) => (t === row.docType ? null : t)), 2500);
+      }
+    } catch { /* ignore */ } finally {
+      setSavingType(null);
+    }
+  };
+
+  // Mirror the server's PREFIX-[YYYY-]NNNN format so admins see the next number live.
+  const preview = (row: SequenceRow) => {
+    const next = String((row.lastNumber || 0) + 1).padStart(Number(row.padding) || 4, '0');
+    const year = row.resetPeriod === 'yearly' ? `${new Date().getFullYear()}-` : '';
+    return `${row.prefix}${year}${next}`;
+  };
+
+  return (
+    <div>
+      <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-text)] mb-1 flex items-center gap-1.5">
+        <Hash className="w-3.5 h-3.5 text-[var(--color-primary)]" /> Document Numbering / ترقيم المستندات
+      </h4>
+      <p className="text-[11px] text-[var(--color-text-muted)] mb-4">
+        Numbers are generated server-side. Editing the prefix, padding, or reset period affects only <strong>future</strong> documents.
+      </p>
+
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-text-muted)] italic">No sequences initialized yet. Create a document to seed them.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((row) => (
+            <div key={row.docType} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)]/30 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-[var(--color-text)]">{DOC_TYPE_LABELS[row.docType] || row.docType}</span>
+                <span className="text-[10px] font-mono font-bold text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-2 py-1 rounded">
+                  Next: {preview(row)}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                <div>
+                  <label className="block mb-1">Prefix</label>
+                  <input
+                    type="text"
+                    value={row.prefix}
+                    onChange={(e) => patch(row.docType, 'prefix', e.target.value)}
+                    className="w-full premium-input font-mono text-xs"
+                    placeholder="e.g. INV-"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1">Padding (digits)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={row.padding}
+                    onChange={(e) => patch(row.docType, 'padding', parseInt(e.target.value) || 1)}
+                    className="w-full premium-input font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1">Reset Period</label>
+                  <select
+                    value={row.resetPeriod}
+                    onChange={(e) => patch(row.docType, 'resetPeriod', e.target.value)}
+                    className="w-full premium-input text-xs"
+                  >
+                    <option value="never">Never (continuous)</option>
+                    <option value="yearly">Yearly (insert year)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  type="button"
+                  onClick={() => save(row)}
+                  disabled={savingType === row.docType}
+                  className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-[11px] font-bold py-1.5 px-3 rounded-md flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  {savingType === row.docType ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Save
+                </button>
+                {savedType === row.docType && (
+                  <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Saved
+                  </span>
+                )}
+                <span className="text-[10px] text-[var(--color-text-faint)] ml-auto font-mono">
+                  Last issued #{row.lastNumber}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

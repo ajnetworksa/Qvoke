@@ -185,3 +185,17 @@ export interface Supplier {
   name: string;
 }
 
+export interface PersonalTask {
+  id: string;
+  userId: string;
+  title: string;
+  notes?: string | null;
+  status: 'open' | 'in_progress' | 'done';
+  priority: 'low' | 'normal' | 'high';
+  dueDate?: string | null;
+  link?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+

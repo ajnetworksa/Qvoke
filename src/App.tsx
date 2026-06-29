@@ -20,7 +20,10 @@ import {
   UserCheck,
   Loader2,
   ClipboardList,
-  FilePlus2
+  FilePlus2,
+  CheckSquare,
+  Search,
+  Rows3
 } from 'lucide-react';
 
 // Subpage views imports
@@ -35,8 +38,10 @@ import { Products } from './pages/Products';
 import { Settings as SettingsPage } from './pages/Settings';
 import { Reports } from './pages/Reports';
 import { BOQ } from './pages/BOQ';
+import { MyTasks } from './pages/MyTasks';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
+import { CommandPalette } from './components/CommandPalette';
 
 export const App: React.FC = () => {
   const {
@@ -48,6 +53,8 @@ export const App: React.FC = () => {
     setRoute,
     theme,
     setTheme,
+    density,
+    setDensity,
     currentUser,
     token,
     authChecked,
@@ -89,8 +96,14 @@ export const App: React.FC = () => {
     return () => mediaQuery.removeEventListener('change', handleSystemChange);
   }, [theme]);
 
+  // Apply UI density to the document root (scales rem-based spacing & type).
+  useEffect(() => {
+    document.documentElement.setAttribute('data-density', density);
+  }, [density]);
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL' },
+    { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL', feature: 'tasks' },
     { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES', feature: 'quotations' },
     { id: 'quotations', label: 'Quotations / سجل العروض', icon: FileSpreadsheet, category: 'SALES', feature: 'quotations' },
     { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES', feature: 'invoices' },
@@ -111,8 +124,42 @@ export const App: React.FC = () => {
   };
   const visibleNavItems = navItems.filter((i) => isFeatureOn((i as any).feature));
 
+  // Map each routable page to the feature flag that gates it (if any).
+  const pageFeature: Record<string, string> = {
+    quotations: 'quotations',
+    'quotation-detail': 'quotations',
+    invoices: 'invoices',
+    'invoice-detail': 'invoices',
+    boq: 'boq',
+    reports: 'reports',
+    customers: 'customers',
+    suppliers: 'suppliers',
+    products: 'products',
+    tasks: 'tasks'
+  };
+
   // Resolve current active page component
   const renderActiveView = () => {
+    // Deep-link guard: block pages whose feature is disabled on the active plan.
+    if (!isFeatureOn(pageFeature[currentPage])) {
+      return (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-14 h-14 rounded-full bg-[var(--color-surface-offset)] flex items-center justify-center mb-4">
+            <X className="w-7 h-7 text-[var(--color-text-muted)]" />
+          </div>
+          <h2 className="text-lg font-bold text-[var(--color-text)] mb-1.5">Module not available</h2>
+          <p className="text-sm text-[var(--color-text-muted)] max-w-sm mb-5">
+            This module is disabled on your current plan. Enable it under Settings → Plan &amp; Features.
+          </p>
+          <button
+            onClick={() => setRoute('dashboard')}
+            className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md transition-colors cursor-pointer"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      );
+    }
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
@@ -132,6 +179,8 @@ export const App: React.FC = () => {
         return <Products />;
       case 'boq':
         return <BOQ />;
+      case 'tasks':
+        return <MyTasks />;
       case 'settings':
         return <SettingsPage />;
       case 'reports':
@@ -173,6 +222,9 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 relative">
+      {/* Global command palette + keyboard shortcuts layer */}
+      <CommandPalette />
+
       {/* 1. Backdrop for mobile slider */}
       {mobileMenuOpen && (
         <div
@@ -290,6 +342,27 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Command palette trigger (⌘K) */}
+            <button
+              onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true }))}
+              className="hidden sm:flex items-center gap-2 pl-2.5 pr-2 py-1.5 rounded-md border border-[var(--color-border)]/80 hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] transition-colors cursor-pointer"
+              title="Search & commands (Ctrl/⌘ K)"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-semibold hidden md:inline">Search…</span>
+              <kbd className="hidden md:inline-flex">⌘K</kbd>
+            </button>
+
+            {/* Density toggle */}
+            <button
+              onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+              title={`Density: ${density} (click to toggle)`}
+              className="p-2 hover:bg-[var(--color-surface-offset)] rounded-full text-[var(--color-text-muted)] transition-colors cursor-pointer"
+              aria-label="Toggle density"
+            >
+              <Rows3 className="w-4 h-4" />
+            </button>
+
             <NotificationBell />
 
             {/* Dynamic persistent theme toggle switch */}
