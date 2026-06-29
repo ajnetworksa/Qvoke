@@ -1,0 +1,5 @@
+1. need to check numbering system.
+2. cross check the logix
+3. check the ui
+4. cross check features with legacy
+5. 

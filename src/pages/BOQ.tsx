@@ -6,9 +6,10 @@ import { PageHeader } from '../components/PageHeader';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { InlineProductSearchInput } from '../components/InlineProductSearchInput';
 import { matchSearchQuery } from '../utils/search';
+import { DocumentTimeline } from '../components/DocumentTimeline';
 import {
   ClipboardList, Plus, Search, Trash2, Edit3, X, ChevronDown, ChevronUp,
-  Save, CheckCircle, AlertTriangle, Loader2, Calculator, FileText
+  Save, CheckCircle, AlertTriangle, Loader2, Calculator, FileText, User as UserIcon
 } from 'lucide-react';
 
 interface BOQItem {
@@ -41,6 +42,8 @@ interface BOQDoc {
   createdAt: Date;
   updatedAt: Date;
   type?: 'boq' | 'bom';
+  createdByName?: string;
+  updatedByName?: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -61,6 +64,7 @@ const newSection = (): BOQSection => ({
 export const BOQ: React.FC = () => {
   const { token, customers, company, currentUser } = useERPStore();
   const canDelete = currentUser?.role === 'admin' || !!currentUser?.permissions?.canDeleteData;
+  const canViewCreatedBy = currentUser?.role === 'admin' || !!currentUser?.permissions?.canViewCreatedBy;
 
   const [docs, setDocs] = useState<BOQDoc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,6 +102,7 @@ export const BOQ: React.FC = () => {
 
   const [isDirty, setIsDirty] = useState(false);
   const isFirstChangeRef = useRef(true);
+  const committedRef = useRef(false); // true once a new BOQ/BOM has been created server-side
 
   useEffect(() => {
     if (!editDoc) {
@@ -129,16 +134,20 @@ export const BOQ: React.FC = () => {
         const subtotal = payload.subtotal || 0;
         const finalPayload = { ...payload, subtotal, total: subtotal };
         let res: Response;
-        if (detailId === 'new') {
+        // Create exactly once; afterwards always PUT (prevents duplicate documents).
+        if (detailId === 'new' && !committedRef.current) {
+          committedRef.current = true;
           res = await fetch('/api/boq', { method: 'POST', headers: authH(), body: JSON.stringify(finalPayload) });
+          if (!res.ok) committedRef.current = false;
         } else {
-          res = await fetch(`/api/boq/${detailId}`, { method: 'PUT', headers: authH(), body: JSON.stringify(finalPayload) });
+          const targetId = detailId === 'new' ? (editDoc?.id || detailId) : detailId;
+          res = await fetch(`/api/boq/${targetId}`, { method: 'PUT', headers: authH(), body: JSON.stringify(finalPayload) });
         }
         if (res.ok) {
           fetchDocs();
           if (detailId === 'new') {
             const data = await res.json();
-            setDetailId(data.id || detailId);
+            if (data.id) { setDetailId(data.id); setEditDoc(prev => prev ? { ...prev, id: data.id, number: data.number || prev.number } : prev); }
           }
           return true;
         }
@@ -157,9 +166,8 @@ export const BOQ: React.FC = () => {
 
   const openNew = (defaultType: 'boq' | 'bom' = 'boq') => {
     const prefix = defaultType === 'bom' ? 'BOM' : 'BOQ';
-    const num = `${prefix}-${new Date().getFullYear()}-${String(docs.length + 1).padStart(4, '0')}`;
     setEditDoc({
-      number: num,
+      number: `${prefix} — auto-assigned on save`, // server assigns the real number
       title: '',
       status: 'draft',
       sections: [newSection()],
@@ -168,6 +176,7 @@ export const BOQ: React.FC = () => {
       type: defaultType
     });
     setDetailId('new');
+    committedRef.current = false;
     isFirstChangeRef.current = true;
     setIsDirty(false);
   };
@@ -175,6 +184,7 @@ export const BOQ: React.FC = () => {
   const openEdit = (d: BOQDoc) => {
     setEditDoc({ ...d });
     setDetailId(d.id);
+    committedRef.current = false;
     isFirstChangeRef.current = true;
     setIsDirty(false);
   };
@@ -228,6 +238,33 @@ export const BOQ: React.FC = () => {
     }
   };
 
+  const handleDownloadPdf = async () => {
+    if (!editDoc) return;
+    try {
+      const res = await fetch('/api/pdf/generate', {
+        method: 'POST',
+        headers: authH(),
+        body: JSON.stringify({ documentData: editDoc, type: editDoc.type || 'boq' })
+      });
+      if (!res.ok) {
+        alert('Failed to generate PDF');
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${editDoc.number || 'document'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to generate PDF');
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!window.confirm(`Delete this ${(editDoc?.type || 'boq').toUpperCase()} document?`)) return;
     await fetch(`/api/boq/${id}`, { method: 'DELETE', headers: authH() });
@@ -265,6 +302,14 @@ export const BOQ: React.FC = () => {
                   <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               )}
+              {detailId !== 'new' && (
+                <button
+                  onClick={handleDownloadPdf}
+                  className="border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text)] text-xs font-semibold py-2 px-3 rounded-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" /> PDF
+                </button>
+              )}
               <button onClick={handleSave} className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 cursor-pointer">
                 <Save className="w-3.5 h-3.5" /> Save {docTypeLabel}
               </button>
@@ -288,10 +333,7 @@ export const BOQ: React.FC = () => {
                       setEditDoc(prev => {
                         if (!prev) return prev;
                         const isNew = detailId === 'new';
-                        let num = prev.number || '';
-                        if (isNew && num.startsWith('BOM-')) {
-                          num = num.replace('BOM-', 'BOQ-');
-                        }
+                        const num = isNew ? 'BOQ — auto-assigned on save' : (prev.number || '');
                         return { ...prev, type: 'boq', number: num };
                       });
                     }}
@@ -309,10 +351,7 @@ export const BOQ: React.FC = () => {
                       setEditDoc(prev => {
                         if (!prev) return prev;
                         const isNew = detailId === 'new';
-                        let num = prev.number || '';
-                        if (isNew && num.startsWith('BOQ-')) {
-                          num = num.replace('BOQ-', 'BOM-');
-                        }
+                        const num = isNew ? 'BOM — auto-assigned on save' : (prev.number || '');
                         return { ...prev, type: 'bom', number: num };
                       });
                     }}
@@ -385,8 +424,24 @@ export const BOQ: React.FC = () => {
                 {grandTotal.toLocaleString('en-SA', { minimumFractionDigits: 2 })} {editDoc.currency}
               </span>
             </div>
+            {canViewCreatedBy && detailId !== 'new' && (editDoc.createdByName || editDoc.updatedByName) && (
+              <div className="border-t border-[var(--color-divider)]/40 pt-3 mt-1 space-y-1 text-[11px] text-[var(--color-text-muted)]">
+                {editDoc.createdByName && (
+                  <div className="flex items-center gap-1.5"><UserIcon className="w-3 h-3" /> Created by <span className="font-semibold text-[var(--color-text)]">{editDoc.createdByName}</span></div>
+                )}
+                {editDoc.updatedByName && (
+                  <div className="flex items-center gap-1.5"><Edit3 className="w-3 h-3" /> Last edited by <span className="font-semibold text-[var(--color-text)]">{editDoc.updatedByName}</span></div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+        {detailId !== 'new' && (
+          <div className="mb-6">
+            <DocumentTimeline docType={(editDoc.type === 'bom' ? 'bom' : 'boq')} docId={detailId} />
+          </div>
+        )}
 
         {/* Sections */}
         <div className="flex flex-col gap-4">

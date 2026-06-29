@@ -3,6 +3,7 @@ import { useERPStore, calculateTotals } from '../store';
 import { Customer, Product, LineItem, Invoice, Payment } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
+import { useDraft } from '../hooks/useDraft';
 import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
@@ -31,6 +32,7 @@ import {
 } from 'lucide-react';
 import { PDFPreviewModal } from '../components/PDFPreviewModal';
 import { EmailSendModal } from '../components/EmailSendModal';
+import { DocumentTimeline } from '../components/DocumentTimeline';
 
 interface InvoiceDetailProps {
   id: string; // 'new' or a invoice id
@@ -91,11 +93,41 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const [payNote, setPayNote] = useState('');
 
   const skipSyncRef = useRef(false);
+  const committedRef = useRef(false); // true once this new invoice has been created server-side
   const [newId] = useState(() => `inv-${Date.now()}`);
+
+  // localStorage-backed draft: survives navigation & reloads (see useDraft).
+  const draft = useDraft<any>('invoice', id);
+
+  const applySnapshot = (s: any) => {
+    setNumber(s.number ?? '');
+    setCustomerId(s.customerId ?? '');
+    setDate(s.date ? new Date(s.date) : new Date());
+    setDueDate(s.dueDate ? new Date(s.dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+    setStatus(s.status ?? 'draft');
+    setPaymentTerms(s.paymentTerms ?? 'Net 30');
+    setLineItems(s.lineItems ? JSON.parse(JSON.stringify(s.lineItems)) : []);
+    setNotes(s.notes ?? '');
+    setTerms(s.terms ?? '');
+    setCurrency(s.currency ?? company.currency);
+    setLinkedQuoteId(s.linkedQuoteId);
+    setSubject(s.subject ?? '');
+    setSubjectAr(s.subjectAr ?? '');
+    setWatermarkText(s.watermarkText ?? 'PAID');
+    setWatermarkType(s.watermarkType ?? 'none');
+    setHidePrices(!!s.hidePrices);
+    setManualTotal(s.manualTotal !== undefined && s.manualTotal !== null ? String(s.manualTotal) : '');
+  };
 
   useEffect(() => {
     if (skipSyncRef.current) {
       skipSyncRef.current = false;
+      return;
+    }
+    const saved = draft.load();
+    if (saved) {
+      applySnapshot(saved);
+      setIsDirty(true);
       return;
     }
     if (existingInv) {
@@ -162,6 +194,16 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     }
   }, [paymentTerms, date]);
 
+  // Persist draft on every edit while dirty.
+  useEffect(() => {
+    if (!isDirty) return;
+    draft.save({
+      number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal,
+    });
+  }, [isDirty, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal]);
+
   const totals = calculateTotals(lineItems);
 
   const getPayload = (): Invoice => {
@@ -202,14 +244,17 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     isDirty,
     getPayload,
     saveFn: async (payload) => {
-      if (isNew) {
-        return await addInvoice(payload);
-      } else {
-        return await updateInvoice(payload);
+      if (isNew && !committedRef.current) {
+        committedRef.current = true;
+        const ok = await addInvoice(payload);
+        if (!ok) committedRef.current = false;
+        return ok;
       }
+      return await updateInvoice(payload);
     },
     onSaveSuccess: (payload) => {
       setIsDirty(false);
+      draft.clear();
       if (isNew) {
         skipSyncRef.current = true;
         setRoute('invoice-detail', payload.id);
@@ -329,6 +374,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
     const success = await performSave();
     if (success) {
+      draft.clear();
       setRoute('invoices');
     } else {
       alert('Failed to save invoice / فشل حفظ الفاتورة');
@@ -367,6 +413,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
   const handleDelete = () => {
     deleteInvoice(id);
+    draft.clear();
     setRoute('invoices');
   };
 
@@ -1231,6 +1278,12 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
           </div>
         </div>
       </div>
+
+      {!isNew && id && (
+        <div className="mt-6">
+          <DocumentTimeline docType="invoice" docId={id} />
+        </div>
+      )}
 
       {/* Dialog Modals */}
       <ConfirmDialog

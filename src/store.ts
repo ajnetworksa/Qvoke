@@ -4,6 +4,10 @@ import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem
 interface ERPState {
   currentPage: string;
   currentRecordId: string | null;
+  // The quote/invoice the user is actively working on — lets a dedicated nav
+  // button jump straight back into the editor after visiting other tabs.
+  activeQuoteId: string | null;
+  activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
   token: string | null;
   currentUser: User | null;
@@ -13,6 +17,8 @@ interface ERPState {
   quotations: Quotation[];
   invoices: Invoice[];
   suppliers: Supplier[];
+  features: Record<string, boolean>;
+  activePlan: string;
   kanbanView: boolean;
   initialized: boolean;
   authChecked: boolean;
@@ -135,6 +141,8 @@ const defaultCompany: Company = {
 export const useERPStore = create<ERPState>((set, get) => ({
   currentPage: 'dashboard',
   currentRecordId: null,
+  activeQuoteId: localStorage.getItem('erp_active_quote'),
+  activeInvoiceId: localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
   token: localStorage.getItem('erp_token'),
   currentUser: null,
@@ -144,12 +152,26 @@ export const useERPStore = create<ERPState>((set, get) => ({
   quotations: [],
   invoices: [],
   suppliers: [],
+  features: {},
+  activePlan: 'enterprise',
   kanbanView: false,
   initialized: false,
   authChecked: false,
 
   setCurrentPage: (page) => set({ currentPage: page, currentRecordId: null }),
-  setRoute: (page, id = null) => set({ currentPage: page, currentRecordId: id }),
+  setRoute: (page, id = null) => {
+    const patch: Partial<ERPState> = { currentPage: page, currentRecordId: id };
+    // Remember the document being edited so the user can resume it later.
+    if (page === 'quotation-detail' && id) {
+      patch.activeQuoteId = id;
+      localStorage.setItem('erp_active_quote', id);
+    }
+    if (page === 'invoice-detail' && id) {
+      patch.activeInvoiceId = id;
+      localStorage.setItem('erp_active_invoice', id);
+    }
+    set(patch);
+  },
   
   setTheme: (theme) => {
     if (theme === 'system') {
@@ -293,6 +315,17 @@ export const useERPStore = create<ERPState>((set, get) => ({
       const supRes = await apiFetch('/suppliers', {}, token);
       if (supRes.ok) {
         set({ suppliers: await supRes.json() });
+      }
+
+      // 7. Fetch active plan & feature flags
+      try {
+        const featRes = await apiFetch('/features', {}, token);
+        if (featRes.ok) {
+          const f = await featRes.json();
+          set({ features: f.features || {}, activePlan: f.activePlan || 'enterprise' });
+        }
+      } catch (e) {
+        console.error('Failed to fetch feature flags:', e);
       }
 
       set({ initialized: true });
@@ -471,7 +504,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(quotation)
       }, token);
       if (res.ok) {
-        set({ quotations: [quotation, ...quotations] });
+        const { id, number } = await res.json();
+        const saved = { ...quotation, id, number };
+        set({ quotations: [saved, ...quotations] });
         return true;
       }
       return false;
@@ -504,6 +539,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
     try {
       const res = await apiFetch(`/quotes/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
+        if (get().activeQuoteId === id) { localStorage.removeItem('erp_active_quote'); set({ activeQuoteId: null }); }
         set({ quotations: quotations.filter((q) => q.id !== id) });
       }
     } catch (err) {
@@ -534,12 +570,11 @@ export const useERPStore = create<ERPState>((set, get) => ({
     const quote = quotations.find((q) => q.id === id);
     if (!quote) return null;
 
-    const invoiceNumber = `INV-2026-${String(invoices.length + 1).padStart(4, '0')}`;
     const invoiceId = `inv-${Date.now()}`;
-    
+
     const newInvoice: Invoice = {
       id: invoiceId,
-      number: invoiceNumber,
+      number: '', // assigned by server on creation
       customerId: quote.customerId,
       date: new Date(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days due
@@ -572,6 +607,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
 
       if (!invRes.ok) return null;
+      const { number: invoiceNumber } = await invRes.json();
+      const savedInvoice = { ...newInvoice, number: invoiceNumber };
 
       // 2. Link Quotation to Invoice
       const updatedQuote = { ...quote, linkedInvoiceId: invoiceId, status: 'confirmed' as const, updatedAt: new Date() };
@@ -582,7 +619,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
 
       if (quoteRes.ok) {
         set({
-          invoices: [newInvoice, ...invoices],
+          invoices: [savedInvoice, ...invoices],
           quotations: quotations.map((q) => (q.id === id ? updatedQuote : q))
         });
         return invoiceId;
@@ -602,7 +639,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(invoice)
       }, token);
       if (res.ok) {
-        set({ invoices: [invoice, ...invoices] });
+        const { id, number } = await res.json();
+        const saved = { ...invoice, id, number };
+        set({ invoices: [saved, ...invoices] });
         return true;
       }
       return false;
@@ -635,6 +674,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
     try {
       const res = await apiFetch(`/invoices/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
+        if (get().activeInvoiceId === id) { localStorage.removeItem('erp_active_invoice'); set({ activeInvoiceId: null }); }
         set({ invoices: invoices.filter((i) => i.id !== id) });
       }
     } catch (err) {

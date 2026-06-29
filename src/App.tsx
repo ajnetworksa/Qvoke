@@ -19,7 +19,8 @@ import {
   Building,
   UserCheck,
   Loader2,
-  ClipboardList
+  ClipboardList,
+  FilePlus2
 } from 'lucide-react';
 
 // Subpage views imports
@@ -35,11 +36,15 @@ import { Settings as SettingsPage } from './pages/Settings';
 import { Reports } from './pages/Reports';
 import { BOQ } from './pages/BOQ';
 import { Login } from './components/Login';
+import { NotificationBell } from './components/NotificationBell';
 
 export const App: React.FC = () => {
   const {
     currentPage,
     currentRecordId,
+    activeQuoteId,
+    activeInvoiceId,
+    features,
     setRoute,
     theme,
     setTheme,
@@ -86,15 +91,25 @@ export const App: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL' },
-    { id: 'quotations', label: 'Quotations / العروض', icon: FileSpreadsheet, category: 'SALES' },
-    { id: 'invoices', label: 'Invoices / الفواتير', icon: FileText, category: 'SALES' },
-    { id: 'boq', label: 'BOQ / جدول الكميات', icon: ClipboardList, category: 'SALES' },
-    { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL' },
-    { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG' },
-    { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG' },
-    { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG' },
+    { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES', feature: 'quotations' },
+    { id: 'quotations', label: 'Quotations / سجل العروض', icon: FileSpreadsheet, category: 'SALES', feature: 'quotations' },
+    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES', feature: 'invoices' },
+    { id: 'invoices', label: 'Invoices / سجل الفواتير', icon: FileText, category: 'SALES', feature: 'invoices' },
+    { id: 'boq', label: 'BOQ / جدول الكميات', icon: ClipboardList, category: 'SALES', feature: 'boq' },
+    { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL', feature: 'reports' },
+    { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG', feature: 'customers' },
+    { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG', feature: 'suppliers' },
+    { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG', feature: 'products' },
     { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM' }
   ];
+
+  // A feature is on unless explicitly disabled. BOQ nav also covers BOM.
+  const isFeatureOn = (key?: string) => {
+    if (!key) return true;
+    if (key === 'boq') return features['boq'] !== false || features['bom'] !== false;
+    return features[key] !== false;
+  };
+  const visibleNavItems = navItems.filter((i) => isFeatureOn((i as any).feature));
 
   // Resolve current active page component
   const renderActiveView = () => {
@@ -127,7 +142,14 @@ export const App: React.FC = () => {
   };
 
   const handleNavClick = (pageId: string) => {
-    setRoute(pageId);
+    // The "Current …" buttons resume the active document (or start a new one).
+    if (pageId === 'quote-editor') {
+      setRoute('quotation-detail', activeQuoteId || 'new');
+    } else if (pageId === 'invoice-editor') {
+      setRoute('invoice-detail', activeInvoiceId || 'new');
+    } else {
+      setRoute(pageId);
+    }
     setMobileMenuOpen(false);
   };
 
@@ -193,7 +215,8 @@ export const App: React.FC = () => {
         {/* Sidebar Navigation Links */}
         <div className="flex-1 py-4 overflow-y-auto px-3 select-none text-left">
           {categories.map((cat) => {
-            const items = navItems.filter((i) => i.category === cat);
+            const items = visibleNavItems.filter((i) => i.category === cat);
+            if (items.length === 0) return null;
             return (
               <div key={cat} className="mb-4">
                 {!sidebarCollapsed && (
@@ -206,8 +229,8 @@ export const App: React.FC = () => {
                     const Icon = item.icon;
                     const isActive =
                       currentPage === item.id ||
-                      (item.id === 'quotations' && currentPage === 'quotation-detail') ||
-                      (item.id === 'invoices' && currentPage === 'invoice-detail');
+                      (item.id === 'quote-editor' && currentPage === 'quotation-detail') ||
+                      (item.id === 'invoice-editor' && currentPage === 'invoice-detail');
 
                     return (
                       <button
@@ -267,6 +290,8 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            <NotificationBell />
+
             {/* Dynamic persistent theme toggle switch */}
             <button
               onClick={() => {
