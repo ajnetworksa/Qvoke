@@ -79,6 +79,7 @@ export const CommandPalette: React.FC = () => {
       featureOn('customers') && { id: 'nav-customers', label: 'Customers', group: 'Navigate', icon: Users, run: go('customers') },
       featureOn('suppliers') && { id: 'nav-suppliers', label: 'Suppliers', group: 'Navigate', icon: Building, run: go('suppliers') },
       featureOn('products') && { id: 'nav-products', label: 'Catalog', group: 'Navigate', icon: Package, run: go('products') },
+      { id: 'nav-companies', label: 'Companies', group: 'Navigate', icon: Building, keywords: 'organization tenant switch', run: go('companies') },
       { id: 'nav-settings', label: 'Settings', group: 'Navigate', icon: SettingsIcon, run: go('settings') },
     ].filter(Boolean) as CommandItem[];
 

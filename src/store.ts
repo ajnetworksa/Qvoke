@@ -76,6 +76,7 @@ interface ERPState {
   fetchCompanies: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
   createCompany: (name: string) => Promise<string | null>;
+  updateCompanyOrg: (companyId: string, patch: { name?: string; activePlan?: string }) => Promise<boolean>;
 
   // Follow-up tracking
   setFollowUp: (docType: 'quotation' | 'invoice', id: string, followUpDate: string | null, followUpNote: string | null) => Promise<void>;
@@ -828,6 +829,24 @@ export const useERPStore = create<ERPState>((set, get) => ({
     } catch (err) {
       console.error(err);
       return null;
+    }
+  },
+
+  updateCompanyOrg: async (companyId, patch) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch(`/companies/${companyId}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch)
+      }, token);
+      if (res.ok) {
+        await get().fetchCompanies();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error(err);
+      return false;
     }
   },
 

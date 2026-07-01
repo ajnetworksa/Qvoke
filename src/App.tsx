@@ -44,6 +44,7 @@ import { Reports } from './pages/Reports';
 import { BOQ } from './pages/BOQ';
 import { Tracking } from './pages/Tracking';
 import { MyTasks } from './pages/MyTasks';
+import { Companies } from './pages/Companies';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
@@ -141,6 +142,7 @@ export const App: React.FC = () => {
     { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG', feature: 'customers' },
     { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG', feature: 'suppliers' },
     { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG', feature: 'products' },
+    { id: 'companies', label: 'Companies / الشركات', icon: Building, category: 'SYSTEM' },
     { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM' }
   ];
 
@@ -212,6 +214,8 @@ export const App: React.FC = () => {
         return <Tracking />;
       case 'tasks':
         return <MyTasks />;
+      case 'companies':
+        return <Companies />;
       case 'settings':
         return <SettingsPage />;
       case 'reports':
