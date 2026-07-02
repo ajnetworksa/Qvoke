@@ -347,6 +347,46 @@ name), audit/usage/exports/PDF-by-id; owner UI to invite users & assign plans.
 
 ---
 
+## 20. Platform super-admin control plane + notifications
+
+**How:** `users.isSuperAdmin` (existing admin auto-promoted), company `status`
+(active/suspended) + unique `slug`; tenant resolved from subdomain host → header →
+default; `requireSuperAdmin`; suspended-tenant login block. Endpoints (super-admin):
+`GET/POST/PATCH/DELETE /api/admin/companies`, `POST /api/admin/notifications`
+(all / company / user), `GET /api/admin/users`. New **Platform Admin** page
+(super-admin only): tenant list w/ status + counts + access URL, create / suspend /
+activate / delete (default protected), and an in-app **notification composer**.
+Verified: list/create/suspend/delete + broadcast delivery.
+
+**Files:** `server.ts`, `src/pages/SuperAdmin.tsx`, `src/App.tsx`, `src/components/CommandPalette.tsx`
+
+---
+
+## 21. Theming — muted default + presets, company + per-user
+
+**How:** muted **"Slate"** default palette (calmer dark, neon/gradient toned down);
+`src/theme.ts` with 7 presets + runtime accent resolution: **user accent → user
+preset → company theme → default**. Company theme persisted in `companies.settings`
+(exposed in `GET /api/companies`, set via `PUT /api/companies/:id`); per-user
+accent/preset in `localStorage`. `applyActiveTheme()` re-resolves on light/dark and
+company switch. Settings → Appearance gains a preset picker, custom accent, and a
+company-theme block (owner/admin). Verified live: preset switch + dark-variant.
+
+**Files:** `src/theme.ts`, `src/index.css`, `src/store.ts`, `src/App.tsx`, `src/pages/Settings.tsx`
+
+---
+
+## 22. Autosave rollout (in progress)
+
+**How:** established the debounced autosave pattern on the **My Tasks** editor
+(edits save automatically with a Saving…/Saved indicator; create stays explicit),
+reusing the `useAutoSave` idiom. Remaining forms (Customers, Products, Suppliers,
+BOQ full-draft) to follow the same pattern.
+
+**Files:** `src/pages/MyTasks.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
