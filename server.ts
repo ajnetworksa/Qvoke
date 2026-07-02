@@ -582,6 +582,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_user_companies ON user_companies(userId);
 `);
 
+// Platform-level columns: company lifecycle status + super-admin flag on users.
+addColumnIfNotExists('companies', 'status', "TEXT DEFAULT 'active'");   // 'active' | 'suspended'
+addColumnIfNotExists('users', 'isSuperAdmin', 'INTEGER DEFAULT 0');
+
+// A URL-safe slug used for subdomain / path tenant resolution (unique-ish).
+const slugify = (s: string) =>
+  String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'company';
+const uniqueSlug = (base: string, ignoreId?: string): string => {
+  let slug = slugify(base);
+  let n = 1;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const row = db.prepare('SELECT id FROM companies WHERE slug = ?').get(slug) as { id: string } | undefined;
+    if (!row || row.id === ignoreId) return slug;
+    slug = `${slugify(base)}-${++n}`;
+  }
+};
+
 // companyId on the scoped tables (boq is added later, after its table exists)
 addColumnIfNotExists('customers', 'companyId', 'TEXT');
 addColumnIfNotExists('products', 'companyId', 'TEXT');
@@ -620,15 +638,50 @@ const ensureDefaultCompany = () => {
       );
     }
   }
+  // Backfill slug/status on any company missing them.
+  const needSlug = db.prepare("SELECT id, name FROM companies WHERE slug IS NULL OR slug = ''").all() as { id: string; name: string }[];
+  for (const c of needSlug) db.prepare('UPDATE companies SET slug = ? WHERE id = ?').run(uniqueSlug(c.name, c.id), c.id);
+  db.prepare("UPDATE companies SET status = 'active' WHERE status IS NULL").run();
+
+  // Ensure at least one platform super-admin exists (promote the earliest admin).
+  const hasSuper = db.prepare('SELECT 1 FROM users WHERE isSuperAdmin = 1 LIMIT 1').get();
+  if (!hasSuper) {
+    const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY rowid ASC LIMIT 1").get() as { id: string } | undefined;
+    if (admin) {
+      db.prepare('UPDATE users SET isSuperAdmin = 1 WHERE id = ?').run(admin.id);
+      console.log(`👑 Promoted user ${admin.id} to platform super-admin`);
+    }
+  }
 };
 
-// Resolve the active company for a request from the X-Company-Id header,
-// falling back to the user's first membership. Returns null if not a member.
-const resolveActiveCompany = (userId: string, requested?: string): string => {
-  const memberships = db.prepare('SELECT companyId FROM user_companies WHERE userId = ? ORDER BY rowid ASC').all(userId) as { companyId: string }[];
+// Map a request Host header to a company slug (subdomain tenant resolution).
+// e.g. "acme.mainservicepro.com" -> "acme"; ignores common non-tenant hosts.
+const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'api', 'admin', 'localhost', '']);
+const companyIdFromHost = (host?: string): string | null => {
+  if (!host) return null;
+  const hostname = host.split(':')[0];
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return null; // raw IP
+  const parts = hostname.split('.');
+  if (parts.length < 2) return null; // no subdomain (e.g. "localhost")
+  const sub = parts[0];
+  if (RESERVED_SUBDOMAINS.has(sub)) return null;
+  const row = db.prepare('SELECT id FROM companies WHERE slug = ?').get(sub) as { id: string } | undefined;
+  return row?.id || null;
+};
+
+// Resolve the active company for a request. Priority: subdomain → X-Company-Id →
+// deterministic fallback. Super-admins may act on ANY company; regular users are
+// restricted to their memberships.
+const resolveActiveCompany = (user: any, requested?: string, host?: string): string => {
+  const isSuper = user.isSuperAdmin === 1 || user.isSuperAdmin === true;
+  const hostCompany = companyIdFromHost(host);
+  const memberships = db.prepare('SELECT companyId FROM user_companies WHERE userId = ? ORDER BY rowid ASC').all(user.id) as { companyId: string }[];
+  const allowed = (id?: string | null) => !!id && (isSuper || memberships.some((m) => m.companyId === id));
+
+  if (allowed(hostCompany)) return hostCompany as string;
+  if (allowed(requested)) return requested as string;
+  if (isSuper) return hostCompany || requested || DEFAULT_COMPANY_ID;
   if (memberships.length === 0) return DEFAULT_COMPANY_ID; // legacy safety
-  if (requested && memberships.some((m) => m.companyId === requested)) return requested;
-  // Deterministic fallback: the default company if the user belongs to it, else the first enrolled.
   if (memberships.some((m) => m.companyId === DEFAULT_COMPANY_ID)) return DEFAULT_COMPANY_ID;
   return memberships[0].companyId;
 };
@@ -813,7 +866,7 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
     return res.status(401).json({ error: 'Session expired. Please log in again.' });
   }
 
-  const user = db.prepare('SELECT id, username, name, email, role, permissions, avatar FROM users WHERE id = ?').get(session.user_id) as any;
+  const user = db.prepare('SELECT id, username, name, email, role, permissions, avatar, isSuperAdmin FROM users WHERE id = ?').get(session.user_id) as any;
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -824,7 +877,20 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
 
   (req as any).user = user;
   // Resolve the active company (multi-tenancy). Scoped routes read req.companyId.
-  (req as any).companyId = resolveActiveCompany(user.id, req.headers['x-company-id'] as string | undefined);
+  (req as any).companyId = resolveActiveCompany(
+    user,
+    req.headers['x-company-id'] as string | undefined,
+    req.headers.host
+  );
+  next();
+};
+
+// Platform-owner gate for the super-admin control plane.
+const requireSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const user = (req as any).user;
+  if (!user || !(user.isSuperAdmin === 1 || user.isSuperAdmin === true)) {
+    return res.status(403).json({ error: 'Forbidden: platform super-admin only.' });
+  }
   next();
 };
 
@@ -895,6 +961,20 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   const passwordMatch = user ? await bcrypt.compare(password, user.password) : false;
 
   if (user && passwordMatch) {
+    // Block tenant users whose companies are all suspended (super-admins bypass).
+    if (!(user.isSuperAdmin === 1)) {
+      const active = db.prepare(`
+        SELECT COUNT(*) AS c FROM user_companies uc
+        JOIN companies co ON co.id = uc.companyId
+        WHERE uc.userId = ? AND co.status = 'active'
+      `).get(user.id) as { c: number };
+      const anyMembership = db.prepare('SELECT COUNT(*) AS c FROM user_companies WHERE userId = ?').get(user.id) as { c: number };
+      if (anyMembership.c > 0 && active.c === 0) {
+        logSystemEvent('warn', `Login blocked: company suspended`, { email });
+        return res.status(403).json({ error: 'Your company account is suspended. Please contact the platform administrator.' });
+      }
+    }
+
     const token = crypto.randomBytes(32).toString('hex');
     const days = rememberMe ? 30 : 1;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
@@ -913,7 +993,8 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         email: user.email,
         role: user.role,
         permissions,
-        avatar: user.avatar
+        avatar: user.avatar,
+        isSuperAdmin: user.isSuperAdmin === 1
       }
     });
   } else {
@@ -933,7 +1014,8 @@ app.post('/api/logout', requireAuth, (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json((req as any).user);
+  const user = (req as any).user;
+  res.json({ ...user, isSuperAdmin: user.isSuperAdmin === 1 || user.isSuperAdmin === true });
 });
 
 // ── USER MANAGEMENT API (RBAC) ────────────────────────────────────────────────
@@ -2326,11 +2408,17 @@ app.get('/api/companies', requireAuth, (req, res) => {
   try {
     const user = (req as any).user;
     const rows = db.prepare(`
-      SELECT c.id, c.name, c.slug, c.activePlan, c.createdAt, uc.role
+      SELECT c.id, c.name, c.slug, c.activePlan, c.createdAt, c.settings, uc.role
       FROM companies c JOIN user_companies uc ON uc.companyId = c.id
       WHERE uc.userId = ? ORDER BY c.createdAt ASC
-    `).all(user.id);
-    res.json({ companies: rows, activeCompanyId: (req as any).companyId });
+    `).all(user.id) as any[];
+    const companies = rows.map((c) => {
+      let theme: any = null;
+      try { theme = c.settings ? (JSON.parse(c.settings).theme || null) : null; } catch { /* ignore */ }
+      const { settings, ...rest } = c;
+      return { ...rest, theme };
+    });
+    res.json({ companies, activeCompanyId: (req as any).companyId });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -2363,11 +2451,145 @@ app.put('/api/companies/:id', requireAuth, (req, res) => {
     }
     const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id) as any;
     if (!existing) return res.status(404).json({ error: 'Company not found.' });
-    const { name, activePlan } = req.body;
-    db.prepare('UPDATE companies SET name = ?, activePlan = ? WHERE id = ?').run(
-      name ?? existing.name, activePlan ?? existing.activePlan, req.params.id
+    const { name, activePlan, theme } = req.body;
+    // Merge theme into the settings JSON blob so other settings survive.
+    let settings: any = {};
+    try { settings = existing.settings ? JSON.parse(existing.settings) : {}; } catch { settings = {}; }
+    if (theme !== undefined) settings.theme = theme;
+    db.prepare('UPDATE companies SET name = ?, activePlan = ?, settings = ? WHERE id = ?').run(
+      name ?? existing.name, activePlan ?? existing.activePlan, JSON.stringify(settings), req.params.id
+    );
+    res.json({ success: true, theme: settings.theme || null });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── PLATFORM SUPER-ADMIN CONTROL PLANE ────────────────────────────────────────
+// A separate surface (super-admin only) to manage ALL tenant companies.
+app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM companies ORDER BY createdAt ASC').all() as any[];
+    const count = (sql: string, id: string) => (db.prepare(sql).get(id) as any).c as number;
+    const out = rows.map((c) => {
+      const owner = db.prepare(`
+        SELECT u.name, u.email FROM user_companies uc JOIN users u ON u.id = uc.userId
+        WHERE uc.companyId = ? AND uc.role = 'owner' ORDER BY uc.rowid ASC LIMIT 1
+      `).get(c.id) as { name: string; email: string } | undefined;
+      return {
+        id: c.id, name: c.name, slug: c.slug, status: c.status || 'active',
+        activePlan: c.activePlan, createdAt: c.createdAt,
+        isDefault: c.id === DEFAULT_COMPANY_ID,
+        owner: owner || null,
+        counts: {
+          users: count('SELECT COUNT(*) c FROM user_companies WHERE companyId = ?', c.id),
+          customers: count('SELECT COUNT(*) c FROM customers WHERE companyId = ?', c.id),
+          quotations: count('SELECT COUNT(*) c FROM quotations WHERE companyId = ?', c.id),
+          invoices: count('SELECT COUNT(*) c FROM invoices WHERE companyId = ?', c.id),
+        },
+      };
+    });
+    res.json({ companies: out });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a tenant company; optionally attach an existing user (by email) as owner.
+app.post('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { name, ownerEmail, activePlan } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Company name is required.' });
+    const id = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const plan = activePlan || 'enterprise';
+    db.prepare("INSERT INTO companies (id, name, slug, activePlan, featureFlags, status, createdAt) VALUES (?, ?, ?, ?, ?, 'active', ?)").run(
+      id, String(name).trim(), uniqueSlug(name), plan, JSON.stringify(featuresFromPlan(plan)), new Date().toISOString()
+    );
+    let ownerAssigned: string | null = null;
+    if (ownerEmail && String(ownerEmail).trim()) {
+      const owner = db.prepare('SELECT id FROM users WHERE email = ?').get(String(ownerEmail).trim()) as { id: string } | undefined;
+      if (owner) {
+        db.prepare('INSERT OR REPLACE INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(owner.id, id, 'owner');
+        ownerAssigned = owner.id;
+      }
+    }
+    res.json({ id, slug: uniqueSlug(name, id), ownerAssigned });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a company's status / plan / name (suspend, activate, re-plan, rename).
+app.patch('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id) as any;
+    if (!existing) return res.status(404).json({ error: 'Company not found.' });
+    const { status, activePlan, name } = req.body;
+    if (status && !['active', 'suspended'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    db.prepare('UPDATE companies SET status = ?, activePlan = ?, name = ? WHERE id = ?').run(
+      status ?? existing.status ?? 'active',
+      activePlan ?? existing.activePlan,
+      name ?? existing.name,
+      req.params.id
     );
     res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a tenant company and all of its scoped data (cannot delete the default).
+app.delete('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    if (req.params.id === DEFAULT_COMPANY_ID) {
+      return res.status(400).json({ error: 'The default company cannot be deleted.' });
+    }
+    const existing = db.prepare('SELECT id FROM companies WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Company not found.' });
+    const tx = db.transaction((cid: string) => {
+      for (const t of SCOPED_TABLES) db.prepare(`DELETE FROM ${t} WHERE companyId = ?`).run(cid);
+      db.prepare('DELETE FROM user_companies WHERE companyId = ?').run(cid);
+      db.prepare('DELETE FROM companies WHERE id = ?').run(cid);
+    });
+    tx(req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Broadcast a notification to everyone, a whole company, or a single user.
+app.post('/api/admin/notifications', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { target, targetId, title, body, link } = req.body;
+    if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title is required.' });
+    if (!['all', 'company', 'user'].includes(target)) return res.status(400).json({ error: 'Invalid target.' });
+
+    let recipients = 0;
+    if (target === 'all') {
+      createNotification(null, 'system', title, body, link); // userId NULL = broadcast to all
+      recipients = -1; // "everyone"
+    } else if (target === 'user') {
+      if (!targetId) return res.status(400).json({ error: 'targetId (user) is required.' });
+      createNotification(targetId, 'system', title, body, link);
+      recipients = 1;
+    } else {
+      if (!targetId) return res.status(400).json({ error: 'targetId (company) is required.' });
+      const members = db.prepare('SELECT userId FROM user_companies WHERE companyId = ?').all(targetId) as { userId: string }[];
+      for (const m of members) createNotification(m.userId, 'system', title, body, link);
+      recipients = members.length;
+    }
+    res.json({ success: true, recipients });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Users list for the super-admin notification composer (id/name/email only).
+app.get('/api/admin/users', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, name, email FROM users ORDER BY name ASC').all();
+    res.json({ users });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -27,7 +27,8 @@ import {
   Radar,
   ChevronDown,
   Check,
-  Plus
+  Plus,
+  ShieldCheck
 } from 'lucide-react';
 
 // Subpage views imports
@@ -45,6 +46,7 @@ import { BOQ } from './pages/BOQ';
 import { Tracking } from './pages/Tracking';
 import { MyTasks } from './pages/MyTasks';
 import { Companies } from './pages/Companies';
+import { SuperAdmin } from './pages/SuperAdmin';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
@@ -70,7 +72,8 @@ export const App: React.FC = () => {
     companies,
     activeCompanyId,
     switchCompany,
-    createCompany
+    createCompany,
+    applyActiveTheme
   } = useERPStore();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -109,6 +112,7 @@ export const App: React.FC = () => {
       } else {
         document.documentElement.setAttribute('data-theme', theme);
       }
+      applyActiveTheme(); // re-resolve accent for the current light/dark mode
     };
 
     updateTheme();
@@ -142,6 +146,7 @@ export const App: React.FC = () => {
     { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG', feature: 'customers' },
     { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG', feature: 'suppliers' },
     { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG', feature: 'products' },
+    { id: 'platform-admin', label: 'Platform Admin / لوحة المنصة', icon: ShieldCheck, category: 'SYSTEM', superAdminOnly: true },
     { id: 'companies', label: 'Companies / الشركات', icon: Building, category: 'SYSTEM' },
     { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM' }
   ];
@@ -152,7 +157,9 @@ export const App: React.FC = () => {
     if (key === 'boq') return features['boq'] !== false || features['bom'] !== false;
     return features[key] !== false;
   };
-  const visibleNavItems = navItems.filter((i) => isFeatureOn((i as any).feature));
+  const visibleNavItems = navItems.filter(
+    (i) => isFeatureOn((i as any).feature) && (!(i as any).superAdminOnly || currentUser?.isSuperAdmin)
+  );
 
   // Map each routable page to the feature flag that gates it (if any).
   const pageFeature: Record<string, string> = {
@@ -216,6 +223,8 @@ export const App: React.FC = () => {
         return <MyTasks />;
       case 'companies':
         return <Companies />;
+      case 'platform-admin':
+        return currentUser?.isSuperAdmin ? <SuperAdmin /> : <Dashboard />;
       case 'settings':
         return <SettingsPage />;
       case 'reports':

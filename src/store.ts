@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask, CompanyMembership } from './types';
+import { resolveAccent, applyAccent, DEFAULT_PRESET } from './theme';
+
+// Is the effective mode dark, given the user's theme setting?
+const isDarkMode = (theme: 'light' | 'dark' | 'system') =>
+  theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
 interface ERPState {
   currentPage: string;
@@ -10,6 +15,8 @@ interface ERPState {
   activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
   density: 'comfortable' | 'compact';
+  themePreset: string | null;   // user's chosen preset; null = inherit company/default
+  userAccent: string | null;    // user's custom accent hex override
   token: string | null;
   currentUser: User | null;
   company: Company;
@@ -31,6 +38,10 @@ interface ERPState {
   setRoute: (page: string, id?: string | null) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setDensity: (density: 'comfortable' | 'compact') => void;
+  setThemePreset: (preset: string | null) => void;
+  setUserAccent: (hex: string | null) => void;
+  applyActiveTheme: () => void;
+  setCompanyTheme: (theme: { preset?: string | null; color?: string | null }) => Promise<void>;
   setKanbanView: (val: boolean) => void;
   
   // Authentication & Session
@@ -171,6 +182,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
   activeInvoiceId: localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
   density: (localStorage.getItem('erp_density') as 'comfortable' | 'compact') || 'comfortable',
+  themePreset: localStorage.getItem('erp_theme_preset') || null,
+  userAccent: localStorage.getItem('erp_user_accent') || null,
   token: localStorage.getItem('erp_token'),
   currentUser: null,
   company: defaultCompany,
@@ -212,12 +225,60 @@ export const useERPStore = create<ERPState>((set, get) => ({
     }
     localStorage.setItem('erp_theme', theme);
     set({ theme });
+    get().applyActiveTheme(); // preset colours differ per light/dark
   },
 
   setDensity: (density) => {
     document.documentElement.setAttribute('data-density', density);
     localStorage.setItem('erp_density', density);
     set({ density });
+  },
+
+  setThemePreset: (preset) => {
+    if (preset) localStorage.setItem('erp_theme_preset', preset);
+    else localStorage.removeItem('erp_theme_preset');
+    set({ themePreset: preset, userAccent: null });
+    localStorage.removeItem('erp_user_accent');
+    get().applyActiveTheme();
+  },
+
+  setUserAccent: (hex) => {
+    if (hex) localStorage.setItem('erp_user_accent', hex);
+    else localStorage.removeItem('erp_user_accent');
+    set({ userAccent: hex });
+    get().applyActiveTheme();
+  },
+
+  // Resolve the accent: user hex → user preset → company theme → default preset.
+  applyActiveTheme: () => {
+    const { theme, themePreset, userAccent, companies, activeCompanyId } = get();
+    const dark = isDarkMode(theme);
+    const companyTheme = companies.find((c) => c.id === activeCompanyId)?.theme || null;
+    let accentHex: string | undefined;
+    let presetKey: string | undefined;
+    if (userAccent) accentHex = userAccent;
+    else if (themePreset) presetKey = themePreset;
+    else if (companyTheme?.color) accentHex = companyTheme.color;
+    else if (companyTheme?.preset) presetKey = companyTheme.preset;
+    else presetKey = DEFAULT_PRESET;
+    applyAccent(resolveAccent(presetKey, accentHex, dark));
+  },
+
+  setCompanyTheme: async (theme) => {
+    const { token, activeCompanyId } = get();
+    if (!activeCompanyId) return;
+    try {
+      const res = await apiFetch(`/companies/${activeCompanyId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ theme })
+      }, token);
+      if (res.ok) {
+        set({ companies: get().companies.map((c) => (c.id === activeCompanyId ? { ...c, theme } : c)) });
+        get().applyActiveTheme();
+      }
+    } catch (err) {
+      console.error(err);
+    }
   },
 
   setKanbanView: (val) => set({ kanbanView: val }),
@@ -790,6 +851,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         if (!companies.some((c) => c.id === active)) active = data.activeCompanyId;
         if (active) localStorage.setItem('erp_active_company', active);
         set({ companies, activeCompanyId: active });
+        get().applyActiveTheme(); // company theme may differ
       }
     } catch (err) {
       console.error(err);

@@ -28,9 +28,16 @@ import { mockUsers } from '../mockData';
 import { UserRole } from '../types';
 import UsersDB from '../components/UsersDB';
 import DatabaseBackupDB from '../components/DatabaseBackupDB';
+import { THEME_PRESETS } from '../theme';
 
 export const Settings: React.FC = () => {
-  const { company, updateCompany, theme, setTheme } = useERPStore();
+  const {
+    company, updateCompany, theme, setTheme,
+    themePreset, userAccent, setThemePreset, setUserAccent,
+    companies, activeCompanyId, setCompanyTheme, currentUser
+  } = useERPStore();
+  const activeCompanyMembership = companies.find((c) => c.id === activeCompanyId);
+  const canEditCompanyTheme = currentUser?.isSuperAdmin || activeCompanyMembership?.role === 'owner' || activeCompanyMembership?.role === 'admin';
   const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs'>('company');
 
   // Local Form states (initialized from store)
@@ -820,9 +827,85 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
 
-              {/* Preset accent colors picker */}
+              {/* Interface theme presets (per-user) */}
               <div className="text-left text-xs font-semibold text-[var(--color-text-muted)] border-t border-[var(--color-divider)]/30 pt-6">
-                <span className="block uppercase tracking-wider mb-3">Brand Accent Color</span>
+                <span className="block uppercase tracking-wider mb-1">Interface Theme</span>
+                <p className="text-[10px] font-normal text-[var(--color-text-faint)] mb-3">Your personal accent — applies to your account across light &amp; dark.</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                  {THEME_PRESETS.map((p) => {
+                    const active = !userAccent && (themePreset === p.key || (!themePreset && p.key === 'slate'));
+                    return (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => setThemePreset(p.key)}
+                        className={`flex items-center gap-2 border-2 rounded-lg px-3 py-2 cursor-pointer transition-all text-xs font-bold ${
+                          active ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/25' : 'border-[var(--color-border)] hover:border-[var(--color-primary)]/40 bg-[var(--color-surface)]'
+                        }`}
+                      >
+                        <span className="w-4 h-4 rounded-full inline-block shadow-sm shrink-0" style={{ backgroundColor: p.swatch }} />
+                        <span className="text-[var(--color-text)] truncate">{p.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-[11px]">Custom accent</label>
+                  <input
+                    type="color"
+                    value={userAccent || '#3d6b6e'}
+                    onChange={(e) => setUserAccent(e.target.value)}
+                    className="w-8 h-8 rounded cursor-pointer border border-[var(--color-border)] bg-transparent"
+                    title="Pick a custom accent colour"
+                  />
+                  {userAccent && (
+                    <button type="button" onClick={() => setUserAccent(null)} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-primary)] cursor-pointer">
+                      Reset to preset
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Company theme (owner/admin) */}
+              {canEditCompanyTheme && (
+                <div className="text-left text-xs font-semibold text-[var(--color-text-muted)] border-t border-[var(--color-divider)]/30 pt-6">
+                  <span className="block uppercase tracking-wider mb-1">Company Theme</span>
+                  <p className="text-[10px] font-normal text-[var(--color-text-faint)] mb-3">
+                    Default accent for <strong className="text-[var(--color-text)]">{activeCompanyMembership?.name}</strong> — applies to everyone in this company who hasn't set a personal accent.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                    {THEME_PRESETS.map((p) => {
+                      const active = activeCompanyMembership?.theme?.preset === p.key;
+                      return (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => setCompanyTheme({ preset: p.key, color: null })}
+                          className={`flex items-center gap-2 border-2 rounded-lg px-3 py-2 cursor-pointer transition-all text-xs font-bold ${
+                            active ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/25' : 'border-[var(--color-border)] hover:border-[var(--color-primary)]/40 bg-[var(--color-surface)]'
+                          }`}
+                        >
+                          <span className="w-4 h-4 rounded-full inline-block shadow-sm shrink-0" style={{ backgroundColor: p.swatch }} />
+                          <span className="text-[var(--color-text)] truncate">{p.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-[11px]">Custom brand color</label>
+                    <input
+                      type="color"
+                      value={activeCompanyMembership?.theme?.color || '#3d6b6e'}
+                      onChange={(e) => setCompanyTheme({ color: e.target.value, preset: null })}
+                      className="w-8 h-8 rounded cursor-pointer border border-[var(--color-border)] bg-transparent"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* PDF brand accent (document branding, separate from UI theme) */}
+              <div className="text-left text-xs font-semibold text-[var(--color-text-muted)] border-t border-[var(--color-divider)]/30 pt-6">
+                <span className="block uppercase tracking-wider mb-3">PDF Brand Accent Color</span>
                 <div className="flex gap-3 flex-wrap mb-6">
                   {accentPresets.map((pr) => (
                     <button

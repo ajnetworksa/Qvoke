@@ -51,7 +51,8 @@ export const CommandPalette: React.FC = () => {
     setTheme,
     density,
     setDensity,
-    features
+    features,
+    currentUser
   } = useERPStore();
 
   const [open, setOpen] = useState(false);
@@ -80,6 +81,7 @@ export const CommandPalette: React.FC = () => {
       featureOn('suppliers') && { id: 'nav-suppliers', label: 'Suppliers', group: 'Navigate', icon: Building, run: go('suppliers') },
       featureOn('products') && { id: 'nav-products', label: 'Catalog', group: 'Navigate', icon: Package, run: go('products') },
       { id: 'nav-companies', label: 'Companies', group: 'Navigate', icon: Building, keywords: 'organization tenant switch', run: go('companies') },
+      currentUser?.isSuperAdmin && { id: 'nav-platform', label: 'Platform Admin', group: 'Navigate', icon: Building, keywords: 'super admin tenants notifications', run: go('platform-admin') },
       { id: 'nav-settings', label: 'Settings', group: 'Navigate', icon: SettingsIcon, run: go('settings') },
     ].filter(Boolean) as CommandItem[];
 
@@ -130,7 +132,7 @@ export const CommandPalette: React.FC = () => {
     });
 
     return [...nav, ...actions, ...records];
-  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, features]);
+  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, features, currentUser]);
 
   // Filter + cap results for performance.
   const results = useMemo(() => {
