@@ -376,14 +376,27 @@ company-theme block (owner/admin). Verified live: preset switch + dark-variant.
 
 ---
 
-## 22. Autosave rollout (in progress)
+## 22. App-wide autosave
 
-**How:** established the debounced autosave pattern on the **My Tasks** editor
-(edits save automatically with a Saving…/Saved indicator; create stays explicit),
-reusing the `useAutoSave` idiom. Remaining forms (Customers, Products, Suppliers,
-BOQ full-draft) to follow the same pattern.
+**How:** new reusable `useDebouncedAutosave` hook powers save-on-edit across the
+entity dialogs — **My Tasks, Customers, Products, Suppliers**: editing an existing
+record autosaves (debounced 800ms) with a Saving…/Saved indicator and a "Done"
+button; creating stays explicit. **BOQ/BOM** and the **quotation/invoice** editors
+already autosave via `useAutoSave`. Verified: Customers edit persisted server-side
+with no explicit save, no console errors.
 
-**Files:** `src/pages/MyTasks.tsx`
+**Files:** `src/hooks/useDebouncedAutosave.ts`, `src/pages/{MyTasks,Customers,Products,Suppliers}.tsx`
+
+---
+
+## 23. Muted UI pass
+
+**How:** the muted "Slate" palette (§21) is applied globally via design tokens and
+verified coherent in **both light and dark** (calmer near-black dark surfaces,
+muted accent, neon/gradients toned down). Theming is fully token-driven so the pass
+is consistent across pages.
+
+**Files:** `src/index.css`, `src/theme.ts`
 
 ---
 
