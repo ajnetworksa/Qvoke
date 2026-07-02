@@ -5,7 +5,8 @@ import { PageHeader } from '../components/PageHeader';
 import { matchSearchQuery } from '../utils/search';
 import { EmptyState } from '../components/EmptyState';
 import { ExcelImportExport } from '../components/ExcelImportExport';
-import { UserCheck, Plus, Search, Trash2, Edit3, X, Mail, Phone, MapPin, Building } from 'lucide-react';
+import { useDebouncedAutosave } from '../hooks/useDebouncedAutosave';
+import { UserCheck, Plus, Search, Trash2, Edit3, X, Mail, Phone, MapPin, Building, Loader2, Check } from 'lucide-react';
 
 export const Customers: React.FC = () => {
   const { customers, quotations, invoices, addCustomer, updateCustomer, deleteCustomer, company, currentUser, token } = useERPStore();
@@ -83,37 +84,38 @@ export const Customers: React.FC = () => {
     setFormOpen(true);
   };
 
+  const buildPayload = (): Customer => ({
+    id: editCustId || `cust-${Date.now()}`,
+    companyName,
+    contactPerson,
+    email,
+    phone,
+    vatNumber,
+    billingAddress: { street, district, city, postalCode, country: 'SA' },
+    createdAt: editCustId
+      ? customers.find((c) => c.id === editCustId)?.createdAt || new Date()
+      : new Date()
+  });
+
+  // Autosave edits to an existing customer (debounced); create stays explicit.
+  const autoSave = useDebouncedAutosave(
+    formOpen && !!editCustId,
+    editCustId,
+    [companyName, contactPerson, email, phone, vatNumber, street, district, city, postalCode],
+    () => { if (companyName.trim()) updateCustomer(buildPayload()); }
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyName.trim()) return;
-
-    const payload: Customer = {
-      id: editCustId || `cust-${Date.now()}`,
-      companyName,
-      contactPerson,
-      email,
-      phone,
-      vatNumber,
-      billingAddress: {
-        street,
-        district,
-        city,
-        postalCode,
-        country: 'SA'
-      },
-      createdAt: editCustId
-        ? customers.find((c) => c.id === editCustId)?.createdAt || new Date()
-        : new Date()
-    };
-
     if (editCustId) {
-      updateCustomer(payload);
+      updateCustomer(buildPayload()); // flush latest immediately
+      setFormOpen(false);
     } else {
-      addCustomer(payload);
+      addCustomer(buildPayload());
+      setFormOpen(false);
+      alert('Customer Added Successfully!');
     }
-
-    setFormOpen(false);
-    alert(editCustId ? 'Customer Profile Updated!' : 'Customer Added Successfully!');
   };
 
   return (
@@ -261,8 +263,10 @@ export const Customers: React.FC = () => {
             className="relative w-full max-w-lg bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg p-6 overflow-hidden animate-slide-in text-left flex flex-col gap-4"
           >
             <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <h3 className="text-sm font-bold text-[var(--color-text)]">
+              <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
                 {editCustId ? 'Modify Customer Profile / تعديل عميل' : 'Create Customer Profile / إضافة عميل'}
+                {editCustId && autoSave === 'saving' && <span className="flex items-center gap-1 text-[10px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</span>}
+                {editCustId && autoSave === 'saved' && <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-500"><Check className="w-3 h-3" /> Saved</span>}
               </h3>
               <button
                 type="button"
@@ -395,7 +399,7 @@ export const Customers: React.FC = () => {
                 type="submit"
                 className="px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
               >
-                Save Profile
+                {editCustId ? 'Done' : 'Save Profile'}
               </button>
             </div>
           </form>

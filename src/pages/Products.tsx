@@ -5,7 +5,8 @@ import { PageHeader } from '../components/PageHeader';
 import { matchSearchQuery } from '../utils/search';
 import { EmptyState } from '../components/EmptyState';
 import { ExcelImportExport } from '../components/ExcelImportExport';
-import { Package, Plus, Search, Trash2, Edit3, X, Tag } from 'lucide-react';
+import { useDebouncedAutosave } from '../hooks/useDebouncedAutosave';
+import { Package, Plus, Search, Trash2, Edit3, X, Tag, Loader2, Check } from 'lucide-react';
 
 export const Products: React.FC = () => {
   const { products, addProduct, updateProduct, deleteProduct, company, currentUser, token } = useERPStore();
@@ -52,29 +53,30 @@ export const Products: React.FC = () => {
     setFormOpen(true);
   };
 
+  const buildPayload = (): Product => ({
+    id: editProdId || `p-${Date.now()}`,
+    name, description, type, unitPrice, unit, taxRate, categoryId
+  });
+
+  // Autosave edits to an existing product (debounced); create stays explicit.
+  const autoSave = useDebouncedAutosave(
+    formOpen && !!editProdId,
+    editProdId,
+    [name, description, type, unitPrice, unit, taxRate, categoryId],
+    () => { if (name.trim()) updateProduct(buildPayload()); }
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-
-    const payload: Product = {
-      id: editProdId || `p-${Date.now()}`,
-      name,
-      description,
-      type,
-      unitPrice,
-      unit,
-      taxRate,
-      categoryId
-    };
-
     if (editProdId) {
-      updateProduct(payload);
+      updateProduct(buildPayload());
+      setFormOpen(false);
     } else {
-      addProduct(payload);
+      addProduct(buildPayload());
+      setFormOpen(false);
+      alert('Product Created successfully!');
     }
-
-    setFormOpen(false);
-    alert(editProdId ? 'Product Updated!' : 'Product Created successfully!');
   };
 
   return (
@@ -205,8 +207,10 @@ export const Products: React.FC = () => {
             className="relative w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg p-6 overflow-hidden animate-slide-in text-left flex flex-col gap-4"
           >
             <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <h3 className="text-sm font-bold text-[var(--color-text)]">
+              <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
                 {editProdId ? 'Modify Catalog Item / تعديل منتج' : 'Add Catalog Item / إضافة منتج'}
+                {editProdId && autoSave === 'saving' && <span className="flex items-center gap-1 text-[10px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</span>}
+                {editProdId && autoSave === 'saved' && <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-500"><Check className="w-3 h-3" /> Saved</span>}
               </h3>
               <button
                 type="button"
@@ -328,7 +332,7 @@ export const Products: React.FC = () => {
                 type="submit"
                 className="px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white rounded-md text-xs font-semibold transition-colors cursor-pointer"
               >
-                Save Item
+                {editProdId ? 'Done' : 'Save Item'}
               </button>
             </div>
           </form>
