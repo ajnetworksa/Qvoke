@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useERPStore } from '../store';
+import { THEME_PRESETS } from '../theme';
 import {
   Search,
   FileSpreadsheet,
@@ -20,7 +21,8 @@ import {
   Command as CommandIcon,
   TrendingUp,
   Building,
-  Radar
+  Radar,
+  Palette
 } from 'lucide-react';
 
 interface CommandItem {
@@ -51,6 +53,7 @@ export const CommandPalette: React.FC = () => {
     setTheme,
     density,
     setDensity,
+    setThemePreset,
     features,
     currentUser
   } = useERPStore();
@@ -131,8 +134,17 @@ export const CommandPalette: React.FC = () => {
       });
     });
 
-    return [...nav, ...actions, ...records];
-  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, features, currentUser]);
+    const themeCmds: CommandItem[] = THEME_PRESETS.map((p) => ({
+      id: `theme-${p.key}`,
+      label: `Theme: ${p.label}`,
+      group: 'Theme',
+      icon: Palette,
+      keywords: 'color accent preset appearance',
+      run: () => { setThemePreset(p.key); setOpen(false); }
+    }));
+
+    return [...nav, ...actions, ...themeCmds, ...records];
+  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, setThemePreset, features, currentUser]);
 
   // Filter + cap results for performance.
   const results = useMemo(() => {

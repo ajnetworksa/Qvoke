@@ -35,6 +35,21 @@ export const THEME_PRESETS: ThemePreset[] = [
   { key: 'midnight', label: 'Midnight',      swatch: '#475569',
     light: { p: '#334155', h: '#1e293b', hl: '#dce2ea' },
     dark:  { p: '#94a3b8', h: '#64748b', hl: 'rgba(148,163,184,0.16)' } },
+  { key: 'violet',   label: 'Violet',        swatch: '#7c3aed',
+    light: { p: '#7c3aed', h: '#6d28d9', hl: '#e9defb' },
+    dark:  { p: '#a78bfa', h: '#8b5cf6', hl: 'rgba(167,139,250,0.15)' } },
+  { key: 'sky',      label: 'Sky',           swatch: '#0284c7',
+    light: { p: '#0284c7', h: '#0369a1', hl: '#cfe7f5' },
+    dark:  { p: '#38bdf8', h: '#0ea5e9', hl: 'rgba(56,189,248,0.15)' } },
+  { key: 'crimson',  label: 'Crimson',       swatch: '#dc2626',
+    light: { p: '#c62828', h: '#a01f1f', hl: '#f5d6d6' },
+    dark:  { p: '#f87171', h: '#ef4444', hl: 'rgba(248,113,113,0.15)' } },
+  { key: 'forest',   label: 'Forest',        swatch: '#166534',
+    light: { p: '#166534', h: '#14532d', hl: '#d0e6d6' },
+    dark:  { p: '#4ade80', h: '#22c55e', hl: 'rgba(74,222,128,0.14)' } },
+  { key: 'copper',   label: 'Copper',        swatch: '#9a5b34',
+    light: { p: '#9a5b34', h: '#7c4728', hl: '#efdfd2' },
+    dark:  { p: '#d29b74', h: '#b97e52', hl: 'rgba(210,155,116,0.15)' } },
 ];
 
 export const DEFAULT_PRESET = 'slate';

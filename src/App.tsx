@@ -46,7 +46,7 @@ import { BOQ } from './pages/BOQ';
 import { Tracking } from './pages/Tracking';
 import { MyTasks } from './pages/MyTasks';
 import { Companies } from './pages/Companies';
-import { SuperAdmin } from './pages/SuperAdmin';
+import { PlatformShell } from './pages/PlatformShell';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
@@ -224,7 +224,7 @@ export const App: React.FC = () => {
       case 'companies':
         return <Companies />;
       case 'platform-admin':
-        return currentUser?.isSuperAdmin ? <SuperAdmin /> : <Dashboard />;
+        return <Dashboard />; // super-admins are intercepted into PlatformShell above
       case 'settings':
         return <SettingsPage />;
       case 'reports':
@@ -262,6 +262,17 @@ export const App: React.FC = () => {
   // 2. Auth Gate
   if (!token || !currentUser) {
     return <Login />;
+  }
+
+  // 3. Separate platform control plane — full-screen, distinct from any company
+  //    workspace. Only the platform super-admin can enter it.
+  if (currentUser.isSuperAdmin && currentPage === 'platform-admin') {
+    return (
+      <>
+        <CommandPalette />
+        <PlatformShell />
+      </>
+    );
   }
 
   return (

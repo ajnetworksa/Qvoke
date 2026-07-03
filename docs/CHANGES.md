@@ -400,6 +400,34 @@ is consistent across pages.
 
 ---
 
+## 24. Standalone platform control plane + more
+
+**Why:** the super-admin panel was a page *inside* the tenant sidebar; it needed to
+be a genuinely separate control plane.
+
+**How:**
+- **`PlatformShell`** — a full-screen layout (its own "Qvoke Platform" sidebar +
+  header) that App renders *instead of* the company workspace when a super-admin is
+  on `platform-admin`. Tabs: **Overview** (aggregate stats), **Companies** (tenant
+  CRUD + suspend + **Enter** a company's workspace), **Users** (promote/demote
+  super-admin, guarded against removing the last one), **Notifications** (composer).
+  "Enter Workspace" exits back to the tenant app. Replaces the old embedded page.
+- New endpoints: `GET /api/admin/overview`, `PATCH /api/admin/users/:id`
+  (super-admin flag), extended `GET /api/admin/users` (role + isSuperAdmin + company
+  count).
+- **More themes**: 12 presets total (added Violet, Sky, Crimson, Forest, Copper);
+  **`Theme: …` commands in ⌘K** for instant switching.
+- **Logic fix**: subdomain tenant resolution now requires `sub.domain.tld` (3+
+  labels) so an apex domain can't be mistaken for a tenant slug.
+
+**Verified:** separate shell renders (no company sidebar), overview/users/enter all
+work, last-super-admin demotion blocked (400), theme commands switch live.
+
+**Files:** `server.ts`, `src/pages/PlatformShell.tsx` (new, replaces `SuperAdmin.tsx`),
+`src/App.tsx`, `src/theme.ts`, `src/components/CommandPalette.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:

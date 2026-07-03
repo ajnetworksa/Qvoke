@@ -662,7 +662,9 @@ const companyIdFromHost = (host?: string): string | null => {
   const hostname = host.split(':')[0];
   if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return null; // raw IP
   const parts = hostname.split('.');
-  if (parts.length < 2) return null; // no subdomain (e.g. "localhost")
+  // Only a real subdomain (sub.domain.tld) selects a tenant — never the apex
+  // (domain.tld) or a bare host (localhost). Header/fallback handle those.
+  if (parts.length < 3) return null;
   const sub = parts[0];
   if (RESERVED_SUBDOMAINS.has(sub)) return null;
   const row = db.prepare('SELECT id FROM companies WHERE slug = ?').get(sub) as { id: string } | undefined;
@@ -2588,8 +2590,53 @@ app.post('/api/admin/notifications', requireAuth, requireSuperAdmin, (req, res) 
 // Users list for the super-admin notification composer (id/name/email only).
 app.get('/api/admin/users', requireAuth, requireSuperAdmin, (req, res) => {
   try {
-    const users = db.prepare('SELECT id, name, email FROM users ORDER BY name ASC').all();
+    const rows = db.prepare('SELECT id, name, email, role, isSuperAdmin FROM users ORDER BY name ASC').all() as any[];
+    const users = rows.map((u) => ({
+      ...u,
+      isSuperAdmin: u.isSuperAdmin === 1,
+      companyCount: (db.prepare('SELECT COUNT(*) c FROM user_companies WHERE userId = ?').get(u.id) as any).c
+    }));
     res.json({ users });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Promote / demote a user's platform super-admin flag (cannot demote the last one).
+app.patch('/api/admin/users/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { isSuperAdmin } = req.body;
+    const target = db.prepare('SELECT id, isSuperAdmin FROM users WHERE id = ?').get(req.params.id) as any;
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+    if (isSuperAdmin === false || isSuperAdmin === 0) {
+      const supers = (db.prepare('SELECT COUNT(*) c FROM users WHERE isSuperAdmin = 1').get() as any).c;
+      if (target.isSuperAdmin === 1 && supers <= 1) {
+        return res.status(400).json({ error: 'Cannot remove the last platform super-admin.' });
+      }
+    }
+    db.prepare('UPDATE users SET isSuperAdmin = ? WHERE id = ?').run(isSuperAdmin ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Platform-wide aggregate stats for the super-admin overview.
+app.get('/api/admin/overview', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const one = (sql: string) => (db.prepare(sql).get() as any).c as number;
+    const revenueRow = db.prepare('SELECT COALESCE(SUM(amountPaid),0) s FROM invoices').get() as any;
+    res.json({
+      tenants: one('SELECT COUNT(*) c FROM companies'),
+      activeTenants: one("SELECT COUNT(*) c FROM companies WHERE status = 'active' OR status IS NULL"),
+      suspendedTenants: one("SELECT COUNT(*) c FROM companies WHERE status = 'suspended'"),
+      users: one('SELECT COUNT(*) c FROM users'),
+      superAdmins: one('SELECT COUNT(*) c FROM users WHERE isSuperAdmin = 1'),
+      quotations: one('SELECT COUNT(*) c FROM quotations'),
+      invoices: one('SELECT COUNT(*) c FROM invoices'),
+      customers: one('SELECT COUNT(*) c FROM customers'),
+      collectedRevenue: Math.round((revenueRow.s || 0) * 100) / 100,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
