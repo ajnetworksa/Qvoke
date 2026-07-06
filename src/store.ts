@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask } from './types';
+import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask, CompanyMembership } from './types';
+import { resolveAccent, applyAccent, DEFAULT_PRESET } from './theme';
+
+// Is the effective mode dark, given the user's theme setting?
+const isDarkMode = (theme: 'light' | 'dark' | 'system') =>
+  theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
 interface ERPState {
   currentPage: string;
@@ -10,6 +15,8 @@ interface ERPState {
   activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
   density: 'comfortable' | 'compact';
+  themePreset: string | null;   // user's chosen preset; null = inherit company/default
+  userAccent: string | null;    // user's custom accent hex override
   token: string | null;
   currentUser: User | null;
   company: Company;
@@ -19,6 +26,8 @@ interface ERPState {
   invoices: Invoice[];
   suppliers: Supplier[];
   tasks: PersonalTask[];
+  companies: CompanyMembership[];
+  activeCompanyId: string | null;
   features: Record<string, boolean>;
   activePlan: string;
   kanbanView: boolean;
@@ -29,6 +38,10 @@ interface ERPState {
   setRoute: (page: string, id?: string | null) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setDensity: (density: 'comfortable' | 'compact') => void;
+  setThemePreset: (preset: string | null) => void;
+  setUserAccent: (hex: string | null) => void;
+  applyActiveTheme: () => void;
+  setCompanyTheme: (theme: { preset?: string | null; color?: string | null }) => Promise<void>;
   setKanbanView: (val: boolean) => void;
   
   // Authentication & Session
@@ -69,6 +82,15 @@ interface ERPState {
   deleteInvoice: (id: string) => Promise<void>;
   postInvoice: (id: string) => Promise<void>;
   recordPayment: (invoiceId: string, payment: Payment) => Promise<void>;
+
+  // Multi-company
+  fetchCompanies: () => Promise<void>;
+  switchCompany: (companyId: string) => Promise<void>;
+  createCompany: (name: string) => Promise<string | null>;
+  updateCompanyOrg: (companyId: string, patch: { name?: string; activePlan?: string }) => Promise<boolean>;
+
+  // Follow-up tracking
+  setFollowUp: (docType: 'quotation' | 'invoice', id: string, followUpDate: string | null, followUpNote: string | null) => Promise<void>;
 
   // Personal Tasks
   fetchTasks: () => Promise<void>;
@@ -124,6 +146,12 @@ const apiFetch = async (url: string, options: RequestInit = {}, token: string | 
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Scope every request to the active company (multi-tenancy).
+  const activeCompany = localStorage.getItem('erp_active_company');
+  if (activeCompany) {
+    headers['X-Company-Id'] = activeCompany;
+  }
+
   const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
   if (res.status === 401) {
     // Session token expired/invalid
@@ -154,6 +182,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
   activeInvoiceId: localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
   density: (localStorage.getItem('erp_density') as 'comfortable' | 'compact') || 'comfortable',
+  themePreset: localStorage.getItem('erp_theme_preset') || null,
+  userAccent: localStorage.getItem('erp_user_accent') || null,
   token: localStorage.getItem('erp_token'),
   currentUser: null,
   company: defaultCompany,
@@ -163,6 +193,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
   invoices: [],
   suppliers: [],
   tasks: [],
+  companies: [],
+  activeCompanyId: localStorage.getItem('erp_active_company'),
   features: {},
   activePlan: 'enterprise',
   kanbanView: false,
@@ -193,12 +225,60 @@ export const useERPStore = create<ERPState>((set, get) => ({
     }
     localStorage.setItem('erp_theme', theme);
     set({ theme });
+    get().applyActiveTheme(); // preset colours differ per light/dark
   },
 
   setDensity: (density) => {
     document.documentElement.setAttribute('data-density', density);
     localStorage.setItem('erp_density', density);
     set({ density });
+  },
+
+  setThemePreset: (preset) => {
+    if (preset) localStorage.setItem('erp_theme_preset', preset);
+    else localStorage.removeItem('erp_theme_preset');
+    set({ themePreset: preset, userAccent: null });
+    localStorage.removeItem('erp_user_accent');
+    get().applyActiveTheme();
+  },
+
+  setUserAccent: (hex) => {
+    if (hex) localStorage.setItem('erp_user_accent', hex);
+    else localStorage.removeItem('erp_user_accent');
+    set({ userAccent: hex });
+    get().applyActiveTheme();
+  },
+
+  // Resolve the accent: user hex → user preset → company theme → default preset.
+  applyActiveTheme: () => {
+    const { theme, themePreset, userAccent, companies, activeCompanyId } = get();
+    const dark = isDarkMode(theme);
+    const companyTheme = companies.find((c) => c.id === activeCompanyId)?.theme || null;
+    let accentHex: string | undefined;
+    let presetKey: string | undefined;
+    if (userAccent) accentHex = userAccent;
+    else if (themePreset) presetKey = themePreset;
+    else if (companyTheme?.color) accentHex = companyTheme.color;
+    else if (companyTheme?.preset) presetKey = companyTheme.preset;
+    else presetKey = DEFAULT_PRESET;
+    applyAccent(resolveAccent(presetKey, accentHex, dark));
+  },
+
+  setCompanyTheme: async (theme) => {
+    const { token, activeCompanyId } = get();
+    if (!activeCompanyId) return;
+    try {
+      const res = await apiFetch(`/companies/${activeCompanyId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ theme })
+      }, token);
+      if (res.ok) {
+        set({ companies: get().companies.map((c) => (c.id === activeCompanyId ? { ...c, theme } : c)) });
+        get().applyActiveTheme();
+      }
+    } catch (err) {
+      console.error(err);
+    }
   },
 
   setKanbanView: (val) => set({ kanbanView: val }),
@@ -344,6 +424,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
       } catch (e) {
         console.error('Failed to fetch feature flags:', e);
       }
+
+      // 8. Fetch companies the user belongs to (multi-tenancy)
+      await get().fetchCompanies();
 
       set({ initialized: true });
     } catch (err) {
@@ -749,6 +832,101 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ invoices: invoices.map((i) => (i.id === invoiceId ? updatedInvoice : i)) });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  // ── MULTI-COMPANY ───────────────────────────────────────────────────────────
+  fetchCompanies: async () => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/companies', {}, token);
+      if (res.ok) {
+        const data = await res.json();
+        const companies: CompanyMembership[] = data.companies || [];
+        // Reconcile the persisted active company with what the server resolved.
+        let active = localStorage.getItem('erp_active_company') || data.activeCompanyId;
+        if (!companies.some((c) => c.id === active)) active = data.activeCompanyId;
+        if (active) localStorage.setItem('erp_active_company', active);
+        set({ companies, activeCompanyId: active });
+        get().applyActiveTheme(); // company theme may differ
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  },
+
+  switchCompany: async (companyId) => {
+    if (get().activeCompanyId === companyId) return;
+    localStorage.setItem('erp_active_company', companyId);
+    // Clear active-document pointers (they belong to the previous company).
+    localStorage.removeItem('erp_active_quote');
+    localStorage.removeItem('erp_active_invoice');
+    // Reset all company-scoped data and re-initialize against the new company.
+    set({
+      activeCompanyId: companyId,
+      initialized: false,
+      customers: [], products: [], quotations: [], invoices: [], suppliers: [],
+      activeQuoteId: null, activeInvoiceId: null,
+      currentPage: 'dashboard', currentRecordId: null
+    });
+    await get().initializeStore();
+  },
+
+  createCompany: async (name) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/companies', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      }, token);
+      if (res.ok) {
+        const created = await res.json();
+        await get().fetchCompanies();
+        return created.id as string;
+      }
+      return null;
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  },
+
+  updateCompanyOrg: async (companyId, patch) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch(`/companies/${companyId}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch)
+      }, token);
+      if (res.ok) {
+        await get().fetchCompanies();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  },
+
+  // ── FOLLOW-UP TRACKING ──────────────────────────────────────────────────────
+  setFollowUp: async (docType, id, followUpDate, followUpNote) => {
+    const { token, quotations, invoices } = get();
+    const path = docType === 'quotation' ? `/quotes/${id}/followup` : `/invoices/${id}/followup`;
+    try {
+      const res = await apiFetch(path, {
+        method: 'PUT',
+        body: JSON.stringify({ followUpDate, followUpNote })
+      }, token);
+      if (res.ok) {
+        if (docType === 'quotation') {
+          set({ quotations: quotations.map((q) => (q.id === id ? { ...q, followUpDate, followUpNote } : q)) });
+        } else {
+          set({ invoices: invoices.map((i) => (i.id === id ? { ...i, followUpDate, followUpNote } : i)) });
+        }
       }
     } catch (err) {
       console.error(err);

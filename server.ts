@@ -550,6 +550,144 @@ addColumnIfNotExists('invoices', 'hidePrices', "INTEGER DEFAULT 0");
 addColumnIfNotExists('invoices', 'manualTotal', "REAL");
 addColumnIfNotExists('boq', 'type', "TEXT DEFAULT 'boq'");
 
+// Follow-up tracking (Tracking page): next-action date + free-text note
+addColumnIfNotExists('quotations', 'followUpDate', 'TEXT');
+addColumnIfNotExists('quotations', 'followUpNote', 'TEXT');
+addColumnIfNotExists('invoices', 'followUpDate', 'TEXT');
+addColumnIfNotExists('invoices', 'followUpNote', 'TEXT');
+
+// ── MULTI-COMPANY / MULTI-TENANCY ─────────────────────────────────────────────
+// Shared tables scoped by a companyId column. A single default company is seeded
+// from existing settings and all legacy rows are backfilled into it, so existing
+// behaviour is preserved (everything stays in one company until more are created).
+const DEFAULT_COMPANY_ID = 'comp-default';
+const SCOPED_TABLES = ['customers', 'products', 'quotations', 'invoices', 'boq'] as const;
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS companies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT,
+    activePlan TEXT NOT NULL DEFAULT 'enterprise',
+    featureFlags TEXT,             -- JSON: per-company feature overrides
+    settings TEXT,                 -- JSON: per-company branding/profile (optional)
+    createdAt TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS user_companies (
+    userId TEXT NOT NULL,
+    companyId TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member',  -- 'owner' | 'admin' | 'member'
+    PRIMARY KEY (userId, companyId)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_companies ON user_companies(userId);
+`);
+
+// Platform-level columns: company lifecycle status + super-admin flag on users.
+addColumnIfNotExists('companies', 'status', "TEXT DEFAULT 'active'");   // 'active' | 'suspended'
+addColumnIfNotExists('users', 'isSuperAdmin', 'INTEGER DEFAULT 0');
+
+// A URL-safe slug used for subdomain / path tenant resolution (unique-ish).
+const slugify = (s: string) =>
+  String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'company';
+const uniqueSlug = (base: string, ignoreId?: string): string => {
+  let slug = slugify(base);
+  let n = 1;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const row = db.prepare('SELECT id FROM companies WHERE slug = ?').get(slug) as { id: string } | undefined;
+    if (!row || row.id === ignoreId) return slug;
+    slug = `${slugify(base)}-${++n}`;
+  }
+};
+
+// companyId on the scoped tables (boq is added later, after its table exists)
+addColumnIfNotExists('customers', 'companyId', 'TEXT');
+addColumnIfNotExists('products', 'companyId', 'TEXT');
+addColumnIfNotExists('quotations', 'companyId', 'TEXT');
+addColumnIfNotExists('invoices', 'companyId', 'TEXT');
+
+// Seed the default company + backfill legacy rows + enrol existing users.
+// Idempotent: safe to run on every boot. Call AFTER the boq column is added.
+const ensureDefaultCompany = () => {
+  const existing = db.prepare('SELECT id FROM companies WHERE id = ?').get(DEFAULT_COMPANY_ID);
+  if (!existing) {
+    let name = 'Default Company';
+    try {
+      const s = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as { value: string } | undefined;
+      if (s) { const c = JSON.parse(s.value); if (c?.name) name = c.name; }
+    } catch { /* ignore */ }
+    const planRow = db.prepare("SELECT value FROM settings WHERE key = 'activePlan'").get() as { value: string } | undefined;
+    const flagsRow = db.prepare("SELECT value FROM settings WHERE key = 'featureFlags'").get() as { value: string } | undefined;
+    db.prepare('INSERT INTO companies (id, name, slug, activePlan, featureFlags, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
+      DEFAULT_COMPANY_ID, name, 'default',
+      planRow?.value || 'enterprise',
+      flagsRow?.value || JSON.stringify(featuresFromPlan('enterprise')),
+      new Date().toISOString()
+    );
+    console.log(`🏢 Seeded default company "${name}"`);
+  }
+  for (const t of SCOPED_TABLES) {
+    try { db.prepare(`UPDATE ${t} SET companyId = ? WHERE companyId IS NULL`).run(DEFAULT_COMPANY_ID); } catch { /* table not ready */ }
+  }
+  const users = db.prepare('SELECT id, role FROM users').all() as { id: string; role: string }[];
+  for (const u of users) {
+    const m = db.prepare('SELECT 1 FROM user_companies WHERE userId = ? AND companyId = ?').get(u.id, DEFAULT_COMPANY_ID);
+    if (!m) {
+      db.prepare('INSERT INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(
+        u.id, DEFAULT_COMPANY_ID, u.role === 'admin' ? 'owner' : 'member'
+      );
+    }
+  }
+  // Backfill slug/status on any company missing them.
+  const needSlug = db.prepare("SELECT id, name FROM companies WHERE slug IS NULL OR slug = ''").all() as { id: string; name: string }[];
+  for (const c of needSlug) db.prepare('UPDATE companies SET slug = ? WHERE id = ?').run(uniqueSlug(c.name, c.id), c.id);
+  db.prepare("UPDATE companies SET status = 'active' WHERE status IS NULL").run();
+
+  // Ensure at least one platform super-admin exists (promote the earliest admin).
+  const hasSuper = db.prepare('SELECT 1 FROM users WHERE isSuperAdmin = 1 LIMIT 1').get();
+  if (!hasSuper) {
+    const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY rowid ASC LIMIT 1").get() as { id: string } | undefined;
+    if (admin) {
+      db.prepare('UPDATE users SET isSuperAdmin = 1 WHERE id = ?').run(admin.id);
+      console.log(`👑 Promoted user ${admin.id} to platform super-admin`);
+    }
+  }
+};
+
+// Map a request Host header to a company slug (subdomain tenant resolution).
+// e.g. "acme.mainservicepro.com" -> "acme"; ignores common non-tenant hosts.
+const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'api', 'admin', 'localhost', '']);
+const companyIdFromHost = (host?: string): string | null => {
+  if (!host) return null;
+  const hostname = host.split(':')[0];
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return null; // raw IP
+  const parts = hostname.split('.');
+  // Only a real subdomain (sub.domain.tld) selects a tenant — never the apex
+  // (domain.tld) or a bare host (localhost). Header/fallback handle those.
+  if (parts.length < 3) return null;
+  const sub = parts[0];
+  if (RESERVED_SUBDOMAINS.has(sub)) return null;
+  const row = db.prepare('SELECT id FROM companies WHERE slug = ?').get(sub) as { id: string } | undefined;
+  return row?.id || null;
+};
+
+// Resolve the active company for a request. Priority: subdomain → X-Company-Id →
+// deterministic fallback. Super-admins may act on ANY company; regular users are
+// restricted to their memberships.
+const resolveActiveCompany = (user: any, requested?: string, host?: string): string => {
+  const isSuper = user.isSuperAdmin === 1 || user.isSuperAdmin === true;
+  const hostCompany = companyIdFromHost(host);
+  const memberships = db.prepare('SELECT companyId FROM user_companies WHERE userId = ? ORDER BY rowid ASC').all(user.id) as { companyId: string }[];
+  const allowed = (id?: string | null) => !!id && (isSuper || memberships.some((m) => m.companyId === id));
+
+  if (allowed(hostCompany)) return hostCompany as string;
+  if (allowed(requested)) return requested as string;
+  if (isSuper) return hostCompany || requested || DEFAULT_COMPANY_ID;
+  if (memberships.length === 0) return DEFAULT_COMPANY_ID; // legacy safety
+  if (memberships.some((m) => m.companyId === DEFAULT_COMPANY_ID)) return DEFAULT_COMPANY_ID;
+  return memberships[0].companyId;
+};
+
 // ── SEEDING MOCK DATA ─────────────────────────────────────────────────────────
 const seedDatabase = () => {
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
@@ -730,7 +868,7 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
     return res.status(401).json({ error: 'Session expired. Please log in again.' });
   }
 
-  const user = db.prepare('SELECT id, username, name, email, role, permissions, avatar FROM users WHERE id = ?').get(session.user_id) as any;
+  const user = db.prepare('SELECT id, username, name, email, role, permissions, avatar, isSuperAdmin FROM users WHERE id = ?').get(session.user_id) as any;
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
@@ -740,6 +878,21 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
   }
 
   (req as any).user = user;
+  // Resolve the active company (multi-tenancy). Scoped routes read req.companyId.
+  (req as any).companyId = resolveActiveCompany(
+    user,
+    req.headers['x-company-id'] as string | undefined,
+    req.headers.host
+  );
+  next();
+};
+
+// Platform-owner gate for the super-admin control plane.
+const requireSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const user = (req as any).user;
+  if (!user || !(user.isSuperAdmin === 1 || user.isSuperAdmin === true)) {
+    return res.status(403).json({ error: 'Forbidden: platform super-admin only.' });
+  }
   next();
 };
 
@@ -810,6 +963,20 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   const passwordMatch = user ? await bcrypt.compare(password, user.password) : false;
 
   if (user && passwordMatch) {
+    // Block tenant users whose companies are all suspended (super-admins bypass).
+    if (!(user.isSuperAdmin === 1)) {
+      const active = db.prepare(`
+        SELECT COUNT(*) AS c FROM user_companies uc
+        JOIN companies co ON co.id = uc.companyId
+        WHERE uc.userId = ? AND co.status = 'active'
+      `).get(user.id) as { c: number };
+      const anyMembership = db.prepare('SELECT COUNT(*) AS c FROM user_companies WHERE userId = ?').get(user.id) as { c: number };
+      if (anyMembership.c > 0 && active.c === 0) {
+        logSystemEvent('warn', `Login blocked: company suspended`, { email });
+        return res.status(403).json({ error: 'Your company account is suspended. Please contact the platform administrator.' });
+      }
+    }
+
     const token = crypto.randomBytes(32).toString('hex');
     const days = rememberMe ? 30 : 1;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
@@ -828,7 +995,8 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         email: user.email,
         role: user.role,
         permissions,
-        avatar: user.avatar
+        avatar: user.avatar,
+        isSuperAdmin: user.isSuperAdmin === 1
       }
     });
   } else {
@@ -848,7 +1016,8 @@ app.post('/api/logout', requireAuth, (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json((req as any).user);
+  const user = (req as any).user;
+  res.json({ ...user, isSuperAdmin: user.isSuperAdmin === 1 || user.isSuperAdmin === true });
 });
 
 // ── USER MANAGEMENT API (RBAC) ────────────────────────────────────────────────
@@ -966,7 +1135,7 @@ app.delete('/api/permission-groups/:id', requireAuth, requirePermission('canMana
 
 // ── CUSTOMERS CRUD ────────────────────────────────────────────────────────────
 app.get('/api/customers', requireAuth, (req, res) => {
-  const customers = db.prepare('SELECT * FROM customers ORDER BY createdAt DESC').all() as any[];
+  const customers = db.prepare('SELECT * FROM customers WHERE companyId = ? ORDER BY createdAt DESC').all((req as any).companyId) as any[];
   const parsed = customers.map(c => ({
     ...c,
     billingAddress: JSON.parse(c.billingAddress || '{}'),
@@ -980,8 +1149,8 @@ app.post('/api/customers', requireAuth, (req, res) => {
   try {
     const custId = id || `cust-${Date.now()}`;
     db.prepare(`
-      INSERT INTO customers (id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO customers (id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt, companyId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       custId,
       companyName,
@@ -990,7 +1159,8 @@ app.post('/api/customers', requireAuth, (req, res) => {
       phone,
       vatNumber || '',
       JSON.stringify(billingAddress || {}),
-      new Date().toISOString()
+      new Date().toISOString(),
+      (req as any).companyId
     );
     res.json({ id: custId });
   } catch (error: any) {
@@ -1004,7 +1174,7 @@ app.put('/api/customers/:id', requireAuth, (req, res) => {
     db.prepare(`
       UPDATE customers
       SET companyName = ?, contactPerson = ?, email = ?, phone = ?, vatNumber = ?, billingAddress = ?
-      WHERE id = ?
+      WHERE id = ? AND companyId = ?
     `).run(
       companyName,
       contactPerson || '',
@@ -1012,7 +1182,8 @@ app.put('/api/customers/:id', requireAuth, (req, res) => {
       phone,
       vatNumber || '',
       JSON.stringify(billingAddress || {}),
-      req.params.id
+      req.params.id,
+      (req as any).companyId
     );
     res.json({ success: true });
   } catch (error: any) {
@@ -1021,7 +1192,7 @@ app.put('/api/customers/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/customers/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
-  db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM customers WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
   res.json({ success: true });
 });
 
@@ -1081,7 +1252,7 @@ app.delete('/api/suppliers/:id', requireAuth, requirePermission('canDeleteData')
 
 // ── PRODUCTS CRUD ─────────────────────────────────────────────────────────────
 app.get('/api/products', requireAuth, (req, res) => {
-  const products = db.prepare('SELECT * FROM products ORDER BY name ASC').all();
+  const products = db.prepare('SELECT * FROM products WHERE companyId = ? ORDER BY name ASC').all((req as any).companyId);
   res.json(products);
 });
 
@@ -1090,8 +1261,8 @@ app.post('/api/products', requireAuth, (req, res) => {
   try {
     const prodId = id || `p-${Date.now()}`;
     db.prepare(`
-      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       prodId,
       name,
@@ -1100,7 +1271,8 @@ app.post('/api/products', requireAuth, (req, res) => {
       unitPrice,
       unit,
       taxRate,
-      categoryId || ''
+      categoryId || '',
+      (req as any).companyId
     );
     res.json({ id: prodId });
   } catch (error: any) {
@@ -1114,7 +1286,7 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
     db.prepare(`
       UPDATE products
       SET name = ?, description = ?, type = ?, unitPrice = ?, unit = ?, taxRate = ?, categoryId = ?
-      WHERE id = ?
+      WHERE id = ? AND companyId = ?
     `).run(
       name,
       description || '',
@@ -1123,7 +1295,8 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
       unit,
       taxRate,
       categoryId || '',
-      req.params.id
+      req.params.id,
+      (req as any).companyId
     );
     res.json({ success: true });
   } catch (error: any) {
@@ -1132,7 +1305,7 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/products/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
-  db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM products WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
   res.json({ success: true });
 });
 
@@ -1165,7 +1338,7 @@ app.put('/api/sequences/:docType', requireAuth, requirePermission('canManageSett
 });
 
 app.get('/api/quotes', requireAuth, (req, res) => {
-  const quotes = db.prepare('SELECT * FROM quotations ORDER BY date DESC').all() as any[];
+  const quotes = db.prepare('SELECT * FROM quotations WHERE companyId = ? ORDER BY date DESC').all((req as any).companyId) as any[];
   const parsed = quotes.map(q => ({
     ...q,
     lineItems: JSON.parse(q.lineItems || '[]'),
@@ -1194,8 +1367,8 @@ app.post('/api/quotes', requireAuth, (req, res) => {
     const qId = id || `qt-${Date.now()}`;
     const number = getNextDocumentNumber('quotation');
     db.prepare(`
-      INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       qId,
       number,
@@ -1220,7 +1393,8 @@ app.post('/api/quotes', requireAuth, (req, res) => {
       watermarkType || 'none',
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
-      user.id, user.name, user.id, user.name
+      user.id, user.name, user.id, user.name,
+      (req as any).companyId
     );
     logDocumentActivity('quotation', qId, number, 'created', user);
     res.json({ id: qId, number });
@@ -1244,11 +1418,11 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, linkedInvoiceId, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
-    const before = db.prepare('SELECT * FROM quotations WHERE id = ?').get(req.params.id) as any;
+    const before = db.prepare('SELECT * FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
     db.prepare(`
       UPDATE quotations
       SET number = ?, customerId = ?, date = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedInvoiceId = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
-      WHERE id = ?
+      WHERE id = ? AND companyId = ?
     `).run(
       number,
       customerId,
@@ -1273,7 +1447,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
       user.id, user.name,
-      req.params.id
+      req.params.id, (req as any).companyId
     );
     if (before) {
       const changes = computeDocumentDiff(
@@ -1292,15 +1466,15 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
 
 app.delete('/api/quotes/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   const user = (req as any).user;
-  const before = db.prepare('SELECT number FROM quotations WHERE id = ?').get(req.params.id) as any;
-  db.prepare('DELETE FROM quotations WHERE id = ?').run(req.params.id);
+  const before = db.prepare('SELECT number FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+  db.prepare('DELETE FROM quotations WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
   logDocumentActivity('quotation', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
 });
 
 // ── INVOICES CRUD ─────────────────────────────────────────────────────────────
 app.get('/api/invoices', requireAuth, (req, res) => {
-  const invoices = db.prepare('SELECT * FROM invoices ORDER BY date DESC').all() as any[];
+  const invoices = db.prepare('SELECT * FROM invoices WHERE companyId = ? ORDER BY date DESC').all((req as any).companyId) as any[];
   const parsed = invoices.map(i => ({
     ...i,
     lineItems: JSON.parse(i.lineItems || '[]'),
@@ -1330,8 +1504,8 @@ app.post('/api/invoices', requireAuth, (req, res) => {
     const invId = id || `inv-${Date.now()}`;
     const number = getNextDocumentNumber('invoice');
     db.prepare(`
-      INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       invId,
       number,
@@ -1361,7 +1535,8 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       watermarkType || 'none',
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
-      user.id, user.name, user.id, user.name
+      user.id, user.name, user.id, user.name,
+      (req as any).companyId
     );
     logDocumentActivity('invoice', invId, number, 'created', user);
     res.json({ id: invId, number });
@@ -1385,11 +1560,11 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
-    const before = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id) as any;
+    const before = db.prepare('SELECT * FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
     db.prepare(`
       UPDATE invoices
       SET number = ?, customerId = ?, date = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedQuoteId = ?, payments = ?, amountPaid = ?, amountDue = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
-      WHERE id = ?
+      WHERE id = ? AND companyId = ?
     `).run(
       number,
       customerId,
@@ -1418,7 +1593,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
       hidePrices ? 1 : 0,
       manualTotal !== undefined && manualTotal !== null ? manualTotal : null,
       user.id, user.name,
-      req.params.id
+      req.params.id, (req as any).companyId
     );
     if (before) {
       const changes = computeDocumentDiff(
@@ -1437,8 +1612,8 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
 
 app.delete('/api/invoices/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   const user = (req as any).user;
-  const before = db.prepare('SELECT number FROM invoices WHERE id = ?').get(req.params.id) as any;
-  db.prepare('DELETE FROM invoices WHERE id = ?').run(req.params.id);
+  const before = db.prepare('SELECT number FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+  db.prepare('DELETE FROM invoices WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
   logDocumentActivity('invoice', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
 });
@@ -1908,10 +2083,14 @@ db.exec(`
 addColumnIfNotExists('boq', 'createdByName', 'TEXT');
 addColumnIfNotExists('boq', 'updatedBy', 'TEXT');
 addColumnIfNotExists('boq', 'updatedByName', 'TEXT');
+addColumnIfNotExists('boq', 'companyId', 'TEXT');
+
+// All scoped tables now exist — seed default company & backfill legacy rows.
+ensureDefaultCompany();
 
 app.get('/api/boq', requireAuth, (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM boq ORDER BY createdAt DESC').all() as any[];
+    const rows = db.prepare('SELECT * FROM boq WHERE companyId = ? ORDER BY createdAt DESC').all((req as any).companyId) as any[];
     const parsed = rows.map(r => ({
       ...r,
       sections: (() => { try { return JSON.parse(r.sections || '[]'); } catch { return []; } })(),
@@ -1925,7 +2104,7 @@ app.get('/api/boq', requireAuth, (req, res) => {
 });
 
 app.get('/api/boq/:id', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT * FROM boq WHERE id = ?').get(req.params.id) as any;
+  const row = db.prepare('SELECT * FROM boq WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
   if (!row) return res.status(404).json({ error: 'BOQ not found' });
   row.sections = (() => { try { return JSON.parse(row.sections || '[]'); } catch { return []; } })();
   res.json(row);
@@ -1938,14 +2117,14 @@ app.post('/api/boq', requireAuth, (req, res) => {
     const boqId = id || `boq-${Date.now()}`;
     const docType = type === 'bom' ? 'bom' : 'boq';
     const number = getNextDocumentNumber(docType);
-    db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, createdByName, updatedBy, updatedByName, type)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, createdByName, updatedBy, updatedByName, type, companyId)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       boqId, number, title, titleAr || '', customerId || null, projectRef || '',
       status || 'draft', JSON.stringify(sections || []), notes || '',
       currency || 'SAR', subtotal || 0, total || 0,
       new Date().toISOString(), new Date().toISOString(),
       user.id, user.name, user.id, user.name,
-      docType
+      docType, (req as any).companyId
     );
     logDocumentActivity(docType, boqId, number, 'created', user);
     res.json({ id: boqId, number });
@@ -1958,12 +2137,12 @@ app.put('/api/boq/:id', requireAuth, (req, res) => {
   const user = (req as any).user;
   const { number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, type } = req.body;
   try {
-    const before = db.prepare('SELECT * FROM boq WHERE id = ?').get(req.params.id) as any;
-    db.prepare(`UPDATE boq SET number=?, title=?, titleAr=?, customerId=?, projectRef=?, status=?, sections=?, notes=?, currency=?, subtotal=?, total=?, type=?, updatedAt=?, updatedBy=?, updatedByName=? WHERE id=?`)
+    const before = db.prepare('SELECT * FROM boq WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+    db.prepare(`UPDATE boq SET number=?, title=?, titleAr=?, customerId=?, projectRef=?, status=?, sections=?, notes=?, currency=?, subtotal=?, total=?, type=?, updatedAt=?, updatedBy=?, updatedByName=? WHERE id=? AND companyId=?`)
       .run(number, title, titleAr || '', customerId || null, projectRef || '', status || 'draft',
         JSON.stringify(sections || []), notes || '', currency || 'SAR',
         subtotal || 0, total || 0, type || 'boq', new Date().toISOString(),
-        user.id, user.name, req.params.id);
+        user.id, user.name, req.params.id, (req as any).companyId);
     if (before) {
       const docType = (type === 'bom' ? 'bom' : 'boq');
       const changes = computeDocumentDiff(
@@ -1982,8 +2161,8 @@ app.put('/api/boq/:id', requireAuth, (req, res) => {
 
 app.delete('/api/boq/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   const user = (req as any).user;
-  const before = db.prepare('SELECT number, type FROM boq WHERE id = ?').get(req.params.id) as any;
-  db.prepare('DELETE FROM boq WHERE id = ?').run(req.params.id);
+  const before = db.prepare('SELECT number, type FROM boq WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+  db.prepare('DELETE FROM boq WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
   logDocumentActivity(before?.type === 'bom' ? 'bom' : 'boq', req.params.id, before?.number || null, 'deleted', user);
   res.json({ success: true });
 });
@@ -2200,6 +2379,264 @@ app.delete('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) =>
     const result = db.prepare('DELETE FROM personal_tasks WHERE id = ? AND userId = ?').run(req.params.id, user.id);
     if (result.changes === 0) return res.status(404).json({ error: 'Task not found.' });
     res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── FOLLOW-UP TRACKING ────────────────────────────────────────────────────────
+// Lightweight, dedicated updates for the Tracking page so the heavy editor PUT
+// (which rewrites a fixed column set) never clobbers these fields.
+const followUpHandler = (table: 'quotations' | 'invoices') =>
+  (req: express.Request, res: express.Response) => {
+    try {
+      const { followUpDate, followUpNote } = req.body;
+      const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(req.params.id);
+      if (!exists) return res.status(404).json({ error: 'Document not found.' });
+      db.prepare(`UPDATE ${table} SET followUpDate = ?, followUpNote = ? WHERE id = ?`)
+        .run(followUpDate || null, followUpNote || null, req.params.id);
+      res.json({ success: true, followUpDate: followUpDate || null, followUpNote: followUpNote || null });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+app.put('/api/quotes/:id/followup', requireAuth, requireFeature('tracking'), followUpHandler('quotations'));
+app.put('/api/invoices/:id/followup', requireAuth, requireFeature('tracking'), followUpHandler('invoices'));
+
+// ── COMPANIES (multi-tenancy) ─────────────────────────────────────────────────
+// List the companies the current user belongs to, plus the active one.
+app.get('/api/companies', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user;
+    const rows = db.prepare(`
+      SELECT c.id, c.name, c.slug, c.activePlan, c.createdAt, c.settings, uc.role
+      FROM companies c JOIN user_companies uc ON uc.companyId = c.id
+      WHERE uc.userId = ? ORDER BY c.createdAt ASC
+    `).all(user.id) as any[];
+    const companies = rows.map((c) => {
+      let theme: any = null;
+      try { theme = c.settings ? (JSON.parse(c.settings).theme || null) : null; } catch { /* ignore */ }
+      const { settings, ...rest } = c;
+      return { ...rest, theme };
+    });
+    res.json({ companies, activeCompanyId: (req as any).companyId });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a new company; the creator becomes its owner and is enrolled immediately.
+app.post('/api/companies', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user;
+    const { name } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Company name is required.' });
+    const id = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    db.prepare('INSERT INTO companies (id, name, slug, activePlan, featureFlags, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id, String(name).trim(), null, 'enterprise', JSON.stringify(featuresFromPlan('enterprise')), new Date().toISOString()
+    );
+    db.prepare('INSERT INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(user.id, id, 'owner');
+    res.json({ id, name: String(name).trim(), role: 'owner', activePlan: 'enterprise' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Rename / re-plan a company (owner or admin of that company only).
+app.put('/api/companies/:id', requireAuth, (req, res) => {
+  try {
+    const user = (req as any).user;
+    const membership = db.prepare('SELECT role FROM user_companies WHERE userId = ? AND companyId = ?').get(user.id, req.params.id) as { role: string } | undefined;
+    if (!membership || !['owner', 'admin'].includes(membership.role)) {
+      return res.status(403).json({ error: 'Forbidden: requires company owner/admin.' });
+    }
+    const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id) as any;
+    if (!existing) return res.status(404).json({ error: 'Company not found.' });
+    const { name, activePlan, theme } = req.body;
+    // Merge theme into the settings JSON blob so other settings survive.
+    let settings: any = {};
+    try { settings = existing.settings ? JSON.parse(existing.settings) : {}; } catch { settings = {}; }
+    if (theme !== undefined) settings.theme = theme;
+    db.prepare('UPDATE companies SET name = ?, activePlan = ?, settings = ? WHERE id = ?').run(
+      name ?? existing.name, activePlan ?? existing.activePlan, JSON.stringify(settings), req.params.id
+    );
+    res.json({ success: true, theme: settings.theme || null });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── PLATFORM SUPER-ADMIN CONTROL PLANE ────────────────────────────────────────
+// A separate surface (super-admin only) to manage ALL tenant companies.
+app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM companies ORDER BY createdAt ASC').all() as any[];
+    const count = (sql: string, id: string) => (db.prepare(sql).get(id) as any).c as number;
+    const out = rows.map((c) => {
+      const owner = db.prepare(`
+        SELECT u.name, u.email FROM user_companies uc JOIN users u ON u.id = uc.userId
+        WHERE uc.companyId = ? AND uc.role = 'owner' ORDER BY uc.rowid ASC LIMIT 1
+      `).get(c.id) as { name: string; email: string } | undefined;
+      return {
+        id: c.id, name: c.name, slug: c.slug, status: c.status || 'active',
+        activePlan: c.activePlan, createdAt: c.createdAt,
+        isDefault: c.id === DEFAULT_COMPANY_ID,
+        owner: owner || null,
+        counts: {
+          users: count('SELECT COUNT(*) c FROM user_companies WHERE companyId = ?', c.id),
+          customers: count('SELECT COUNT(*) c FROM customers WHERE companyId = ?', c.id),
+          quotations: count('SELECT COUNT(*) c FROM quotations WHERE companyId = ?', c.id),
+          invoices: count('SELECT COUNT(*) c FROM invoices WHERE companyId = ?', c.id),
+        },
+      };
+    });
+    res.json({ companies: out });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a tenant company; optionally attach an existing user (by email) as owner.
+app.post('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { name, ownerEmail, activePlan } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Company name is required.' });
+    const id = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const plan = activePlan || 'enterprise';
+    db.prepare("INSERT INTO companies (id, name, slug, activePlan, featureFlags, status, createdAt) VALUES (?, ?, ?, ?, ?, 'active', ?)").run(
+      id, String(name).trim(), uniqueSlug(name), plan, JSON.stringify(featuresFromPlan(plan)), new Date().toISOString()
+    );
+    let ownerAssigned: string | null = null;
+    if (ownerEmail && String(ownerEmail).trim()) {
+      const owner = db.prepare('SELECT id FROM users WHERE email = ?').get(String(ownerEmail).trim()) as { id: string } | undefined;
+      if (owner) {
+        db.prepare('INSERT OR REPLACE INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(owner.id, id, 'owner');
+        ownerAssigned = owner.id;
+      }
+    }
+    res.json({ id, slug: uniqueSlug(name, id), ownerAssigned });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a company's status / plan / name (suspend, activate, re-plan, rename).
+app.patch('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id) as any;
+    if (!existing) return res.status(404).json({ error: 'Company not found.' });
+    const { status, activePlan, name } = req.body;
+    if (status && !['active', 'suspended'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    db.prepare('UPDATE companies SET status = ?, activePlan = ?, name = ? WHERE id = ?').run(
+      status ?? existing.status ?? 'active',
+      activePlan ?? existing.activePlan,
+      name ?? existing.name,
+      req.params.id
+    );
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a tenant company and all of its scoped data (cannot delete the default).
+app.delete('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    if (req.params.id === DEFAULT_COMPANY_ID) {
+      return res.status(400).json({ error: 'The default company cannot be deleted.' });
+    }
+    const existing = db.prepare('SELECT id FROM companies WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Company not found.' });
+    const tx = db.transaction((cid: string) => {
+      for (const t of SCOPED_TABLES) db.prepare(`DELETE FROM ${t} WHERE companyId = ?`).run(cid);
+      db.prepare('DELETE FROM user_companies WHERE companyId = ?').run(cid);
+      db.prepare('DELETE FROM companies WHERE id = ?').run(cid);
+    });
+    tx(req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Broadcast a notification to everyone, a whole company, or a single user.
+app.post('/api/admin/notifications', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { target, targetId, title, body, link } = req.body;
+    if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title is required.' });
+    if (!['all', 'company', 'user'].includes(target)) return res.status(400).json({ error: 'Invalid target.' });
+
+    let recipients = 0;
+    if (target === 'all') {
+      createNotification(null, 'system', title, body, link); // userId NULL = broadcast to all
+      recipients = -1; // "everyone"
+    } else if (target === 'user') {
+      if (!targetId) return res.status(400).json({ error: 'targetId (user) is required.' });
+      createNotification(targetId, 'system', title, body, link);
+      recipients = 1;
+    } else {
+      if (!targetId) return res.status(400).json({ error: 'targetId (company) is required.' });
+      const members = db.prepare('SELECT userId FROM user_companies WHERE companyId = ?').all(targetId) as { userId: string }[];
+      for (const m of members) createNotification(m.userId, 'system', title, body, link);
+      recipients = members.length;
+    }
+    res.json({ success: true, recipients });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Users list for the super-admin notification composer (id/name/email only).
+app.get('/api/admin/users', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT id, name, email, role, isSuperAdmin FROM users ORDER BY name ASC').all() as any[];
+    const users = rows.map((u) => ({
+      ...u,
+      isSuperAdmin: u.isSuperAdmin === 1,
+      companyCount: (db.prepare('SELECT COUNT(*) c FROM user_companies WHERE userId = ?').get(u.id) as any).c
+    }));
+    res.json({ users });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Promote / demote a user's platform super-admin flag (cannot demote the last one).
+app.patch('/api/admin/users/:id', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const { isSuperAdmin } = req.body;
+    const target = db.prepare('SELECT id, isSuperAdmin FROM users WHERE id = ?').get(req.params.id) as any;
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+    if (isSuperAdmin === false || isSuperAdmin === 0) {
+      const supers = (db.prepare('SELECT COUNT(*) c FROM users WHERE isSuperAdmin = 1').get() as any).c;
+      if (target.isSuperAdmin === 1 && supers <= 1) {
+        return res.status(400).json({ error: 'Cannot remove the last platform super-admin.' });
+      }
+    }
+    db.prepare('UPDATE users SET isSuperAdmin = ? WHERE id = ?').run(isSuperAdmin ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Platform-wide aggregate stats for the super-admin overview.
+app.get('/api/admin/overview', requireAuth, requireSuperAdmin, (req, res) => {
+  try {
+    const one = (sql: string) => (db.prepare(sql).get() as any).c as number;
+    const revenueRow = db.prepare('SELECT COALESCE(SUM(amountPaid),0) s FROM invoices').get() as any;
+    res.json({
+      tenants: one('SELECT COUNT(*) c FROM companies'),
+      activeTenants: one("SELECT COUNT(*) c FROM companies WHERE status = 'active' OR status IS NULL"),
+      suspendedTenants: one("SELECT COUNT(*) c FROM companies WHERE status = 'suspended'"),
+      users: one('SELECT COUNT(*) c FROM users'),
+      superAdmins: one('SELECT COUNT(*) c FROM users WHERE isSuperAdmin = 1'),
+      quotations: one('SELECT COUNT(*) c FROM quotations'),
+      invoices: one('SELECT COUNT(*) c FROM invoices'),
+      customers: one('SELECT COUNT(*) c FROM customers'),
+      collectedRevenue: Math.round((revenueRow.s || 0) * 100) / 100,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

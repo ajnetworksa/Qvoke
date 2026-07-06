@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useERPStore } from '../store';
+import { THEME_PRESETS } from '../theme';
 import {
   Search,
   FileSpreadsheet,
@@ -19,7 +20,9 @@ import {
   ArrowDown,
   Command as CommandIcon,
   TrendingUp,
-  Building
+  Building,
+  Radar,
+  Palette
 } from 'lucide-react';
 
 interface CommandItem {
@@ -50,7 +53,9 @@ export const CommandPalette: React.FC = () => {
     setTheme,
     density,
     setDensity,
-    features
+    setThemePreset,
+    features,
+    currentUser
   } = useERPStore();
 
   const [open, setOpen] = useState(false);
@@ -73,10 +78,13 @@ export const CommandPalette: React.FC = () => {
       featureOn('quotations') && { id: 'nav-quotes', label: 'Quotations', group: 'Navigate', icon: FileSpreadsheet, run: go('quotations') },
       featureOn('invoices') && { id: 'nav-invoices', label: 'Invoices', group: 'Navigate', icon: FileText, run: go('invoices') },
       featureOn('boq') && { id: 'nav-boq', label: 'BOQ / BOM', group: 'Navigate', icon: ClipboardList, run: go('boq') },
+      featureOn('tracking') && { id: 'nav-tracking', label: 'Tracking & Follow-ups', group: 'Navigate', icon: Radar, run: go('tracking') },
       featureOn('reports') && { id: 'nav-reports', label: 'Financials', group: 'Navigate', icon: TrendingUp, run: go('reports') },
       featureOn('customers') && { id: 'nav-customers', label: 'Customers', group: 'Navigate', icon: Users, run: go('customers') },
       featureOn('suppliers') && { id: 'nav-suppliers', label: 'Suppliers', group: 'Navigate', icon: Building, run: go('suppliers') },
       featureOn('products') && { id: 'nav-products', label: 'Catalog', group: 'Navigate', icon: Package, run: go('products') },
+      { id: 'nav-companies', label: 'Companies', group: 'Navigate', icon: Building, keywords: 'organization tenant switch', run: go('companies') },
+      currentUser?.isSuperAdmin && { id: 'nav-platform', label: 'Platform Admin', group: 'Navigate', icon: Building, keywords: 'super admin tenants notifications', run: go('platform-admin') },
       { id: 'nav-settings', label: 'Settings', group: 'Navigate', icon: SettingsIcon, run: go('settings') },
     ].filter(Boolean) as CommandItem[];
 
@@ -126,8 +134,17 @@ export const CommandPalette: React.FC = () => {
       });
     });
 
-    return [...nav, ...actions, ...records];
-  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, features]);
+    const themeCmds: CommandItem[] = THEME_PRESETS.map((p) => ({
+      id: `theme-${p.key}`,
+      label: `Theme: ${p.label}`,
+      group: 'Theme',
+      icon: Palette,
+      keywords: 'color accent preset appearance',
+      run: () => { setThemePreset(p.key); setOpen(false); }
+    }));
+
+    return [...nav, ...actions, ...themeCmds, ...records];
+  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, setThemePreset, features, currentUser]);
 
   // Filter + cap results for performance.
   const results = useMemo(() => {

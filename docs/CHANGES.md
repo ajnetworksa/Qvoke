@@ -269,6 +269,165 @@ drives the guard in `App.renderActiveView`, complementing the already-hidden nav
 
 ---
 
+## 17. Kanban pipeline (invoices) + bug fix
+
+**How:**
+- **Invoices Kanban** board added (mirrors the existing Quotations board): list/board
+  toggle, columns by status, native HTML5 drag-to-change-status. `partial`/`paid`
+  columns are **display-only** (those statuses are derived from recorded payments),
+  so dropping there is ignored and the columns are visually marked.
+- **Fix:** `Quotations` used `FileSpreadsheet` in its empty-state without importing it
+  — an empty/filtered-to-zero quotations list would crash. Added the import (and
+  dropped genuinely unused icon imports).
+
+**Files:** `src/pages/Invoices.tsx`, `src/pages/Quotations.tsx`
+
+---
+
+## 18. Tracking & Follow-ups page
+
+**Why:** legacy had a dedicated tracking surface (advanced filters, bulk status,
+follow-up date/note); requested under Remaining.
+
+**How:**
+- New `followUpDate` / `followUpNote` columns on quotations & invoices, updated via
+  **dedicated** lightweight endpoints `PUT /api/quotes/:id/followup` and
+  `/api/invoices/:id/followup` (gated by `tracking`) — kept separate from the heavy
+  editor PUT so document saves never clobber follow-up data. `GET` already uses
+  `SELECT *`, so the fields flow through automatically.
+- `setFollowUp` store action (optimistic local update on success).
+- `Tracking` page: Quotations/Invoices toggle, search, status pills, date-range,
+  and a follow-up filter (has / due today / overdue / none) with an overdue badge.
+  Row-level follow-up chips (colour-coded: overdue/today/upcoming) + note, a
+  single/bulk follow-up editor modal, and bulk status changes (manual transitions
+  only — invoice `paid`/`partial` excluded as payment-derived).
+- Wired into nav (SALES), routing, the route-feature guard, and the ⌘K palette,
+  all gated by the existing `tracking` flag.
+
+**Files:** `server.ts`, `src/store.ts`, `src/types.ts`, `src/pages/Tracking.tsx`,
+`src/App.tsx`, `src/components/CommandPalette.tsx`
+
+---
+
+## 19. Multi-company / multi-tenancy
+
+**Why:** the largest requested item — isolate data per company with a switcher.
+
+**How (backend):**
+- New `companies` and `user_companies` tables. A single **default company** is
+  seeded from existing settings (named after the current company profile), all
+  legacy rows are **backfilled** into it, and every existing user is enrolled
+  (admins as `owner`). Verified: 0 null-`companyId` rows post-migration.
+- `companyId` column added to the five scoped tables: `customers`, `products`,
+  `quotations`, `invoices`, `boq`. **Every** list/get/create/update/delete is
+  scoped by the active company (writes also guard `AND companyId = ?`).
+- Active company is resolved per request from an `X-Company-Id` header, with a
+  **deterministic fallback** to the default company (so legacy/headerless requests
+  keep working unchanged).
+- Endpoints: `GET /api/companies` (memberships + active), `POST /api/companies`
+  (creator becomes owner), `PUT /api/companies/:id` (owner/admin rename/replan).
+- The live DB was backed up to `quotes.db.pre-multitenancy.bak` before migrating.
+
+**How (frontend):**
+- `apiFetch` sends `X-Company-Id` from `localStorage` on every request.
+- Store: `companies` / `activeCompanyId`, `fetchCompanies`, `createCompany`, and
+  `switchCompany` (clears scoped data + active-doc pointers and re-initializes).
+- **Header company switcher**: lists memberships with the active one checked,
+  inline "new company" create that auto-switches.
+
+**Verified:** existing data stays in the default company (415 quotes / 232
+customers); a new company starts empty (0/0); switching back restores the original;
+isolation holds with explicit headers. No console errors.
+
+**Deferred (phase 2):** per-company numbering sequences, branding & feature flags
+(currently global; columns are company-ready); scoping suppliers (global UNIQUE
+name), audit/usage/exports/PDF-by-id; owner UI to invite users & assign plans.
+
+**Files:** `server.ts`, `src/store.ts`, `src/types.ts`, `src/App.tsx`
+
+---
+
+## 20. Platform super-admin control plane + notifications
+
+**How:** `users.isSuperAdmin` (existing admin auto-promoted), company `status`
+(active/suspended) + unique `slug`; tenant resolved from subdomain host → header →
+default; `requireSuperAdmin`; suspended-tenant login block. Endpoints (super-admin):
+`GET/POST/PATCH/DELETE /api/admin/companies`, `POST /api/admin/notifications`
+(all / company / user), `GET /api/admin/users`. New **Platform Admin** page
+(super-admin only): tenant list w/ status + counts + access URL, create / suspend /
+activate / delete (default protected), and an in-app **notification composer**.
+Verified: list/create/suspend/delete + broadcast delivery.
+
+**Files:** `server.ts`, `src/pages/SuperAdmin.tsx`, `src/App.tsx`, `src/components/CommandPalette.tsx`
+
+---
+
+## 21. Theming — muted default + presets, company + per-user
+
+**How:** muted **"Slate"** default palette (calmer dark, neon/gradient toned down);
+`src/theme.ts` with 7 presets + runtime accent resolution: **user accent → user
+preset → company theme → default**. Company theme persisted in `companies.settings`
+(exposed in `GET /api/companies`, set via `PUT /api/companies/:id`); per-user
+accent/preset in `localStorage`. `applyActiveTheme()` re-resolves on light/dark and
+company switch. Settings → Appearance gains a preset picker, custom accent, and a
+company-theme block (owner/admin). Verified live: preset switch + dark-variant.
+
+**Files:** `src/theme.ts`, `src/index.css`, `src/store.ts`, `src/App.tsx`, `src/pages/Settings.tsx`
+
+---
+
+## 22. App-wide autosave
+
+**How:** new reusable `useDebouncedAutosave` hook powers save-on-edit across the
+entity dialogs — **My Tasks, Customers, Products, Suppliers**: editing an existing
+record autosaves (debounced 800ms) with a Saving…/Saved indicator and a "Done"
+button; creating stays explicit. **BOQ/BOM** and the **quotation/invoice** editors
+already autosave via `useAutoSave`. Verified: Customers edit persisted server-side
+with no explicit save, no console errors.
+
+**Files:** `src/hooks/useDebouncedAutosave.ts`, `src/pages/{MyTasks,Customers,Products,Suppliers}.tsx`
+
+---
+
+## 23. Muted UI pass
+
+**How:** the muted "Slate" palette (§21) is applied globally via design tokens and
+verified coherent in **both light and dark** (calmer near-black dark surfaces,
+muted accent, neon/gradients toned down). Theming is fully token-driven so the pass
+is consistent across pages.
+
+**Files:** `src/index.css`, `src/theme.ts`
+
+---
+
+## 24. Standalone platform control plane + more
+
+**Why:** the super-admin panel was a page *inside* the tenant sidebar; it needed to
+be a genuinely separate control plane.
+
+**How:**
+- **`PlatformShell`** — a full-screen layout (its own "Qvoke Platform" sidebar +
+  header) that App renders *instead of* the company workspace when a super-admin is
+  on `platform-admin`. Tabs: **Overview** (aggregate stats), **Companies** (tenant
+  CRUD + suspend + **Enter** a company's workspace), **Users** (promote/demote
+  super-admin, guarded against removing the last one), **Notifications** (composer).
+  "Enter Workspace" exits back to the tenant app. Replaces the old embedded page.
+- New endpoints: `GET /api/admin/overview`, `PATCH /api/admin/users/:id`
+  (super-admin flag), extended `GET /api/admin/users` (role + isSuperAdmin + company
+  count).
+- **More themes**: 12 presets total (added Violet, Sky, Crimson, Forest, Copper);
+  **`Theme: …` commands in ⌘K** for instant switching.
+- **Logic fix**: subdomain tenant resolution now requires `sub.domain.tld` (3+
+  labels) so an apex domain can't be mistaken for a tenant slug.
+
+**Verified:** separate shell renders (no company sidebar), overview/users/enter all
+work, last-super-admin demotion blocked (400), theme commands switch live.
+
+**Files:** `server.ts`, `src/pages/PlatformShell.tsx` (new, replaces `SuperAdmin.tsx`),
+`src/App.tsx`, `src/theme.ts`, `src/components/CommandPalette.tsx`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
@@ -281,18 +440,13 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
 
 ## Remaining work
 
-### Full multi-company / multi-tenancy (largest item)
-- `companies`, `user_companies`, `company_features` tables.
-- `companyId` on quotations, invoices, boq, customers, products, suppliers.
-- Scope **every** query by active company; company switcher in header.
-- Per-company settings, numbering sequences, branding, and feature flags
-  (current flags are global but built company-ready).
-- Owner surface to create companies, invite admins, assign plans.
+### Multi-tenancy — phase 2 (foundation shipped in §19)
+- Per-company numbering sequences, branding, and feature flags (currently global).
+- Scope the remaining surfaces: suppliers, audit/usage, Excel exports, PDF-by-id.
+- Owner surface to invite users to a company and assign plans/roles.
 
 ### Legacy features still to port
 - **AI Assistant** (OpenRouter SQL chat) behind `canUseAI`.
-- **Kanban pipeline** board over quotations/invoices.
-- **Tracking page** (advanced filters, bulk status, follow-up date/note).
 - **Version diff viewer** + timeline "undo/restore" actions.
 
 ### Polish / smaller gaps

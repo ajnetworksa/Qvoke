@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useERPStore } from '../store';
 import { PersonalTask } from '../types';
 import { PageHeader } from '../components/PageHeader';
@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   Clock,
   Flag,
-  Calendar
+  Calendar,
+  Loader2,
+  Check
 } from 'lucide-react';
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'done';
@@ -45,10 +47,34 @@ export const MyTasks: React.FC = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<PersonalTask>>(emptyForm());
+  const [autoSave, setAutoSave] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipEditId = useRef<string | null>(null); // skip the first change right after opening
 
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  // Autosave edits to an existing task (debounced). Creating a task stays explicit.
+  useEffect(() => {
+    if (!formOpen || !editId) return;
+    if (skipEditId.current === editId) { skipEditId.current = null; return; }
+    if (!form.title || !form.title.trim()) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    setAutoSave('saving');
+    autosaveTimer.current = setTimeout(async () => {
+      await updateTask(editId, {
+        title: form.title!.trim(),
+        notes: form.notes?.trim() || null,
+        status: form.status,
+        priority: form.priority,
+        dueDate: form.dueDate || null
+      });
+      setAutoSave('saved');
+      setTimeout(() => setAutoSave((s) => (s === 'saved' ? 'idle' : s)), 2000);
+    }, 800);
+    return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
+  }, [form, formOpen, editId, updateTask]);
 
   const filtered = useMemo(
     () => (filter === 'all' ? tasks : tasks.filter((t) => t.status === filter)),
@@ -69,6 +95,8 @@ export const MyTasks: React.FC = () => {
   };
 
   const openEdit = (t: PersonalTask) => {
+    skipEditId.current = t.id; // don't autosave the initial populate
+    setAutoSave('idle');
     setEditId(t.id);
     setForm({
       title: t.title,
@@ -91,6 +119,8 @@ export const MyTasks: React.FC = () => {
       dueDate: form.dueDate || null
     };
     if (editId) {
+      // Edits autosave continuously; flush any pending timer and close.
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
       await updateTask(editId, payload);
     } else {
       await addTask(payload);
@@ -249,6 +279,12 @@ export const MyTasks: React.FC = () => {
               <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-[var(--color-primary)]" />
                 {editId ? 'Edit Task / تعديل المهمة' : 'New Task / مهمة جديدة'}
+                {editId && autoSave === 'saving' && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</span>
+                )}
+                {editId && autoSave === 'saved' && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-500"><Check className="w-3 h-3" /> Saved</span>
+                )}
               </h3>
               <button
                 type="button"
@@ -332,7 +368,7 @@ export const MyTasks: React.FC = () => {
                 type="submit"
                 className="px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white rounded-md transition-colors cursor-pointer"
               >
-                {editId ? 'Save Changes' : 'Create Task'}
+                {editId ? 'Done' : 'Create Task'}
               </button>
             </div>
           </form>

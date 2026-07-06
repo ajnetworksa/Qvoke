@@ -14,10 +14,10 @@
   --color-text-muted: #7a7974;
   --color-text-faint: #bab9b4;
 
-  /* Primary Accent - Teal */
-  --color-primary: #01696f;
-  --color-primary-hover: #0c4e54;
-  --color-primary-highlight: #cedcd8;
+  /* Primary Accent — muted "Slate" default (overridden at runtime by theme.ts) */
+  --color-primary: #3d6b6e;
+  --color-primary-hover: #2f5457;
+  --color-primary-highlight: #d6e2e2;
 
   /* Status Colors */
   --color-success: #437a22;
@@ -64,10 +64,10 @@
   --color-text-muted: #9ca3af;
   --color-text-faint: #6b7280;
   
-  /* Modern Premium Accent — Neon Cyan */
-  --color-primary: #10d9dc;
-  --color-primary-hover: #0bb1b4;
-  --color-primary-highlight: rgba(16, 217, 220, 0.12);
+  /* Muted "Slate" accent for dark (overridden at runtime by theme.ts) */
+  --color-primary: #6fb3b6;
+  --color-primary-hover: #4f9093;
+  --color-primary-highlight: rgba(111, 179, 182, 0.14);
 
   /* Status Colors */
   --color-success: #10b981;
@@ -125,10 +125,10 @@ body {
 }
 
 [data-theme="dark"] body {
-  background: 
-    radial-gradient(circle at 10% 5%, rgba(16, 217, 220, 0.05), transparent 28%),
-    radial-gradient(circle at 85% 35%, rgba(176, 121, 255, 0.04), transparent 22%),
-    linear-gradient(180deg, #040812 0%, #000000 100%) !important;
+  /* Muted, understated dark surface — subtle neutral depth, no neon glow. */
+  background:
+    radial-gradient(circle at 12% 4%, rgba(148, 163, 184, 0.035), transparent 30%),
+    linear-gradient(180deg, #0a0d12 0%, #05070a 100%) !important;
 }
 
 /* Headers */

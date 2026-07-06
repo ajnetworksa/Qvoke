@@ -92,6 +92,8 @@ export interface Quotation {
   watermarkType?: 'none' | 'center' | 'multi';
   hidePrices?: boolean;
   manualTotal?: number;
+  followUpDate?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface Invoice {
@@ -123,6 +125,8 @@ export interface Invoice {
   watermarkType?: 'none' | 'center' | 'multi';
   hidePrices?: boolean;
   manualTotal?: number;
+  followUpDate?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface Payment {
@@ -144,6 +148,19 @@ export interface User {
   role: UserRole;
   avatar?: string;
   permissions?: Record<string, boolean>;
+  isSuperAdmin?: boolean;
+}
+
+export interface AdminCompany {
+  id: string;
+  name: string;
+  slug?: string | null;
+  status: 'active' | 'suspended';
+  activePlan: string;
+  createdAt: string;
+  isDefault: boolean;
+  owner?: { name: string; email: string } | null;
+  counts: { users: number; customers: number; quotations: number; invoices: number };
 }
 
 export interface DocumentActivity {
@@ -183,6 +200,16 @@ export interface DashboardStats {
 export interface Supplier {
   id: string;
   name: string;
+}
+
+export interface CompanyMembership {
+  id: string;
+  name: string;
+  slug?: string | null;
+  activePlan: string;
+  role: 'owner' | 'admin' | 'member';
+  createdAt?: string;
+  theme?: { preset?: string | null; color?: string | null } | null;
 }
 
 export interface PersonalTask {
