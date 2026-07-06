@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Download, Upload, FileSpreadsheet, CheckCircle, AlertTriangle, Loader2, X } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 interface Column {
   key: string;
@@ -41,42 +41,63 @@ export const ExcelImportExport: React.FC<Props> = ({
       if (!res.ok) throw new Error('Export failed');
       const data = await res.json();
 
-      const wsData = [
-        columns.map(c => c.label),
-        ...data.map((row: any) => columns.map(c => row[c.key] ?? ''))
-      ];
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet(title);
 
-      // Column widths
-      ws['!cols'] = columns.map(() => ({ wch: 22 }));
+      ws.columns = columns.map(c => ({ header: c.label, key: c.key, width: 22 }));
 
-      // Style header row (bold) – basic approach
-      columns.forEach((_, ci) => {
-        const cellRef = XLSX.utils.encode_cell({ r: 0, c: ci });
-        if (!ws[cellRef]) ws[cellRef] = {};
-        ws[cellRef].s = { font: { bold: true }, fill: { fgColor: { rgb: '01696f' } }, alignment: { horizontal: 'center' } };
+      data.forEach((row: any) => {
+        const rowData: any = {};
+        columns.forEach(c => {
+          rowData[c.key] = row[c.key] ?? '';
+        });
+        ws.addRow(rowData);
       });
 
-      XLSX.utils.book_append_sheet(wb, ws, title);
-      XLSX.writeFile(wb, `${entityType}_export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      // Style header row (bold)
+      ws.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF01696F' }
+        };
+        cell.alignment = { horizontal: 'center' };
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${entityType}_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
     } catch (e: any) {
       alert('Export failed: ' + e.message);
     }
   };
 
   // ── DOWNLOAD TEMPLATE ───────────────────────────────────────────────────────
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
     const sample = templateSample || [Object.fromEntries(columns.map(c => [c.key, '']))];
-    const wsData = [
-      columns.map(c => c.label),
-      ...sample.map(row => columns.map(c => row[c.key] ?? ''))
-    ];
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = columns.map(() => ({ wch: 22 }));
-    XLSX.utils.book_append_sheet(wb, ws, `${entityType}_template`);
-    XLSX.writeFile(wb, `${entityType}_import_template.xlsx`);
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(`${entityType}_template`);
+    ws.columns = columns.map(c => ({ header: c.label, key: c.key, width: 22 }));
+    sample.forEach(row => ws.addRow(row));
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${entityType}_import_template.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
   };
 
   // ── IMPORT ──────────────────────────────────────────────────────────────────
@@ -89,31 +110,41 @@ export const ExcelImportExport: React.FC<Props> = ({
 
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json<any>(ws, { header: 1 });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buf);
+      const ws = workbook.worksheets[0];
 
-      if (rawRows.length < 2) {
+      if (!ws || ws.rowCount < 2) {
         setImportError('The file appears to be empty or has no data rows.');
         setImporting(false);
         return;
       }
 
       // Map header row to column keys
-      const header: string[] = rawRows[0].map((h: any) => String(h).trim());
-      const colKeyByLabel: Record<string, string> = {};
-      columns.forEach(c => {
-        const idx = header.findIndex(h => h.toLowerCase() === c.label.toLowerCase() || h.toLowerCase() === c.key.toLowerCase());
-        if (idx >= 0) colKeyByLabel[idx] = c.key;
+      const headerRow = ws.getRow(1);
+      const header: string[] = [];
+      headerRow.eachCell((cell, colNumber) => {
+        header[colNumber] = String(cell.value).trim();
       });
 
-      const rows = rawRows.slice(1).map((row: any[]) => {
+      const colKeyByColNumber: Record<number, string> = {};
+      columns.forEach(c => {
+        const idx = header.findIndex(h => h && (h.toLowerCase() === c.label.toLowerCase() || h.toLowerCase() === c.key.toLowerCase()));
+        if (idx > 0) colKeyByColNumber[idx] = c.key;
+      });
+
+      const rows: any[] = [];
+      ws.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return; // skip header
         const obj: Record<string, any> = {};
-        Object.entries(colKeyByLabel).forEach(([idxStr, key]) => {
-          obj[key] = row[Number(idxStr)] ?? '';
+        Object.entries(colKeyByColNumber).forEach(([colStr, key]) => {
+          const cellVal = row.getCell(Number(colStr)).value;
+          obj[key] = cellVal !== null && cellVal !== undefined ? cellVal : '';
         });
-        return obj;
-      }).filter(r => Object.values(r).some(v => v !== '' && v != null));
+        if (Object.values(obj).some(v => v !== '' && v != null)) {
+          rows.push(obj);
+        }
+      });
 
       if (rows.length === 0) {
         setImportError('No valid data rows found in the file.');

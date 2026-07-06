@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useERPStore } from '../store';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import {
   Database, RefreshCw, HardDrive, Download, AlertTriangle,
   Clock, Trash2, CheckCircle, Loader2, FileArchive, Upload, UploadCloud,
@@ -38,13 +38,18 @@ export const DatabaseBackupDB: React.FC = () => {
       if (!res.ok) throw new Error('Export failed');
       const data = await res.json();
 
-      const wb = XLSX.utils.book_new();
+      const workbook = new ExcelJS.Workbook();
 
       const addSheet = (name: string, rows: any[]) => {
         if (!rows.length) return;
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = Object.keys(rows[0]).map(() => ({ wch: 20 }));
-        XLSX.utils.book_append_sheet(wb, ws, name);
+        const worksheet = workbook.addWorksheet(name);
+        
+        const keys = Object.keys(rows[0]);
+        worksheet.columns = keys.map(k => ({ header: k, key: k, width: 20 }));
+        
+        rows.forEach(row => {
+          worksheet.addRow(row);
+        });
       };
 
       addSheet('Products', data.products || []);
@@ -53,8 +58,18 @@ export const DatabaseBackupDB: React.FC = () => {
       addSheet('Quotations', data.quotations || []);
       addSheet('Invoices', data.invoices || []);
 
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
       const date = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, `ERP_Full_Export_${date}.xlsx`);
+      a.download = `ERP_Full_Export_${date}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
       showToast('Full Excel export downloaded!', 'success');
     } catch (e: any) {
       showToast('Export failed: ' + e.message, 'error');
