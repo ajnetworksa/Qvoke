@@ -22,7 +22,8 @@ import {
   TrendingUp,
   Building,
   Radar,
-  Palette
+  Palette,
+  AppWindow
 } from 'lucide-react';
 
 interface CommandItem {
@@ -53,6 +54,8 @@ export const CommandPalette: React.FC = () => {
     setTheme,
     density,
     setDensity,
+    workspaceMode,
+    setWorkspaceMode,
     setThemePreset,
     features,
     currentUser
@@ -101,6 +104,11 @@ export const CommandPalette: React.FC = () => {
         icon: Rows3, keywords: 'compact spacing comfortable',
         run: () => { setDensity(density === 'compact' ? 'comfortable' : 'compact'); setOpen(false); }
       },
+      {
+        id: 'act-workspace', label: workspaceMode === 'desktop' ? 'Use Standard ERP' : 'Open Desktop Workspace', group: 'Actions',
+        icon: AppWindow, keywords: 'desktop liquid glass windows taskbar standard mode',
+        run: () => { setWorkspaceMode(workspaceMode === 'desktop' ? 'standard' : 'desktop'); setOpen(false); }
+      },
     ];
 
     const records: CommandItem[] = [];
@@ -144,7 +152,7 @@ export const CommandPalette: React.FC = () => {
     }));
 
     return [...nav, ...actions, ...themeCmds, ...records];
-  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, setThemePreset, features, currentUser]);
+  }, [setRoute, quotations, invoices, customers, products, theme, setTheme, density, setDensity, workspaceMode, setWorkspaceMode, setThemePreset, features, currentUser]);
 
   // Filter + cap results for performance.
   const results = useMemo(() => {

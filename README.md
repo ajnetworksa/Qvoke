@@ -23,6 +23,7 @@
 | **Backup & Restore** | SQLite snapshots · Download/upload .db files · Full Excel export (all tables) |
 | **Dual Logo** | Separate site logo (sidebar) vs PDF header logo |
 | **Appearance** | Light / dark / system theme · Comfortable / Compact density · modern UI refresh |
+| **Desktop Workspace** | Optional liquid-glass desktop mode · application launcher · persistent draggable/resizable windows · minimize/maximize taskbar · mobile-safe Standard ERP fallback |
 
 ---
 
@@ -100,6 +101,14 @@ The app will be available at **http://localhost:3001**
 
 > The dev server runs both the Vite HMR frontend and the Express API on the same port via Vite middleware mode.
 
+### Platform Admin
+
+Super-admins can open the platform control plane directly at
+`http://localhost:3001/platform` or from **System > Platform Admin**. In
+production, an `admin.example.com` hostname also resolves to the platform shell,
+while tenant entry uses `{company-slug}.example.com`. Configure wildcard DNS and
+TLS for tenant subdomains before deployment.
+
 ### 5. Default Login Credentials
 
 | Username | Password | Role |
@@ -113,6 +122,19 @@ The app will be available at **http://localhost:3001**
 ---
 
 ## ⌨️ Keyboard Shortcuts
+
+### Desktop Workspace
+
+On desktop screens, click the **window icon** in the top header or open the
+command palette and run **Open Desktop Workspace**. Applications open in
+independent windows with a searchable launcher and bottom taskbar. Window state
+is stored per user and company. Use **Standard ERP** in the workspace menu bar to
+return to the conventional layout. Mobile and tablet screens always use the
+standard responsive interface.
+
+Use the left/right title-bar controls, or drag a window to either screen edge,
+to place two applications side by side. Drag a snapped window away from the
+edge or select its active snap control to restore it.
 
 | Shortcut | Action |
 |---|---|

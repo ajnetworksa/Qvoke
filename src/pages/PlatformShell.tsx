@@ -16,10 +16,17 @@ interface Overview {
 }
 interface AdminUser { id: string; name: string; email: string; role: string; isSuperAdmin: boolean; companyCount: number; }
 
-export const PlatformShell: React.FC = () => {
-  const { token, currentUser, theme, setTheme, logout, setRoute, switchCompany, company } = useERPStore();
+interface PlatformShellProps {
+  onExit: () => void;
+}
+
+export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
+  const { token, currentUser, theme, setTheme, logout, switchCompany, company } = useERPStore();
   const authH = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-  const host = window.location.host;
+  const hostname = window.location.hostname.toLowerCase();
+  const isLocalHost = hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+  const hostParts = hostname.split('.');
+  const rootHost = hostParts.length >= 3 ? hostParts.slice(1).join('.') : hostname;
 
   const [tab, setTab] = useState<Tab>('overview');
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -60,7 +67,15 @@ export const PlatformShell: React.FC = () => {
     setBusyId(c.id); await fetch(`/api/admin/companies/${c.id}`, { method: 'DELETE', headers: authH }); await load(); setBusyId(null);
   };
   const saveEdit = async () => { if (!edit) return; await patchCompany(edit.id, { name: eName.trim(), activePlan: ePlan }); setEdit(null); };
-  const enterCompany = async (c: AdminCompany) => { await switchCompany(c.id); setRoute('dashboard'); };
+  const enterCompany = async (c: AdminCompany) => {
+    await switchCompany(c.id);
+    if (!isLocalHost && c.slug) {
+      const port = window.location.port ? `:${window.location.port}` : '';
+      window.location.assign(`${window.location.protocol}//${c.slug}.${rootHost}${port}`);
+      return;
+    }
+    onExit();
+  };
   const toggleSuper = async (u: AdminUser) => {
     setBusyId(u.id);
     const res = await fetch(`/api/admin/users/${u.id}`, { method: 'PATCH', headers: authH, body: JSON.stringify({ isSuperAdmin: !u.isSuperAdmin }) });
@@ -77,7 +92,11 @@ export const PlatformShell: React.FC = () => {
     else setSentMsg(d.error || 'Failed to send.');
   };
 
-  const accessUrl = (slug?: string | null) => slug ? `${slug}.${host.replace(/^[^.]+\./, '')}` : '—';
+  const accessUrl = (slug?: string | null) => {
+    if (!slug) return '—';
+    if (isLocalHost) return `Local workspace: ${slug}`;
+    return `${slug}.${rootHost}${window.location.port ? `:${window.location.port}` : ''}`;
+  };
   const cycleTheme = () => setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light');
 
   const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
@@ -88,16 +107,16 @@ export const PlatformShell: React.FC = () => {
   ];
 
   const stats = useMemo(() => overview ? [
-    { label: 'Tenants', value: overview.tenants, icon: Building, sub: `${overview.activeTenants} active · ${overview.suspendedTenants} suspended` },
-    { label: 'Users', value: overview.users, icon: UsersIcon, sub: `${overview.superAdmins} super-admin` },
-    { label: 'Quotations', value: overview.quotations, icon: FileSpreadsheet, sub: `${overview.customers} customers` },
-    { label: 'Invoices', value: overview.invoices, icon: FileText, sub: `${overview.collectedRevenue.toLocaleString()} ${company.currency} collected` }
+    { label: 'Tenants', value: overview.tenants, icon: Building, sub: `${overview.activeTenants} active · ${overview.suspendedTenants} suspended`, tone: 'teal' },
+    { label: 'Users', value: overview.users, icon: UsersIcon, sub: `${overview.superAdmins} super-admin`, tone: 'blue' },
+    { label: 'Quotations', value: overview.quotations, icon: FileSpreadsheet, sub: `${overview.customers} customers`, tone: 'amber' },
+    { label: 'Invoices', value: overview.invoices, icon: FileText, sub: `${overview.collectedRevenue.toLocaleString()} ${company.currency} collected`, tone: 'rose' }
   ] : [], [overview, company.currency]);
 
   return (
-    <div className="min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)]">
+    <div className="platform-shell min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)]">
       {/* Platform sidebar (distinct from company workspace) */}
-      <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+      <aside className="platform-sidebar w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-[var(--color-surface)] border-r border-[var(--color-border)]">
         <div className="h-16 flex items-center gap-2.5 px-5 border-b border-[var(--color-border)]">
           <div className="w-8 h-8 rounded-lg bg-[var(--color-primary)] text-white flex items-center justify-center shadow-sm"><ShieldCheck className="w-4.5 h-4.5" /></div>
           <div className="leading-none">
@@ -117,7 +136,7 @@ export const PlatformShell: React.FC = () => {
           })}
         </nav>
         <div className="p-3 border-t border-[var(--color-border)]">
-          <button onClick={() => setRoute('dashboard')} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-offset)] transition-colors cursor-pointer">
+          <button onClick={onExit} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-offset)] transition-colors cursor-pointer">
             <ArrowRightLeft className="w-4 h-4 text-[var(--color-primary)]" /> Enter Workspace
           </button>
         </div>
@@ -125,7 +144,7 @@ export const PlatformShell: React.FC = () => {
 
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 backdrop-blur-sm sticky top-0 z-20 flex items-center justify-between px-6">
+        <header className="platform-header h-16 border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 backdrop-blur-sm sticky top-0 z-20 flex items-center justify-between px-6">
           <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)]">
             <Server className="w-4 h-4 text-[var(--color-primary)]" /> Platform Control Plane
           </div>
@@ -140,7 +159,7 @@ export const PlatformShell: React.FC = () => {
           </div>
         </header>
 
-        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <main className="platform-main flex-1 p-6 md:p-8 overflow-y-auto">
           {loading ? (
             <div className="flex items-center justify-center py-24 text-[var(--color-text-muted)]"><Loader2 className="w-6 h-6 animate-spin" /></div>
           ) : (
@@ -152,13 +171,63 @@ export const PlatformShell: React.FC = () => {
                   <p className="text-xs text-[var(--color-text-muted)] mb-6">Aggregate across all tenant companies.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {stats.map((s) => { const Icon = s.icon; return (
-                      <div key={s.label} className="premium-card interactive p-5">
+                      <div key={s.label} className={`platform-stat platform-stat--${s.tone} premium-card interactive p-5`}>
                         <div className="flex items-center justify-between mb-3"><span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{s.label}</span><Icon className="w-5 h-5 text-[var(--color-primary)]" /></div>
                         <div className="text-2xl font-bold font-mono">{s.value.toLocaleString()}</div>
                         <div className="text-[10px] text-[var(--color-text-muted)] mt-1">{s.sub}</div>
                       </div>
                     ); })}
                   </div>
+
+                  <div className="platform-overview-panels">
+                    <section className="platform-operations-panel">
+                      <div className="platform-panel-heading">
+                        <div>
+                          <h2>Platform health</h2>
+                          <span>Live tenant availability</span>
+                        </div>
+                        <span className="platform-health-badge"><Check className="w-3.5 h-3.5" /> Operational</span>
+                      </div>
+                      <div className="platform-health-list">
+                        <div><span>API and database</span><strong>Online</strong></div>
+                        <div><span>Active tenants</span><strong>{overview?.activeTenants || 0} / {overview?.tenants || 0}</strong></div>
+                        <div><span>Suspended tenants</span><strong>{overview?.suspendedTenants || 0}</strong></div>
+                      </div>
+                      <div className="platform-health-track">
+                        <span style={{ width: `${overview?.tenants ? (overview.activeTenants / overview.tenants) * 100 : 0}%` }} />
+                      </div>
+                    </section>
+
+                    <section className="platform-operations-panel">
+                      <div className="platform-panel-heading">
+                        <div>
+                          <h2>Quick operations</h2>
+                          <span>Platform control plane</span>
+                        </div>
+                      </div>
+                      <div className="platform-quick-actions">
+                        <button onClick={() => setTab('companies')}><Building className="w-4 h-4" /><span><strong>Manage companies</strong><small>Create, edit, or suspend</small></span></button>
+                        <button onClick={() => setTab('users')}><UsersIcon className="w-4 h-4" /><span><strong>Manage users</strong><small>Roles and super-admin access</small></span></button>
+                        <button onClick={() => setTab('notifications')}><Bell className="w-4 h-4" /><span><strong>Send notification</strong><small>Target tenants or users</small></span></button>
+                      </div>
+                    </section>
+                  </div>
+
+                  <section className="platform-recent-tenants">
+                    <div className="platform-panel-heading">
+                      <div><h2>Tenant directory</h2><span>Recently created companies</span></div>
+                      <button onClick={() => setTab('companies')}>View all</button>
+                    </div>
+                    <div className="platform-tenant-strip">
+                      {companies.slice(0, 4).map((tenant) => (
+                        <button key={tenant.id} onClick={() => enterCompany(tenant)}>
+                          <span className="platform-tenant-mark">{tenant.name.charAt(0).toUpperCase()}</span>
+                          <span><strong>{tenant.name}</strong><small>{tenant.activePlan} · {tenant.status}</small></span>
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 </div>
               )}
 
