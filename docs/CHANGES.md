@@ -503,6 +503,40 @@ browser console warnings/errors, TypeScript, and production build.
 
 ---
 
+## 27. Tenant isolation and guided company provisioning
+
+**Tenant boundaries**
+- Scoped suppliers, personal tasks, document activity, audit records, follow-up
+  updates, PDF document lookup, imports/exports, and company settings to the
+  active company.
+- Feature flags and plans now resolve from each company rather than a shared
+  global setting.
+- Rebuilt the legacy supplier uniqueness constraint as `(companyId, name)`, so
+  two tenants can use the same supplier name without seeing or changing each
+  other's record.
+- Tenant company profiles are stored in each company's settings blob, with a
+  legacy fallback retained for existing data.
+
+**Company onboarding**
+- Added a four-step **New company** flow in the separate Platform Admin shell:
+  identity and owner, regional and VAT details, plan and module selection, then
+  review and creation.
+- Provisioned companies now receive an active plan, selected feature flags,
+  onboarding state, regional profile, and optional existing-user owner
+  membership in one transaction.
+- The company directory exposes setup status, locale, and currency to make
+  incomplete or misconfigured tenants visible to the platform operator.
+
+**Verified:** fresh-database API checks created two tenants with the same
+supplier name, confirmed tenant-specific company settings and module flags,
+confirmed no supplier visibility in the default tenant, and rejected a
+cross-tenant supplier update with `404`. Production client build passes.
+
+**Files:** `server.ts`, `src/pages/PlatformShell.tsx`, `src/index.css`,
+`src/types.ts`, `README.md`, `docs/CHANGES.md`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:

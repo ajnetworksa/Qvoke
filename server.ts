@@ -362,12 +362,13 @@ function logDocumentActivity(
   docNumber: string | null,
   action: string,
   actor: { id?: string; name?: string } | undefined,
+  companyId: string,
   changes?: DocChange[]
 ) {
   try {
     db.prepare(`
-      INSERT INTO document_activity (docType, docId, docNumber, action, changes, actorId, actorName, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO document_activity (docType, docId, docNumber, action, changes, actorId, actorName, companyId, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       docType,
       docId,
@@ -376,6 +377,7 @@ function logDocumentActivity(
       changes && changes.length ? JSON.stringify(changes) : null,
       actor?.id || null,
       actor?.name || null,
+      companyId,
       new Date().toISOString()
     );
   } catch (err) {
@@ -500,7 +502,14 @@ const seedFeatures = () => {
 };
 seedFeatures();
 
-const getActiveFeatures = (): Record<string, boolean> => {
+const getActiveFeatures = (companyId?: string): Record<string, boolean> => {
+  if (companyId) {
+    const company = db.prepare('SELECT activePlan, featureFlags FROM companies WHERE id = ?').get(companyId) as { activePlan: string; featureFlags?: string | null } | undefined;
+    if (company?.featureFlags) {
+      try { return JSON.parse(company.featureFlags); } catch { /* fall through */ }
+    }
+    if (company) return featuresFromPlan(company.activePlan);
+  }
   const row = db.prepare("SELECT value FROM settings WHERE key = 'featureFlags'").get() as { value: string } | undefined;
   if (row) { try { return JSON.parse(row.value); } catch { /* fall through */ } }
   return featuresFromPlan('enterprise');
@@ -509,7 +518,7 @@ const getActiveFeatures = (): Record<string, boolean> => {
 // Middleware factory: block API access to a disabled feature.
 const requireFeature = (feature: FeatureKey) => {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const features = getActiveFeatures();
+    const features = getActiveFeatures((req as any).companyId);
     if (features[feature] === false) {
       return res.status(403).json({ error: `Feature '${feature}' is not enabled on the current plan.` });
     }
@@ -561,7 +570,10 @@ addColumnIfNotExists('invoices', 'followUpNote', 'TEXT');
 // from existing settings and all legacy rows are backfilled into it, so existing
 // behaviour is preserved (everything stays in one company until more are created).
 const DEFAULT_COMPANY_ID = 'comp-default';
-const SCOPED_TABLES = ['customers', 'products', 'quotations', 'invoices', 'boq'] as const;
+const SCOPED_TABLES = [
+  'customers', 'products', 'suppliers', 'quotations', 'invoices', 'boq',
+  'document_activity', 'personal_tasks'
+] as const;
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS companies (
@@ -605,6 +617,9 @@ addColumnIfNotExists('customers', 'companyId', 'TEXT');
 addColumnIfNotExists('products', 'companyId', 'TEXT');
 addColumnIfNotExists('quotations', 'companyId', 'TEXT');
 addColumnIfNotExists('invoices', 'companyId', 'TEXT');
+addColumnIfNotExists('suppliers', 'companyId', 'TEXT');
+addColumnIfNotExists('document_activity', 'companyId', 'TEXT');
+addColumnIfNotExists('personal_tasks', 'companyId', 'TEXT');
 
 // Seed the default company + backfill legacy rows + enrol existing users.
 // Idempotent: safe to run on every boot. Call AFTER the boq column is added.
@@ -1199,7 +1214,7 @@ app.delete('/api/customers/:id', requireAuth, requirePermission('canDeleteData')
 // ── SUPPLIERS CRUD ────────────────────────────────────────────────────────────
 app.get('/api/suppliers', requireAuth, (req, res) => {
   try {
-    const suppliers = db.prepare('SELECT * FROM suppliers ORDER BY name ASC').all();
+    const suppliers = db.prepare('SELECT * FROM suppliers WHERE companyId = ? ORDER BY name ASC').all((req as any).companyId);
     res.json(suppliers);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1213,7 +1228,7 @@ app.post('/api/suppliers', requireAuth, (req, res) => {
   }
   try {
     const supplierId = `sup-${Date.now()}`;
-    db.prepare('INSERT INTO suppliers (id, name) VALUES (?, ?)').run(supplierId, name.trim());
+    db.prepare('INSERT INTO suppliers (id, name, companyId) VALUES (?, ?, ?)').run(supplierId, name.trim(), (req as any).companyId);
     res.json({ success: true, id: supplierId, name });
   } catch (error: any) {
     if (error.message.includes('UNIQUE')) {
@@ -1230,7 +1245,8 @@ app.put('/api/suppliers/:id', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Supplier name is required' });
   }
   try {
-    db.prepare('UPDATE suppliers SET name = ? WHERE id = ?').run(name.trim(), req.params.id);
+    const result = db.prepare('UPDATE suppliers SET name = ? WHERE id = ? AND companyId = ?').run(name.trim(), req.params.id, (req as any).companyId);
+    if (result.changes === 0) return res.status(404).json({ error: 'Supplier not found' });
     res.json({ success: true });
   } catch (error: any) {
     if (error.message.includes('UNIQUE')) {
@@ -1243,7 +1259,8 @@ app.put('/api/suppliers/:id', requireAuth, (req, res) => {
 
 app.delete('/api/suppliers/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   try {
-    db.prepare('DELETE FROM suppliers WHERE id = ?').run(req.params.id);
+    const result = db.prepare('DELETE FROM suppliers WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
+    if (result.changes === 0) return res.status(404).json({ error: 'Supplier not found' });
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1396,7 +1413,7 @@ app.post('/api/quotes', requireAuth, (req, res) => {
       user.id, user.name, user.id, user.name,
       (req as any).companyId
     );
-    logDocumentActivity('quotation', qId, number, 'created', user);
+    logDocumentActivity('quotation', qId, number, 'created', user, (req as any).companyId);
     res.json({ id: qId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1456,7 +1473,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
         ['subject', 'status', 'total', 'discountTotal', 'notes']
       );
       const statusChanged = before.status !== status;
-      logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+      logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -1468,7 +1485,7 @@ app.delete('/api/quotes/:id', requireAuth, requirePermission('canDeleteData'), (
   const user = (req as any).user;
   const before = db.prepare('SELECT number FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
   db.prepare('DELETE FROM quotations WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
-  logDocumentActivity('quotation', req.params.id, before?.number || null, 'deleted', user);
+  logDocumentActivity('quotation', req.params.id, before?.number || null, 'deleted', user, (req as any).companyId);
   res.json({ success: true });
 });
 
@@ -1538,7 +1555,7 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       user.id, user.name, user.id, user.name,
       (req as any).companyId
     );
-    logDocumentActivity('invoice', invId, number, 'created', user);
+    logDocumentActivity('invoice', invId, number, 'created', user, (req as any).companyId);
     res.json({ id: invId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1602,7 +1619,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
         ['subject', 'status', 'total', 'amountPaid', 'notes']
       );
       const statusChanged = before.status !== status;
-      logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+      logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -1614,26 +1631,37 @@ app.delete('/api/invoices/:id', requireAuth, requirePermission('canDeleteData'),
   const user = (req as any).user;
   const before = db.prepare('SELECT number FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
   db.prepare('DELETE FROM invoices WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
-  logDocumentActivity('invoice', req.params.id, before?.number || null, 'deleted', user);
+  logDocumentActivity('invoice', req.params.id, before?.number || null, 'deleted', user, (req as any).companyId);
   res.json({ success: true });
 });
 
 // ── SYSTEM CONFIGURATION & SETTINGS API ───────────────────────────────────────
-app.get('/api/settings/company', (req, res) => {
-  const companyRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as { value: string } | undefined;
-  if (companyRow) {
-    res.json(JSON.parse(companyRow.value));
-  } else {
-    res.status(404).json({ error: 'Company settings not found' });
-  }
+const readTenantSettings = (companyId: string): any => {
+  const row = db.prepare('SELECT settings FROM companies WHERE id = ?').get(companyId) as { settings?: string | null } | undefined;
+  try { return row?.settings ? JSON.parse(row.settings) : {}; } catch { return {}; }
+};
+
+const writeTenantSettings = (companyId: string, settings: any) => {
+  db.prepare('UPDATE companies SET settings = ? WHERE id = ?').run(JSON.stringify(settings), companyId);
+};
+
+app.get('/api/settings/company', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const companyRecord = db.prepare('SELECT name FROM companies WHERE id = ?').get(companyId) as { name: string } | undefined;
+  const tenantSettings = readTenantSettings(companyId);
+  const legacyRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as { value: string } | undefined;
+  let legacyProfile: any = {};
+  try { legacyProfile = legacyRow ? JSON.parse(legacyRow.value) : {}; } catch { legacyProfile = {}; }
+  res.json({ ...legacyProfile, ...(tenantSettings.profile || {}), name: companyRecord?.name || tenantSettings.profile?.name || legacyProfile.name });
 });
 
 // ── PLANS & FEATURE FLAGS API ─────────────────────────────────────────────────
 app.get('/api/features', requireAuth, (req, res) => {
-  const planRow = db.prepare("SELECT value FROM settings WHERE key = 'activePlan'").get() as { value: string } | undefined;
+  const companyId = (req as any).companyId;
+  const companyRecord = db.prepare('SELECT activePlan FROM companies WHERE id = ?').get(companyId) as { activePlan: string } | undefined;
   res.json({
-    activePlan: planRow?.value || 'enterprise',
-    features: getActiveFeatures(),
+    activePlan: companyRecord?.activePlan || 'enterprise',
+    features: getActiveFeatures(companyId),
     catalog: FEATURE_CATALOG,
     plans: Object.entries(PLANS).map(([key, p]) => ({ key, label: p.label, features: p.features })),
   });
@@ -1641,18 +1669,18 @@ app.get('/api/features', requireAuth, (req, res) => {
 
 app.put('/api/features', requireAuth, requirePermission('canManageSettings'), (req, res) => {
   try {
+    const companyId = (req as any).companyId;
     const { activePlan, features } = req.body as { activePlan?: string; features?: Record<string, boolean> };
     if (activePlan && PLANS[activePlan]) {
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('activePlan', ?)").run(activePlan);
       // Switching plan resets flags to that plan's defaults unless explicit features given
       const flags = features || featuresFromPlan(activePlan);
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('featureFlags', ?)").run(JSON.stringify(flags));
+      db.prepare('UPDATE companies SET activePlan = ?, featureFlags = ? WHERE id = ?').run(activePlan, JSON.stringify(flags), companyId);
     } else if (features) {
       // Manual per-feature override; force core features on
       for (const f of FEATURE_CATALOG) if (f.core) features[f.key] = true;
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('featureFlags', ?)").run(JSON.stringify(features));
+      db.prepare('UPDATE companies SET featureFlags = ? WHERE id = ?').run(JSON.stringify(features), companyId);
     }
-    res.json({ success: true, features: getActiveFeatures() });
+    res.json({ success: true, features: getActiveFeatures(companyId) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1660,8 +1688,13 @@ app.put('/api/features', requireAuth, requirePermission('canManageSettings'), (r
 
 app.post('/api/settings/company', requireAuth, requirePermission('canManageSettings'), (req, res) => {
   try {
-    const stmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('company', ?)");
-    stmt.run(JSON.stringify(req.body));
+    const companyId = (req as any).companyId;
+    const tenantSettings = readTenantSettings(companyId);
+    tenantSettings.profile = { ...(tenantSettings.profile || {}), ...req.body };
+    writeTenantSettings(companyId, tenantSettings);
+    if (req.body.name && String(req.body.name).trim()) {
+      db.prepare('UPDATE companies SET name = ? WHERE id = ?').run(String(req.body.name).trim(), companyId);
+    }
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1670,6 +1703,10 @@ app.post('/api/settings/company', requireAuth, requirePermission('canManageSetti
 
 // ── Individual Settings Key/Value API (for logo, footerImage, etc.) ───────────
 app.get('/api/settings/:key', requireAuth, (req, res) => {
+  const tenantSettings = readTenantSettings((req as any).companyId);
+  if (tenantSettings[req.params.key] !== undefined) {
+    return res.json({ value: tenantSettings[req.params.key] });
+  }
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(req.params.key) as { value: string } | undefined;
   res.json({ value: row?.value || null });
 });
@@ -1678,7 +1715,14 @@ app.post('/api/settings', requireAuth, requirePermission('canManageSettings'), (
   const { key, value } = req.body;
   if (!key) return res.status(400).json({ error: 'Key is required' });
   try {
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    if (key === 'detailedLogsEnabled') {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    } else {
+      const companyId = (req as any).companyId;
+      const tenantSettings = readTenantSettings(companyId);
+      tenantSettings[key] = value;
+      writeTenantSettings(companyId, tenantSettings);
+    }
     logSystemEvent('info', `Setting updated: ${key}`, { value }, (req as any).user?.id, (req as any).user?.username);
     res.json({ success: true });
   } catch (error: any) {
@@ -1941,12 +1985,12 @@ app.post('/api/admin/restore/upload', requireAuth, requirePermission('canManageS
 // ── EXCEL EXPORT ENDPOINTS ────────────────────────────────────────────────────
 // Returns JSON that client turns into .xlsx via SheetJS (no server-side dep needed)
 app.get('/api/export/products', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT id, name, description, type, unitPrice, unit, taxRate, categoryId FROM products ORDER BY name ASC').all();
+  const rows = db.prepare('SELECT id, name, description, type, unitPrice, unit, taxRate, categoryId FROM products WHERE companyId = ? ORDER BY name ASC').all((req as any).companyId);
   res.json(rows);
 });
 
 app.get('/api/export/customers', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt FROM customers ORDER BY createdAt DESC').all() as any[];
+  const rows = db.prepare('SELECT id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt FROM customers WHERE companyId = ? ORDER BY createdAt DESC').all((req as any).companyId) as any[];
   const parsed = rows.map(r => {
     let addr: any = {};
     try { addr = JSON.parse(r.billingAddress || '{}'); } catch {}
@@ -1962,23 +2006,24 @@ app.get('/api/export/customers', requireAuth, (req, res) => {
 });
 
 app.get('/api/export/suppliers', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT id, name FROM suppliers ORDER BY name ASC').all();
+  const rows = db.prepare('SELECT id, name FROM suppliers WHERE companyId = ? ORDER BY name ASC').all((req as any).companyId);
   res.json(rows);
 });
 
 // Full database Excel export (all tables as separate sheets)
 app.get('/api/export/full', requireAuth, (req, res) => {
   try {
-    const products = db.prepare('SELECT id, name, description, type, unitPrice, unit, taxRate, categoryId FROM products ORDER BY name ASC').all();
-    const rawCustomers = db.prepare('SELECT id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt FROM customers ORDER BY createdAt DESC').all() as any[];
+    const companyId = (req as any).companyId;
+    const products = db.prepare('SELECT id, name, description, type, unitPrice, unit, taxRate, categoryId FROM products WHERE companyId = ? ORDER BY name ASC').all(companyId);
+    const rawCustomers = db.prepare('SELECT id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt FROM customers WHERE companyId = ? ORDER BY createdAt DESC').all(companyId) as any[];
     const customers = rawCustomers.map(r => {
       let addr: any = {};
       try { addr = JSON.parse(r.billingAddress || '{}'); } catch {}
       return { id: r.id, companyName: r.companyName, contactPerson: r.contactPerson, email: r.email, phone: r.phone, vatNumber: r.vatNumber, street: addr.street || '', district: addr.district || '', city: addr.city || '', country: addr.country || 'SA', createdAt: r.createdAt };
     });
-    const suppliers = db.prepare('SELECT id, name FROM suppliers ORDER BY name ASC').all();
-    const quotations = db.prepare('SELECT id, number, status, date, validUntil, subtotal, discountTotal, taxTotal, total, currency, customerId, subject FROM quotations ORDER BY date DESC').all();
-    const invoices = db.prepare('SELECT id, number, status, date, dueDate, subtotal, taxTotal, total, amountPaid, amountDue, currency, customerId FROM invoices ORDER BY date DESC').all();
+    const suppliers = db.prepare('SELECT id, name FROM suppliers WHERE companyId = ? ORDER BY name ASC').all(companyId);
+    const quotations = db.prepare('SELECT id, number, status, date, validUntil, subtotal, discountTotal, taxTotal, total, currency, customerId, subject FROM quotations WHERE companyId = ? ORDER BY date DESC').all(companyId);
+    const invoices = db.prepare('SELECT id, number, status, date, dueDate, subtotal, taxTotal, total, amountPaid, amountDue, currency, customerId FROM invoices WHERE companyId = ? ORDER BY date DESC').all(companyId);
     res.json({ products, customers, suppliers, quotations, invoices });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1990,20 +2035,21 @@ app.post('/api/import/products', requireAuth, requirePermission('canManageSettin
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, updated = 0, errors = 0;
-  const insertStmt = db.prepare(`INSERT OR IGNORE INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId) VALUES (?,?,?,?,?,?,?,?)`);
-  const updateStmt = db.prepare(`UPDATE products SET name=?, description=?, type=?, unitPrice=?, unit=?, taxRate=?, categoryId=? WHERE id=?`);
+  const companyId = (req as any).companyId;
+  const insertStmt = db.prepare(`INSERT OR IGNORE INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId) VALUES (?,?,?,?,?,?,?,?,?)`);
+  const updateStmt = db.prepare(`UPDATE products SET name=?, description=?, type=?, unitPrice=?, unit=?, taxRate=?, categoryId=? WHERE id=? AND companyId=?`);
   const txn = db.transaction(() => {
     for (const r of rows) {
       try {
         const id = (r.id || `p-${Date.now()}-${Math.random().toString(36).slice(2)}`).toString();
         const name = (r.name || '').toString().trim();
         if (!name) { errors++; continue; }
-        const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+        const existing = db.prepare('SELECT id FROM products WHERE id = ? AND companyId = ?').get(id, companyId);
         if (existing) {
-          updateStmt.run(name, r.description || '', r.type || 'product', parseFloat(r.unitPrice) || 0, r.unit || 'pc', parseFloat(r.taxRate) || 15, r.categoryId || 'general', id);
+          updateStmt.run(name, r.description || '', r.type || 'product', parseFloat(r.unitPrice) || 0, r.unit || 'pc', parseFloat(r.taxRate) || 15, r.categoryId || 'general', id, companyId);
           updated++;
         } else {
-          insertStmt.run(id, name, r.description || '', r.type || 'product', parseFloat(r.unitPrice) || 0, r.unit || 'pc', parseFloat(r.taxRate) || 15, r.categoryId || 'general');
+          insertStmt.run(id, name, r.description || '', r.type || 'product', parseFloat(r.unitPrice) || 0, r.unit || 'pc', parseFloat(r.taxRate) || 15, r.categoryId || 'general', companyId);
           inserted++;
         }
       } catch { errors++; }
@@ -2017,6 +2063,7 @@ app.post('/api/import/customers', requireAuth, requirePermission('canManageSetti
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, updated = 0, errors = 0;
+  const companyId = (req as any).companyId;
   const txn = db.transaction(() => {
     for (const r of rows) {
       try {
@@ -2024,12 +2071,12 @@ app.post('/api/import/customers', requireAuth, requirePermission('canManageSetti
         const companyName = (r.companyName || '').toString().trim();
         if (!companyName) { errors++; continue; }
         const addr = JSON.stringify({ street: r.street || '', district: r.district || '', city: r.city || '', postalCode: r.postalCode || '', country: r.country || 'SA' });
-        const existing = db.prepare('SELECT id FROM customers WHERE id = ?').get(id);
+        const existing = db.prepare('SELECT id FROM customers WHERE id = ? AND companyId = ?').get(id, companyId);
         if (existing) {
-          db.prepare(`UPDATE customers SET companyName=?, contactPerson=?, email=?, phone=?, vatNumber=?, billingAddress=? WHERE id=?`).run(companyName, r.contactPerson || '', r.email || '', r.phone || '', r.vatNumber || '', addr, id);
+          db.prepare(`UPDATE customers SET companyName=?, contactPerson=?, email=?, phone=?, vatNumber=?, billingAddress=? WHERE id=? AND companyId=?`).run(companyName, r.contactPerson || '', r.email || '', r.phone || '', r.vatNumber || '', addr, id, companyId);
           updated++;
         } else {
-          db.prepare(`INSERT OR IGNORE INTO customers (id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt) VALUES (?,?,?,?,?,?,?,?)`).run(id, companyName, r.contactPerson || '', r.email || '', r.phone || '', r.vatNumber || '', addr, new Date().toISOString());
+          db.prepare(`INSERT OR IGNORE INTO customers (id, companyName, contactPerson, email, phone, vatNumber, billingAddress, createdAt, companyId) VALUES (?,?,?,?,?,?,?,?,?)`).run(id, companyName, r.contactPerson || '', r.email || '', r.phone || '', r.vatNumber || '', addr, new Date().toISOString(), companyId);
           inserted++;
         }
       } catch { errors++; }
@@ -2043,13 +2090,14 @@ app.post('/api/import/suppliers', requireAuth, requirePermission('canManageSetti
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, errors = 0;
+  const companyId = (req as any).companyId;
   const txn = db.transaction(() => {
     for (const r of rows) {
       try {
         const name = (r.name || '').toString().trim();
         if (!name) { errors++; continue; }
         const id = (r.id || `sup-${Date.now()}-${Math.random().toString(36).slice(2)}`).toString();
-        db.prepare(`INSERT OR IGNORE INTO suppliers (id, name) VALUES (?, ?)`).run(id, name);
+        db.prepare(`INSERT OR IGNORE INTO suppliers (id, name, companyId) VALUES (?, ?, ?)`).run(id, name, companyId);
         inserted++;
       } catch { errors++; }
     }
@@ -2087,6 +2135,30 @@ addColumnIfNotExists('boq', 'companyId', 'TEXT');
 
 // All scoped tables now exist — seed default company & backfill legacy rows.
 ensureDefaultCompany();
+
+// Replace the legacy global supplier-name constraint with tenant-local uniqueness.
+const supplierSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'suppliers'").get() as { sql?: string } | undefined;
+if (supplierSchema?.sql && /name\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(supplierSchema.sql)) {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE suppliers RENAME TO suppliers_legacy;
+      CREATE TABLE suppliers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        companyId TEXT NOT NULL,
+        UNIQUE(companyId, name)
+      );
+      INSERT INTO suppliers (id, name, companyId)
+      SELECT id, name, COALESCE(companyId, '${DEFAULT_COMPANY_ID}') FROM suppliers_legacy;
+      DROP TABLE suppliers_legacy;
+    `);
+  })();
+}
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_suppliers_company ON suppliers(companyId, name);
+  CREATE INDEX IF NOT EXISTS idx_activity_company ON document_activity(companyId, timestamp);
+  CREATE INDEX IF NOT EXISTS idx_tasks_company_user ON personal_tasks(companyId, userId, status);
+`);
 
 app.get('/api/boq', requireAuth, (req, res) => {
   try {
@@ -2126,7 +2198,7 @@ app.post('/api/boq', requireAuth, (req, res) => {
       user.id, user.name, user.id, user.name,
       docType, (req as any).companyId
     );
-    logDocumentActivity(docType, boqId, number, 'created', user);
+    logDocumentActivity(docType, boqId, number, 'created', user, (req as any).companyId);
     res.json({ id: boqId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2151,7 +2223,7 @@ app.put('/api/boq/:id', requireAuth, (req, res) => {
         ['title', 'status', 'total', 'notes']
       );
       const statusChanged = before.status !== (status || 'draft');
-      logDocumentActivity(docType, req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, changes);
+      logDocumentActivity(docType, req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -2163,7 +2235,7 @@ app.delete('/api/boq/:id', requireAuth, requirePermission('canDeleteData'), (req
   const user = (req as any).user;
   const before = db.prepare('SELECT number, type FROM boq WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
   db.prepare('DELETE FROM boq WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
-  logDocumentActivity(before?.type === 'bom' ? 'bom' : 'boq', req.params.id, before?.number || null, 'deleted', user);
+  logDocumentActivity(before?.type === 'bom' ? 'bom' : 'boq', req.params.id, before?.number || null, 'deleted', user, (req as any).companyId);
   res.json({ success: true });
 });
 
@@ -2172,8 +2244,8 @@ app.delete('/api/boq/:id', requireAuth, requirePermission('canDeleteData'), (req
 app.get('/api/activity/:docType/:docId', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
   try {
     const logs = db.prepare(
-      'SELECT * FROM document_activity WHERE docType = ? AND docId = ? ORDER BY timestamp ASC'
-    ).all(req.params.docType, req.params.docId) as any[];
+      'SELECT * FROM document_activity WHERE docType = ? AND docId = ? AND companyId = ? ORDER BY timestamp ASC'
+    ).all(req.params.docType, req.params.docId, (req as any).companyId) as any[];
     res.json(logs.map(l => ({ ...l, changes: l.changes ? JSON.parse(l.changes) : [] })));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2185,11 +2257,11 @@ app.get('/api/audit', requireAuth, requireFeature('tracking'), requirePermission
   try {
     const { docType, actorId } = req.query as Record<string, string>;
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const conditions: string[] = [];
-    const params: any[] = [];
+    const conditions: string[] = ['companyId = ?'];
+    const params: any[] = [(req as any).companyId];
     if (docType) { conditions.push('docType = ?'); params.push(docType); }
     if (actorId) { conditions.push('actorId = ?'); params.push(actorId); }
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = `WHERE ${conditions.join(' AND ')}`;
     const logs = db.prepare(
       `SELECT * FROM document_activity ${where} ORDER BY timestamp DESC LIMIT ?`
     ).all(...params, limit) as any[];
@@ -2206,22 +2278,22 @@ app.get('/api/usage', requireAuth, requireFeature('usage'), requirePermission('c
     const since = (req.query.since as string) || '1970-01-01';
     const byType = db.prepare(`
       SELECT docType, action, COUNT(*) as count
-      FROM document_activity WHERE timestamp >= ?
+      FROM document_activity WHERE timestamp >= ? AND companyId = ?
       GROUP BY docType, action
-    `).all(since);
+    `).all(since, (req as any).companyId);
     const byUser = db.prepare(`
       SELECT actorId, actorName, COUNT(*) as count
-      FROM document_activity WHERE timestamp >= ? AND action = 'created'
+      FROM document_activity WHERE timestamp >= ? AND action = 'created' AND companyId = ?
       GROUP BY actorId ORDER BY count DESC
-    `).all(since);
+    `).all(since, (req as any).companyId);
     const liveCounts = {
-      quotations: (db.prepare('SELECT COUNT(*) as c FROM quotations').get() as any).c,
-      invoices: (db.prepare('SELECT COUNT(*) as c FROM invoices').get() as any).c,
-      boq: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'boq'").get() as any).c,
-      bom: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'bom'").get() as any).c,
-      customers: (db.prepare('SELECT COUNT(*) as c FROM customers').get() as any).c,
-      products: (db.prepare('SELECT COUNT(*) as c FROM products').get() as any).c,
-      users: (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c,
+      quotations: (db.prepare('SELECT COUNT(*) as c FROM quotations WHERE companyId = ?').get((req as any).companyId) as any).c,
+      invoices: (db.prepare('SELECT COUNT(*) as c FROM invoices WHERE companyId = ?').get((req as any).companyId) as any).c,
+      boq: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'boq' AND companyId = ?").get((req as any).companyId) as any).c,
+      bom: (db.prepare("SELECT COUNT(*) as c FROM boq WHERE type = 'bom' AND companyId = ?").get((req as any).companyId) as any).c,
+      customers: (db.prepare('SELECT COUNT(*) as c FROM customers WHERE companyId = ?').get((req as any).companyId) as any).c,
+      products: (db.prepare('SELECT COUNT(*) as c FROM products WHERE companyId = ?').get((req as any).companyId) as any).c,
+      users: (db.prepare('SELECT COUNT(*) as c FROM user_companies WHERE companyId = ?').get((req as any).companyId) as any).c,
     };
     res.json({ byType, byUser, liveCounts });
   } catch (error: any) {
@@ -2313,13 +2385,13 @@ app.get('/api/tasks', requireAuth, requireFeature('tasks'), (req, res) => {
   try {
     const user = (req as any).user;
     const rows = db.prepare(`
-      SELECT * FROM personal_tasks WHERE userId = ?
+      SELECT * FROM personal_tasks WHERE userId = ? AND companyId = ?
       ORDER BY
         CASE status WHEN 'done' THEN 1 ELSE 0 END,
         CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
         (dueDate IS NULL), dueDate,
         createdAt DESC
-    `).all(user.id);
+    `).all(user.id, (req as any).companyId);
     res.json(rows);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -2334,14 +2406,14 @@ app.post('/api/tasks', requireAuth, requireFeature('tasks'), (req, res) => {
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     db.prepare(`
-      INSERT INTO personal_tasks (id, userId, title, notes, status, priority, dueDate, link, createdAt, updatedAt, completedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO personal_tasks (id, userId, title, notes, status, priority, dueDate, link, createdAt, updatedAt, completedAt, companyId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, user.id, String(title).trim(), notes || null,
       status || 'open', priority || 'normal', dueDate || null, link || null,
-      now, now, status === 'done' ? now : null
+      now, now, status === 'done' ? now : null, (req as any).companyId
     );
-    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ?').get(id));
+    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ? AND companyId = ?').get(id, (req as any).companyId));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -2350,7 +2422,7 @@ app.post('/api/tasks', requireAuth, requireFeature('tasks'), (req, res) => {
 app.put('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
   try {
     const user = (req as any).user;
-    const existing = db.prepare('SELECT * FROM personal_tasks WHERE id = ? AND userId = ?').get(req.params.id, user.id) as any;
+    const existing = db.prepare('SELECT * FROM personal_tasks WHERE id = ? AND userId = ? AND companyId = ?').get(req.params.id, user.id, (req as any).companyId) as any;
     if (!existing) return res.status(404).json({ error: 'Task not found.' });
     const { title, notes, status, priority, dueDate, link } = req.body;
     const now = new Date().toISOString();
@@ -2361,13 +2433,13 @@ app.put('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
     db.prepare(`
       UPDATE personal_tasks
       SET title = ?, notes = ?, status = ?, priority = ?, dueDate = ?, link = ?, updatedAt = ?, completedAt = ?
-      WHERE id = ? AND userId = ?
+      WHERE id = ? AND userId = ? AND companyId = ?
     `).run(
       title ?? existing.title, notes ?? existing.notes, newStatus,
       priority ?? existing.priority, dueDate ?? existing.dueDate, link ?? existing.link,
-      now, completedAt, req.params.id, user.id
+      now, completedAt, req.params.id, user.id, (req as any).companyId
     );
-    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ?').get(req.params.id));
+    res.json(db.prepare('SELECT * FROM personal_tasks WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -2376,7 +2448,7 @@ app.put('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
 app.delete('/api/tasks/:id', requireAuth, requireFeature('tasks'), (req, res) => {
   try {
     const user = (req as any).user;
-    const result = db.prepare('DELETE FROM personal_tasks WHERE id = ? AND userId = ?').run(req.params.id, user.id);
+    const result = db.prepare('DELETE FROM personal_tasks WHERE id = ? AND userId = ? AND companyId = ?').run(req.params.id, user.id, (req as any).companyId);
     if (result.changes === 0) return res.status(404).json({ error: 'Task not found.' });
     res.json({ success: true });
   } catch (error: any) {
@@ -2391,10 +2463,11 @@ const followUpHandler = (table: 'quotations' | 'invoices') =>
   (req: express.Request, res: express.Response) => {
     try {
       const { followUpDate, followUpNote } = req.body;
-      const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(req.params.id);
+      const companyId = (req as any).companyId;
+      const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND companyId = ?`).get(req.params.id, companyId);
       if (!exists) return res.status(404).json({ error: 'Document not found.' });
-      db.prepare(`UPDATE ${table} SET followUpDate = ?, followUpNote = ? WHERE id = ?`)
-        .run(followUpDate || null, followUpNote || null, req.params.id);
+      db.prepare(`UPDATE ${table} SET followUpDate = ?, followUpNote = ? WHERE id = ? AND companyId = ?`)
+        .run(followUpDate || null, followUpNote || null, req.params.id, companyId);
       res.json({ success: true, followUpDate: followUpDate || null, followUpNote: followUpNote || null });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2474,6 +2547,8 @@ app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
     const rows = db.prepare('SELECT * FROM companies ORDER BY createdAt ASC').all() as any[];
     const count = (sql: string, id: string) => (db.prepare(sql).get(id) as any).c as number;
     const out = rows.map((c) => {
+      let tenantSettings: any = {};
+      try { tenantSettings = c.settings ? JSON.parse(c.settings) : {}; } catch { tenantSettings = {}; }
       const owner = db.prepare(`
         SELECT u.name, u.email FROM user_companies uc JOIN users u ON u.id = uc.userId
         WHERE uc.companyId = ? AND uc.role = 'owner' ORDER BY uc.rowid ASC LIMIT 1
@@ -2482,6 +2557,9 @@ app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
         id: c.id, name: c.name, slug: c.slug, status: c.status || 'active',
         activePlan: c.activePlan, createdAt: c.createdAt,
         isDefault: c.id === DEFAULT_COMPANY_ID,
+        setupComplete: tenantSettings.onboardingComplete === true || c.id === DEFAULT_COMPANY_ID,
+        locale: tenantSettings.locale || 'en-SA',
+        currency: tenantSettings.currency || tenantSettings.profile?.currency || 'SAR',
         owner: owner || null,
         counts: {
           users: count('SELECT COUNT(*) c FROM user_companies WHERE companyId = ?', c.id),
@@ -2500,22 +2578,58 @@ app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
 // Create a tenant company; optionally attach an existing user (by email) as owner.
 app.post('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
   try {
-    const { name, ownerEmail, activePlan } = req.body;
-    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Company name is required.' });
-    const id = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const plan = activePlan || 'enterprise';
-    db.prepare("INSERT INTO companies (id, name, slug, activePlan, featureFlags, status, createdAt) VALUES (?, ?, ?, ?, ?, 'active', ?)").run(
-      id, String(name).trim(), uniqueSlug(name), plan, JSON.stringify(featuresFromPlan(plan)), new Date().toISOString()
-    );
-    let ownerAssigned: string | null = null;
-    if (ownerEmail && String(ownerEmail).trim()) {
-      const owner = db.prepare('SELECT id FROM users WHERE email = ?').get(String(ownerEmail).trim()) as { id: string } | undefined;
-      if (owner) {
-        db.prepare('INSERT OR REPLACE INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(owner.id, id, 'owner');
-        ownerAssigned = owner.id;
+    const { name, slug: requestedSlug, ownerEmail, activePlan, currency, locale, timezone, vatNumber, phone, city, country, features } = req.body;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return res.status(400).json({ error: 'Company name is required.' });
+    if (cleanName.length > 120) return res.status(400).json({ error: 'Company name must be 120 characters or fewer.' });
+    const plan = String(activePlan || 'enterprise');
+    if (!PLANS[plan]) return res.status(400).json({ error: 'Invalid subscription plan.' });
+    const cleanOwnerEmail = String(ownerEmail || '').trim().toLowerCase();
+    if (cleanOwnerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanOwnerEmail)) {
+      return res.status(400).json({ error: 'Enter a valid owner email.' });
+    }
+    const owner = cleanOwnerEmail
+      ? db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(cleanOwnerEmail) as { id: string } | undefined
+      : undefined;
+    if (cleanOwnerEmail && !owner) return res.status(400).json({ error: 'Owner email must belong to an existing user.' });
+    const cleanVat = String(vatNumber || '').replace(/\s/g, '');
+    if (cleanVat && !/^\d{15}$/.test(cleanVat)) return res.status(400).json({ error: 'Saudi VAT number must contain 15 digits.' });
+    const allowedCurrencies = new Set(['SAR', 'AED', 'USD', 'EUR', 'GBP']);
+    const selectedCurrency = allowedCurrencies.has(String(currency)) ? String(currency) : 'SAR';
+    const selectedLocale = ['en-SA', 'ar-SA', 'en', 'ar'].includes(String(locale)) ? String(locale) : 'en-SA';
+    const selectedTimezone = String(timezone || 'Asia/Riyadh').slice(0, 80);
+    const flags = featuresFromPlan(plan);
+    if (features && typeof features === 'object' && !Array.isArray(features)) {
+      for (const feature of FEATURE_CATALOG) {
+        if (!feature.core && typeof features[feature.key] === 'boolean') flags[feature.key] = features[feature.key];
+        if (feature.core) flags[feature.key] = true;
       }
     }
-    res.json({ id, slug: uniqueSlug(name, id), ownerAssigned });
+    const id = `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const tenantSlug = uniqueSlug(requestedSlug || cleanName);
+    const settings = {
+      onboardingComplete: true,
+      locale: selectedLocale,
+      currency: selectedCurrency,
+      timezone: selectedTimezone,
+      profile: {
+        name: cleanName,
+        vatNumber: cleanVat || '',
+        phone: String(phone || '').trim(),
+        address: { city: String(city || '').trim(), country: String(country || 'SA').trim() || 'SA' },
+        currency: selectedCurrency,
+      }
+    };
+    const createTenant = db.transaction(() => {
+      db.prepare("INSERT INTO companies (id, name, slug, activePlan, featureFlags, settings, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)").run(
+        id, cleanName, tenantSlug, plan, JSON.stringify(flags), JSON.stringify(settings), new Date().toISOString()
+      );
+      if (owner) {
+        db.prepare('INSERT OR REPLACE INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)').run(owner.id, id, 'owner');
+      }
+    });
+    createTenant();
+    res.status(201).json({ id, slug: tenantSlug, ownerAssigned: owner?.id || null, activePlan: plan, settings });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -2528,9 +2642,15 @@ app.patch('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res)
     if (!existing) return res.status(404).json({ error: 'Company not found.' });
     const { status, activePlan, name } = req.body;
     if (status && !['active', 'suspended'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
-    db.prepare('UPDATE companies SET status = ?, activePlan = ?, name = ? WHERE id = ?').run(
+    if (activePlan && !PLANS[activePlan]) return res.status(400).json({ error: 'Invalid subscription plan.' });
+    const nextPlan = activePlan ?? existing.activePlan;
+    const nextFlags = activePlan && activePlan !== existing.activePlan
+      ? JSON.stringify(featuresFromPlan(nextPlan))
+      : existing.featureFlags;
+    db.prepare('UPDATE companies SET status = ?, activePlan = ?, featureFlags = ?, name = ? WHERE id = ?').run(
       status ?? existing.status ?? 'active',
-      activePlan ?? existing.activePlan,
+      nextPlan,
+      nextFlags,
       name ?? existing.name,
       req.params.id
     );
@@ -2647,10 +2767,10 @@ app.get('/api/admin/overview', requireAuth, requireSuperAdmin, (req, res) => {
 // This is the ONLY reliable way to serve PDFs with proper filenames.
 // Client-side blob/data URLs cannot reliably set filenames in Chrome/Edge.
 
-async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' | 'invoice' | 'boq' | 'bom') {
+async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation' | 'invoice' | 'boq' | 'bom') {
   const isInvoice = type === 'invoice';
   const isProjectDoc = type === 'boq' || type === 'bom';
-  const custRow = db.prepare('SELECT * FROM customers WHERE id = ?').get(docData.customerId) as any;
+  const custRow = db.prepare('SELECT * FROM customers WHERE id = ? AND companyId = ?').get(docData.customerId, companyId) as any;
   const cust = custRow ? {
     company: custRow.companyName || '',
     contactName: custRow.contactPerson || null,
@@ -2661,10 +2781,15 @@ async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' |
     country: (() => { try { const a = JSON.parse(custRow.billingAddress); return a.country || null; } catch { return null; } })(),
   } : { company: 'Unknown' };
 
+  const companyRecord = db.prepare('SELECT name, settings FROM companies WHERE id = ?').get(companyId) as { name: string; settings?: string | null } | undefined;
+  let tenantSettings: any = {};
+  try { tenantSettings = companyRecord?.settings ? JSON.parse(companyRecord.settings) : {}; } catch { tenantSettings = {}; }
   const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
-  const comp = settingsRow ? JSON.parse(settingsRow.value) : {};
+  const legacyComp = settingsRow ? JSON.parse(settingsRow.value) : {};
+  const comp = { ...legacyComp, ...(tenantSettings.profile || {}), name: companyRecord?.name || tenantSettings.profile?.name || legacyComp.name };
   const pdfSettings = db.prepare("SELECT value FROM settings WHERE key = 'pdfSettings'").get() as any;
-  const pdfConf = pdfSettings ? JSON.parse(pdfSettings.value) : {};
+  const legacyPdfConf = pdfSettings ? JSON.parse(pdfSettings.value) : {};
+  const pdfConf = { ...legacyPdfConf, ...(tenantSettings.pdfSettings || {}) };
 
   // Read logo and footerImage from individual settings keys (base64 data URLs)
   const logoRow = db.prepare("SELECT value FROM settings WHERE key = 'logo'").get() as { value: string } | undefined;
@@ -2675,8 +2800,8 @@ async function buildPdfBuffer(docData: any, companyRow: any, type: 'quotation' |
     email: comp.email || null,
     phone: comp.phone || null,
     address: (() => { try { const a = comp.address; return a ? [a.street, a.district, a.city].filter(Boolean).join(', ') : null; } catch { return null; } })(),
-    logoUrl: logoRow?.value || comp.logo || null,
-    footerImageUrl: footerRow?.value || null,
+    logoUrl: tenantSettings.logo || logoRow?.value || comp.logo || null,
+    footerImageUrl: tenantSettings.footerImage || footerRow?.value || null,
     brandColor: comp.brandColor || '#01696f',
     taxLabel: 'VAT 15%',
     vatNumber: comp.vatNumber || null,
@@ -2767,8 +2892,7 @@ app.post('/api/pdf/generate', requireAuth, async (req, res) => {
     if (!documentData || !type) {
       return res.status(400).json({ error: 'documentData and type are required' });
     }
-    const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
-    const buffer = await buildPdfBuffer(documentData, compRow, type);
+    const buffer = await buildPdfBuffer(documentData, (req as any).companyId, type);
     const filename = `${documentData.number || 'document'}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -2782,10 +2906,9 @@ app.post('/api/pdf/generate', requireAuth, async (req, res) => {
 
 app.get('/api/pdf/quotation/:id', requireAuth, async (req, res) => {
   try {
-    const row = db.prepare('SELECT * FROM quotations WHERE id = ?').get(req.params.id) as any;
+    const row = db.prepare('SELECT * FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
     if (!row) return res.status(404).json({ error: 'Quotation not found' });
-    const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
-    const buffer = await buildPdfBuffer(row, compRow, 'quotation');
+    const buffer = await buildPdfBuffer(row, (req as any).companyId, 'quotation');
     const filename = `${row.number || req.params.id}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -2799,10 +2922,9 @@ app.get('/api/pdf/quotation/:id', requireAuth, async (req, res) => {
 
 app.get('/api/pdf/invoice/:id', requireAuth, async (req, res) => {
   try {
-    const row = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id) as any;
+    const row = db.prepare('SELECT * FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
     if (!row) return res.status(404).json({ error: 'Invoice not found' });
-    const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
-    const buffer = await buildPdfBuffer(row, compRow, 'invoice');
+    const buffer = await buildPdfBuffer(row, (req as any).companyId, 'invoice');
     const filename = `${row.number || req.params.id}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -2816,11 +2938,10 @@ app.get('/api/pdf/invoice/:id', requireAuth, async (req, res) => {
 
 app.get('/api/pdf/boq/:id', requireAuth, async (req, res) => {
   try {
-    const row = db.prepare('SELECT * FROM boq WHERE id = ?').get(req.params.id) as any;
+    const row = db.prepare('SELECT * FROM boq WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
     if (!row) return res.status(404).json({ error: 'Document not found' });
-    const compRow = db.prepare("SELECT value FROM settings WHERE key = 'company'").get() as any;
     const docType = row.type === 'bom' ? 'bom' : 'boq';
-    const buffer = await buildPdfBuffer(row, compRow, docType);
+    const buffer = await buildPdfBuffer(row, (req as any).companyId, docType);
     const filename = `${row.number || req.params.id}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

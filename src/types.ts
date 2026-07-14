@@ -159,6 +159,9 @@ export interface AdminCompany {
   activePlan: string;
   createdAt: string;
   isDefault: boolean;
+  setupComplete?: boolean;
+  locale?: string;
+  currency?: string;
   owner?: { name: string; email: string } | null;
   counts: { users: number; customers: number; quotations: number; invoices: number };
 }

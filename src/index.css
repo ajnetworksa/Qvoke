@@ -452,6 +452,71 @@ kbd, .kbd {
 .platform-tenant-strip strong { overflow: hidden; color: var(--color-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .platform-tenant-strip small { color: var(--color-text-muted); font-size: 9px; text-transform: capitalize; }
 
+.tenant-onboarding__header {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+.tenant-onboarding__header span { color: var(--color-primary); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.tenant-onboarding__header h2 { margin-top: 2px; font-size: 16px; font-weight: 750; }
+.tenant-onboarding__header button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--color-text-muted); }
+.tenant-onboarding__header button:hover { background: var(--color-surface-offset); color: var(--color-text); }
+.tenant-onboarding__progress { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; padding: 10px 20px 0; }
+.tenant-onboarding__progress span { height: 3px; border-radius: 2px; background: var(--color-surface-offset); }
+.tenant-onboarding__progress span.is-active { background: var(--color-primary); }
+.tenant-onboarding__body { min-height: 350px; padding: 24px 20px; }
+.tenant-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.tenant-field { min-width: 0; display: grid; align-content: start; gap: 6px; }
+.tenant-field--wide { grid-column: 1 / -1; }
+.tenant-field > span { color: var(--color-text-muted); font-size: 11px; font-weight: 700; }
+.tenant-field input,
+.tenant-field select {
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  font-size: 12px;
+}
+.tenant-field input:focus,
+.tenant-field select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-highlight); }
+.tenant-field small { color: var(--color-text-faint); font-size: 9px; }
+.tenant-slug-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface-2); }
+.tenant-slug-input input { border: 0; background: transparent; box-shadow: none !important; }
+.tenant-slug-input small { padding-right: 9px; white-space: nowrap; }
+.tenant-plan-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.tenant-plan-grid button { position: relative; min-height: 82px; display: grid; align-content: center; justify-items: start; gap: 4px; padding: 12px; border: 1px solid var(--color-border); border-radius: 7px; text-align: left; }
+.tenant-plan-grid button:hover { border-color: var(--color-primary); background: var(--color-primary-highlight); }
+.tenant-plan-grid button.is-selected { border-color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.tenant-plan-grid strong { font-size: 12px; text-transform: capitalize; }
+.tenant-plan-grid small { color: var(--color-text-muted); font-size: 9px; }
+.tenant-plan-grid svg { position: absolute; top: 9px; right: 9px; color: var(--color-primary); }
+.tenant-module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }
+.tenant-module-grid label { min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 7px; font-size: 11px; font-weight: 650; cursor: pointer; }
+.tenant-module-grid label:has(input:checked) { border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border)); background: var(--color-primary-highlight); }
+.tenant-module-grid input { width: 15px; height: 15px; accent-color: var(--color-primary); }
+.tenant-review__identity { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--color-divider); }
+.tenant-review__identity > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; color: white; background: var(--color-primary); font-weight: 800; }
+.tenant-review__identity h3 { font-size: 15px; font-weight: 750; }
+.tenant-review__identity p { margin-top: 2px; color: var(--color-text-muted); font-size: 10px; font-family: monospace; }
+.tenant-review dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 8px; }
+.tenant-review dl div { display: flex; justify-content: space-between; gap: 12px; padding: 12px 8px; border-bottom: 1px solid var(--color-divider); font-size: 11px; }
+.tenant-review dt { color: var(--color-text-muted); }
+.tenant-review dd { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.tenant-onboarding__error { margin-top: 12px; padding: 9px 10px; border-radius: 6px; color: var(--color-error); background: color-mix(in srgb, var(--color-error) 9%, transparent); font-size: 11px; font-weight: 700; }
+.tenant-onboarding__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--color-border); background: var(--color-surface-2); }
+.tenant-onboarding__footer button { min-width: 88px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 7px; font-size: 11px; font-weight: 750; }
+.tenant-onboarding__footer button:hover { background: var(--color-surface-offset); }
+.tenant-onboarding__footer button.is-primary { border-color: var(--color-primary); color: white; background: var(--color-primary); }
+.tenant-onboarding__footer button.is-primary:hover { background: var(--color-primary-hover); }
+.tenant-onboarding__footer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .platform-access-denied {
   min-height: 100vh;
   display: grid;
@@ -507,6 +572,12 @@ kbd, .kbd {
   .platform-main { padding: 20px 16px; }
   .platform-overview-panels { grid-template-columns: 1fr; }
   .platform-tenant-strip { grid-template-columns: 1fr; }
+  .tenant-onboarding { max-height: calc(100vh - 24px); overflow-y: auto; }
+  .tenant-form-grid,
+  .tenant-plan-grid,
+  .tenant-module-grid,
+  .tenant-review dl { grid-template-columns: 1fr; }
+  .tenant-onboarding__body { min-height: 0; padding: 18px 14px; }
   .page-loading__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 

@@ -8,6 +8,32 @@ import {
 } from 'lucide-react';
 
 const PLANS = ['starter', 'professional', 'enterprise'];
+const ONBOARDING_FEATURES = [
+  { key: 'boq', label: 'BOQ' },
+  { key: 'bom', label: 'BOM' },
+  { key: 'reports', label: 'Financial reports' },
+  { key: 'suppliers', label: 'Supplier management' },
+  { key: 'tracking', label: 'Tracking and audit' },
+  { key: 'usage', label: 'Usage analytics' },
+  { key: 'kanban', label: 'Kanban pipeline' },
+  { key: 'tasks', label: 'Personal tasks' },
+] as const;
+const PLAN_FEATURES: Record<string, string[]> = {
+  starter: ['tasks'],
+  professional: ['boq', 'bom', 'reports', 'suppliers', 'tracking', 'usage', 'tasks'],
+  enterprise: ONBOARDING_FEATURES.map((feature) => feature.key),
+};
+interface TenantDraft {
+  name: string; slug: string; ownerEmail: string; activePlan: string;
+  vatNumber: string; phone: string; city: string; country: string;
+  currency: string; locale: string; timezone: string; features: Record<string, boolean>;
+}
+const tenantDraft = (): TenantDraft => ({
+  name: '', slug: '', ownerEmail: '', activePlan: 'professional', vatNumber: '', phone: '', city: '', country: 'SA',
+  currency: 'SAR', locale: 'en-SA', timezone: 'Asia/Riyadh',
+  features: Object.fromEntries(ONBOARDING_FEATURES.map((feature) => [feature.key, PLAN_FEATURES.professional.includes(feature.key)])),
+});
+const toSlug = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 type Tab = 'overview' | 'companies' | 'users' | 'notifications';
 
 interface Overview {
@@ -36,7 +62,11 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // create tenant
-  const [nName, setNName] = useState(''); const [nOwner, setNOwner] = useState(''); const [nPlan, setNPlan] = useState('enterprise'); const [creating, setCreating] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [draft, setDraft] = useState<TenantDraft>(tenantDraft);
+  const [createError, setCreateError] = useState('');
+  const [creating, setCreating] = useState(false);
   // edit tenant
   const [edit, setEdit] = useState<AdminCompany | null>(null); const [eName, setEName] = useState(''); const [ePlan, setEPlan] = useState('enterprise');
   // notifications
@@ -57,10 +87,31 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
   useEffect(() => { load(); }, []);
 
   const patchCompany = async (id: string, body: any) => { setBusyId(id); await fetch(`/api/admin/companies/${id}`, { method: 'PATCH', headers: authH, body: JSON.stringify(body) }); await load(); setBusyId(null); };
+  const updateDraft = <K extends keyof TenantDraft>(key: K, value: TenantDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const closeOnboarding = () => {
+    setOnboardingOpen(false);
+    setOnboardingStep(0);
+    setCreateError('');
+    setDraft(tenantDraft());
+  };
+  const selectPlan = (plan: string) => {
+    updateDraft('activePlan', plan);
+    updateDraft('features', Object.fromEntries(ONBOARDING_FEATURES.map((feature) => [feature.key, PLAN_FEATURES[plan].includes(feature.key)])));
+  };
   const createTenant = async () => {
-    if (!nName.trim() || creating) return; setCreating(true);
-    await fetch('/api/admin/companies', { method: 'POST', headers: authH, body: JSON.stringify({ name: nName.trim(), ownerEmail: nOwner.trim() || undefined, activePlan: nPlan }) });
-    setNName(''); setNOwner(''); setNPlan('enterprise'); await load(); setCreating(false);
+    if (!draft.name.trim() || creating) return;
+    setCreating(true);
+    setCreateError('');
+    const res = await fetch('/api/admin/companies', { method: 'POST', headers: authH, body: JSON.stringify(draft) });
+    const data = await res.json();
+    if (!res.ok) {
+      setCreateError(data.error || 'Company creation failed.');
+      setCreating(false);
+      return;
+    }
+    await load();
+    setCreating(false);
+    closeOnboarding();
   };
   const removeTenant = async (c: AdminCompany) => {
     if (!window.confirm(`Delete "${c.name}" and ALL its data? This cannot be undone.`)) return;
@@ -234,15 +285,9 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
               {/* COMPANIES */}
               {tab === 'companies' && (
                 <div className="animate-fade-in">
-                  <h1 className="text-xl font-bold mb-4">Tenant Companies</h1>
-                  <div className="premium-card p-4 mb-5">
-                    <h3 className="text-sm font-bold mb-3 flex items-center gap-2"><Plus className="w-4 h-4 text-[var(--color-primary)]" /> Create Tenant</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                      <input value={nName} onChange={(e) => setNName(e.target.value)} placeholder="Company name" className="premium-input text-sm" />
-                      <input value={nOwner} onChange={(e) => setNOwner(e.target.value)} placeholder="Owner email (optional)" className="premium-input text-sm" />
-                      <select value={nPlan} onChange={(e) => setNPlan(e.target.value)} className="premium-input text-sm capitalize">{PLANS.map((p) => <option key={p} value={p}>{p}</option>)}</select>
-                      <button onClick={createTenant} disabled={!nName.trim() || creating} className="btn-gradient text-xs font-bold py-2 rounded-md flex items-center justify-center gap-1.5 disabled:opacity-50">{creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create</button>
-                    </div>
+                  <div className="flex items-center justify-between gap-4 mb-5">
+                    <div><h1 className="text-xl font-bold">Tenant Companies</h1><p className="text-xs text-[var(--color-text-muted)] mt-1">Provisioning, lifecycle, ownership, and access.</p></div>
+                    <button onClick={() => setOnboardingOpen(true)} className="btn-gradient text-xs font-bold py-2.5 px-4 rounded-md flex items-center gap-1.5"><Plus className="w-4 h-4" /> New company</button>
                   </div>
                   <div className="flex flex-col gap-3">
                     {companies.map((c) => (
@@ -254,6 +299,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
                               <div className="flex items-center gap-2">
                                 <h4 className="text-sm font-bold truncate">{c.name}</h4>
                                 {c.isDefault && <span className="text-[9px] font-black uppercase text-[var(--color-text-faint)]">default</span>}
+                                {!c.setupComplete && <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded text-amber-600 bg-amber-500/10">setup needed</span>}
                                 <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${c.status === 'active' ? 'text-emerald-600 bg-emerald-500/10' : 'text-[var(--color-error)] bg-[var(--color-error)]/10'}`}>{c.status}</span>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] font-mono mt-0.5"><LinkIcon className="w-3 h-3" /> {accessUrl(c.slug)}</div>
@@ -334,6 +380,83 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
           )}
         </main>
       </div>
+
+      {onboardingOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={() => !creating && closeOnboarding()} />
+          <section className="tenant-onboarding relative w-full max-w-2xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl overflow-hidden">
+            <header className="tenant-onboarding__header">
+              <div>
+                <span>Company onboarding</span>
+                <h2>{['Identity and access', 'Regional profile', 'Plan and modules', 'Review and create'][onboardingStep]}</h2>
+              </div>
+              <button onClick={closeOnboarding} disabled={creating} title="Close"><X className="w-4 h-4" /></button>
+            </header>
+
+            <div className="tenant-onboarding__progress" aria-label={`Step ${onboardingStep + 1} of 4`}>
+              {[0, 1, 2, 3].map((step) => <span key={step} className={step <= onboardingStep ? 'is-active' : ''} />)}
+            </div>
+
+            <div className="tenant-onboarding__body">
+              {onboardingStep === 0 && (
+                <div className="tenant-form-grid">
+                  <label className="tenant-field tenant-field--wide"><span>Company name</span><input autoFocus value={draft.name} onChange={(event) => { const name = event.target.value; setDraft((current) => ({ ...current, name, slug: current.slug && current.slug !== toSlug(current.name) ? current.slug : toSlug(name) })); }} placeholder="Acme Trading Company" /></label>
+                  <label className="tenant-field"><span>Workspace slug</span><div className="tenant-slug-input"><input value={draft.slug} onChange={(event) => updateDraft('slug', toSlug(event.target.value))} placeholder="acme-trading" /><small>.your-domain.com</small></div></label>
+                  <label className="tenant-field"><span>Owner</span><select value={draft.ownerEmail} onChange={(event) => updateDraft('ownerEmail', event.target.value)}><option value="">Assign later</option>{users.map((user) => <option key={user.id} value={user.email}>{user.name} ({user.email})</option>)}</select></label>
+                </div>
+              )}
+
+              {onboardingStep === 1 && (
+                <div className="tenant-form-grid">
+                  <label className="tenant-field"><span>VAT number</span><input value={draft.vatNumber} onChange={(event) => updateDraft('vatNumber', event.target.value.replace(/\D/g, '').slice(0, 15))} inputMode="numeric" placeholder="15-digit VAT number" /><small>{draft.vatNumber.length}/15 digits</small></label>
+                  <label className="tenant-field"><span>Phone</span><input value={draft.phone} onChange={(event) => updateDraft('phone', event.target.value)} placeholder="+966 5x xxx xxxx" /></label>
+                  <label className="tenant-field"><span>City</span><input value={draft.city} onChange={(event) => updateDraft('city', event.target.value)} placeholder="Riyadh" /></label>
+                  <label className="tenant-field"><span>Country</span><select value={draft.country} onChange={(event) => updateDraft('country', event.target.value)}><option value="SA">Saudi Arabia</option><option value="AE">United Arab Emirates</option><option value="BH">Bahrain</option><option value="KW">Kuwait</option><option value="OM">Oman</option><option value="QA">Qatar</option></select></label>
+                  <label className="tenant-field"><span>Currency</span><select value={draft.currency} onChange={(event) => updateDraft('currency', event.target.value)}><option>SAR</option><option>AED</option><option>USD</option><option>EUR</option><option>GBP</option></select></label>
+                  <label className="tenant-field"><span>Language</span><select value={draft.locale} onChange={(event) => updateDraft('locale', event.target.value)}><option value="en-SA">English (Saudi Arabia)</option><option value="ar-SA">Arabic (Saudi Arabia)</option><option value="en">English</option><option value="ar">Arabic</option></select></label>
+                </div>
+              )}
+
+              {onboardingStep === 2 && (
+                <div>
+                  <div className="tenant-plan-grid">
+                    {PLANS.map((plan) => <button key={plan} className={draft.activePlan === plan ? 'is-selected' : ''} onClick={() => selectPlan(plan)}><strong>{plan}</strong><small>{plan === 'starter' ? 'Core sales' : plan === 'professional' ? 'Operations suite' : 'All modules'}</small>{draft.activePlan === plan && <Check className="w-4 h-4" />}</button>)}
+                  </div>
+                  <div className="tenant-module-grid">
+                    {ONBOARDING_FEATURES.map((feature) => (
+                      <label key={feature.key}><input type="checkbox" checked={draft.features[feature.key]} onChange={(event) => updateDraft('features', { ...draft.features, [feature.key]: event.target.checked })} /><span>{feature.label}</span></label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {onboardingStep === 3 && (
+                <div className="tenant-review">
+                  <div className="tenant-review__identity"><span>{draft.name.charAt(0).toUpperCase()}</span><div><h3>{draft.name}</h3><p>{draft.slug}.your-domain.com</p></div></div>
+                  <dl>
+                    <div><dt>Owner</dt><dd>{draft.ownerEmail || 'Assign later'}</dd></div>
+                    <div><dt>Plan</dt><dd className="capitalize">{draft.activePlan}</dd></div>
+                    <div><dt>Region</dt><dd>{draft.city || 'Not specified'}, {draft.country}</dd></div>
+                    <div><dt>Locale</dt><dd>{draft.locale} · {draft.currency}</dd></div>
+                    <div><dt>Modules</dt><dd>{Object.values(draft.features).filter(Boolean).length + 4} enabled</dd></div>
+                    <div><dt>Status</dt><dd>Active</dd></div>
+                  </dl>
+                  {createError && <p className="tenant-onboarding__error">{createError}</p>}
+                </div>
+              )}
+            </div>
+
+            <footer className="tenant-onboarding__footer">
+              <button onClick={onboardingStep === 0 ? closeOnboarding : () => setOnboardingStep((step) => step - 1)} disabled={creating}>{onboardingStep === 0 ? 'Cancel' : 'Back'}</button>
+              {onboardingStep < 3 ? (
+                <button className="is-primary" onClick={() => setOnboardingStep((step) => step + 1)} disabled={(onboardingStep === 0 && (!draft.name.trim() || !draft.slug)) || (onboardingStep === 1 && Boolean(draft.vatNumber) && draft.vatNumber.length !== 15)}>Continue</button>
+              ) : (
+                <button className="is-primary" onClick={createTenant} disabled={creating}>{creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building className="w-4 h-4" />} Create company</button>
+              )}
+            </footer>
+          </section>
+        </div>
+      )}
 
       {/* Edit modal */}
       {edit && (

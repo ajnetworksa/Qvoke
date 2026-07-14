@@ -109,6 +109,11 @@ production, an `admin.example.com` hostname also resolves to the platform shell,
 while tenant entry uses `{company-slug}.example.com`. Configure wildcard DNS and
 TLS for tenant subdomains before deployment.
 
+Use **Companies > New company** to provision a tenant through its identity,
+regional profile, plan, enabled modules, and owner assignment. Company settings,
+feature flags, suppliers, tasks, activity, and document operations are isolated
+to the active tenant.
+
 ### 5. Default Login Credentials
 
 | Username | Password | Role |
