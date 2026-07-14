@@ -7,11 +7,15 @@ import {
   Command,
   Maximize2,
   Minimize2,
+  PanelLeft,
+  PanelRight,
   Search,
   Sparkles,
   X
 } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
+
+type SnapPosition = 'left' | 'right' | null;
 
 export interface DesktopApp {
   id: string;
@@ -35,6 +39,7 @@ interface WorkspaceWindow {
   height: number;
   minimized: boolean;
   maximized: boolean;
+  snap: SnapPosition;
   z: number;
 }
 
@@ -70,6 +75,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
   const [windows, setWindows] = useState<WorkspaceWindow[]>([]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [launcherSearch, setLauncherSearch] = useState('');
+  const [snapPreview, setSnapPreview] = useState<Exclude<SnapPosition, null> | null>(null);
   const [clock, setClock] = useState(new Date());
   const zRef = useRef(10);
 
@@ -91,6 +97,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             ...item,
             x: clamp(item.x || 116, 108, window.innerWidth - 240),
             y: clamp(item.y || 24, 8, window.innerHeight - 160),
+            snap: item.snap === 'left' || item.snap === 'right' ? item.snap : null,
             z: index + 10
           }));
           zRef.current = normalized.length + 12;
@@ -156,6 +163,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
         height,
         minimized: false,
         maximized: false,
+        snap: null,
         z: nextZ
       }];
     });
@@ -178,16 +186,49 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     setWindows((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   };
 
+  const snapWindow = (id: string, snap: Exclude<SnapPosition, null>) => {
+    setSnapPreview(null);
+    setWindows((items) => items.map((item) => item.id === id
+      ? { ...item, snap: item.snap === snap ? null : snap, maximized: false, minimized: false }
+      : item));
+  };
+
+  const toggleMaximize = (item: WorkspaceWindow) => {
+    patchWindow(item.id, { maximized: !item.maximized, snap: null });
+  };
+
   const startDrag = (event: React.PointerEvent, windowItem: WorkspaceWindow) => {
-    if (windowItem.maximized || (event.target as HTMLElement).closest('button')) return;
+    if ((event.target as HTMLElement).closest('button')) return;
     event.preventDefault();
     focusWindow(windowItem.id, false);
     const startX = event.clientX;
     const startY = event.clientY;
-    const originX = windowItem.x;
-    const originY = windowItem.y;
+    const restoring = windowItem.maximized || Boolean(windowItem.snap);
+    const restoredWidth = Math.min(980, Math.max(720, window.innerWidth - 360));
+    const originX = restoring
+      ? clamp(event.clientX - restoredWidth / 2, 108, window.innerWidth - restoredWidth - 10)
+      : windowItem.x;
+    const originY = restoring ? 0 : windowItem.y;
+    let pendingSnap: Exclude<SnapPosition, null> | null = null;
+
+    if (restoring) {
+      patchWindow(windowItem.id, {
+        x: originX,
+        y: originY,
+        width: restoredWidth,
+        height: Math.min(720, Math.max(520, window.innerHeight - 190)),
+        maximized: false,
+        snap: null
+      });
+    }
 
     const move = (pointer: PointerEvent) => {
+      pendingSnap = pointer.clientX <= 32
+        ? 'left'
+        : pointer.clientX >= window.innerWidth - 32
+          ? 'right'
+          : null;
+      setSnapPreview(pendingSnap);
       patchWindow(windowItem.id, {
         x: clamp(originX + pointer.clientX - startX, 0, window.innerWidth - 220),
         y: clamp(originY + pointer.clientY - startY, 0, window.innerHeight - 100)
@@ -196,6 +237,8 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     const end = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
+      if (pendingSnap) snapWindow(windowItem.id, pendingSnap);
+      else setSnapPreview(null);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
@@ -224,6 +267,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
         height: Math.min(780, Math.max(520, window.innerHeight - 170)),
         minimized: false,
         maximized: false,
+        snap: null,
         z: nextZ
       }]);
     }
@@ -268,6 +312,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
       </div>
 
       <div className="desktop-window-layer">
+        {snapPreview && <div className={`desktop-snap-preview desktop-snap-preview--${snapPreview}`} />}
         {windows.filter((item) => !item.minimized).map((item) => {
           const app = apps.find((candidate) => candidate.id === item.iconId) || appMap.get(item.page);
           const Icon = app?.icon || AppWindow;
@@ -275,8 +320,8 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
           return (
             <section
               key={item.id}
-              className={`desktop-window ${item.maximized ? 'desktop-window--maximized' : ''} ${isFocused ? 'desktop-window--focused' : ''}`}
-              style={item.maximized ? { zIndex: item.z } : {
+              className={`desktop-window ${item.maximized ? 'desktop-window--maximized' : ''} ${item.snap ? `desktop-window--snapped-${item.snap}` : ''} ${isFocused ? 'desktop-window--focused' : ''}`}
+              style={item.maximized || item.snap ? { zIndex: item.z } : {
                 zIndex: item.z,
                 left: item.x,
                 top: item.y,
@@ -285,14 +330,22 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
               }}
               onPointerDown={() => focusWindow(item.id, false)}
             >
-              <div className="desktop-window__titlebar liquid-glass" onPointerDown={(event) => startDrag(event, item)}>
+              <div
+                className="desktop-window__titlebar liquid-glass"
+                onPointerDown={(event) => startDrag(event, item)}
+                onDoubleClick={(event) => {
+                  if (!(event.target as HTMLElement).closest('button')) toggleMaximize(item);
+                }}
+              >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="desktop-window__app-icon"><Icon className="w-3.5 h-3.5" /></span>
                   <span className="truncate text-xs font-semibold text-white/90">{item.title}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <button onClick={() => patchWindow(item.id, { minimized: true })} title="Minimize"><Minimize2 className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => patchWindow(item.id, { maximized: !item.maximized })} title={item.maximized ? 'Restore' : 'Maximize'}><Maximize2 className="w-3.5 h-3.5" /></button>
+                  <button className={item.snap === 'left' ? 'is-active' : ''} onClick={() => snapWindow(item.id, 'left')} title={item.snap === 'left' ? 'Restore window' : 'Snap left'}><PanelLeft className="w-3.5 h-3.5" /></button>
+                  <button className={item.snap === 'right' ? 'is-active' : ''} onClick={() => snapWindow(item.id, 'right')} title={item.snap === 'right' ? 'Restore window' : 'Snap right'}><PanelRight className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => toggleMaximize(item)} title={item.maximized ? 'Restore' : 'Maximize'}><Maximize2 className="w-3.5 h-3.5" /></button>
                   <button onClick={() => closeWindow(item.id)} title="Close"><X className="w-3.5 h-3.5" /></button>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { useERPStore } from './store';
 import {
   LayoutDashboard,
@@ -32,26 +32,43 @@ import {
   AppWindow
 } from 'lucide-react';
 
-// Subpage views imports
-import { Dashboard } from './pages/Dashboard';
-import { Quotations } from './pages/Quotations';
-import { QuotationDetail } from './pages/QuotationDetail';
-import { Invoices } from './pages/Invoices';
-import { InvoiceDetail } from './pages/InvoiceDetail';
-import { Customers } from './pages/Customers';
-import { Suppliers } from './pages/Suppliers';
-import { Products } from './pages/Products';
-import { Settings as SettingsPage } from './pages/Settings';
-import { Reports } from './pages/Reports';
-import { BOQ } from './pages/BOQ';
-import { Tracking } from './pages/Tracking';
-import { MyTasks } from './pages/MyTasks';
-import { Companies } from './pages/Companies';
-import { PlatformShell } from './pages/PlatformShell';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
 import { DesktopWorkspace, type DesktopApp } from './components/DesktopWorkspace';
+
+const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
+const Quotations = lazy(() => import('./pages/Quotations').then((module) => ({ default: module.Quotations })));
+const QuotationDetail = lazy(() => import('./pages/QuotationDetail').then((module) => ({ default: module.QuotationDetail })));
+const Invoices = lazy(() => import('./pages/Invoices').then((module) => ({ default: module.Invoices })));
+const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail').then((module) => ({ default: module.InvoiceDetail })));
+const Customers = lazy(() => import('./pages/Customers').then((module) => ({ default: module.Customers })));
+const Suppliers = lazy(() => import('./pages/Suppliers').then((module) => ({ default: module.Suppliers })));
+const Products = lazy(() => import('./pages/Products').then((module) => ({ default: module.Products })));
+const SettingsPage = lazy(() => import('./pages/Settings').then((module) => ({ default: module.Settings })));
+const Reports = lazy(() => import('./pages/Reports').then((module) => ({ default: module.Reports })));
+const BOQ = lazy(() => import('./pages/BOQ').then((module) => ({ default: module.BOQ })));
+const Tracking = lazy(() => import('./pages/Tracking').then((module) => ({ default: module.Tracking })));
+const MyTasks = lazy(() => import('./pages/MyTasks').then((module) => ({ default: module.MyTasks })));
+const Companies = lazy(() => import('./pages/Companies').then((module) => ({ default: module.Companies })));
+const PlatformShell = lazy(() => import('./pages/PlatformShell').then((module) => ({ default: module.PlatformShell })));
+
+const isAdminHostname = () => {
+  const parts = window.location.hostname.toLowerCase().split('.');
+  return parts.length >= 3 && parts[0] === 'admin';
+};
+
+const isPlatformUrl = () => isAdminHostname() || window.location.pathname.startsWith('/platform');
+
+const PageLoading = () => (
+  <div className="page-loading" role="status" aria-label="Loading page">
+    <div className="page-loading__header" />
+    <div className="page-loading__metrics">
+      <span /><span /><span /><span />
+    </div>
+    <div className="page-loading__body" />
+  </div>
+);
 
 export const App: React.FC = () => {
   const {
@@ -87,6 +104,7 @@ export const App: React.FC = () => {
   const [newCompanyName, setNewCompanyName] = useState('');
   const [creatingCompany, setCreatingCompany] = useState(false);
   const [desktopViewport, setDesktopViewport] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
+  const [platformLocation, setPlatformLocation] = useState(isPlatformUrl);
 
   const activeCompany = companies.find((c) => c.id === activeCompanyId);
 
@@ -144,6 +162,34 @@ export const App: React.FC = () => {
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
+
+  useEffect(() => {
+    const handleHistoryChange = () => {
+      const nextPlatformLocation = isPlatformUrl();
+      setPlatformLocation(nextPlatformLocation);
+      if (nextPlatformLocation && currentUser?.isSuperAdmin) setRoute('platform-admin');
+      if (!nextPlatformLocation && currentPage === 'platform-admin') setRoute('dashboard');
+    };
+    window.addEventListener('popstate', handleHistoryChange);
+    return () => window.removeEventListener('popstate', handleHistoryChange);
+  }, [currentPage, currentUser?.isSuperAdmin, setRoute]);
+
+  useEffect(() => {
+    if (currentPage !== 'platform-admin' || platformLocation) return;
+    window.history.pushState({ surface: 'platform' }, '', '/platform');
+    setPlatformLocation(true);
+  }, [currentPage, platformLocation]);
+
+  const leavePlatform = () => {
+    if (isAdminHostname()) {
+      const rootHost = window.location.hostname.split('.').slice(1).join('.');
+      window.location.assign(`${window.location.protocol}//${rootHost}${window.location.port ? `:${window.location.port}` : ''}`);
+      return;
+    }
+    window.history.pushState({ surface: 'workspace' }, '', '/');
+    setPlatformLocation(false);
+    setRoute('dashboard');
+  };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL' },
@@ -293,13 +339,26 @@ export const App: React.FC = () => {
     return <Login />;
   }
 
+  if (platformLocation && !currentUser.isSuperAdmin) {
+    return (
+      <div className="platform-access-denied">
+        <ShieldCheck className="w-8 h-8" />
+        <h1>Platform access restricted</h1>
+        <p>This control plane is available only to Qvoke platform administrators.</p>
+        <button onClick={leavePlatform}>Return to company workspace</button>
+      </div>
+    );
+  }
+
   // 3. Separate platform control plane — full-screen, distinct from any company
   //    workspace. Only the platform super-admin can enter it.
-  if (currentUser.isSuperAdmin && currentPage === 'platform-admin') {
+  if (currentUser.isSuperAdmin && (currentPage === 'platform-admin' || platformLocation)) {
     return (
       <>
         <CommandPalette />
-        <PlatformShell />
+        <Suspense fallback={<PageLoading />}>
+          <PlatformShell onExit={leavePlatform} />
+        </Suspense>
       </>
     );
   }
@@ -317,7 +376,11 @@ export const App: React.FC = () => {
           companyName={activeCompany?.name || company.name}
           userName={currentUser.name}
           persistenceKey={`qvoke_desktop:${currentUser.id}:${activeCompanyId || 'default'}`}
-          renderWindow={(page, recordId) => renderActiveView(page, recordId)}
+          renderWindow={(page, recordId) => (
+            <Suspense fallback={<PageLoading />}>
+              {renderActiveView(page, recordId)}
+            </Suspense>
+          )}
           onNavigate={(page, recordId = null) => setRoute(page, recordId)}
           onExit={() => setWorkspaceMode('standard')}
         />
@@ -326,7 +389,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 relative">
+    <div className="erp-shell min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 relative">
       {/* Global command palette + keyboard shortcuts layer */}
       <CommandPalette />
 
@@ -341,7 +404,7 @@ export const App: React.FC = () => {
       {/* 2. Left Sidebar (collapsible) */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 lg:sticky h-screen flex flex-col bg-[var(--color-surface)] border-r border-[var(--color-border)] transition-all duration-[var(--transition-interactive)] ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-          } ${sidebarCollapsed ? 'w-16' : 'w-64'}`}
+          } ${sidebarCollapsed ? 'w-16' : 'w-64'} erp-sidebar`}
       >
         {/* Sidebar Header */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-[var(--color-border)]">
@@ -432,7 +495,7 @@ export const App: React.FC = () => {
       {/* 3. Main Workspace Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header navbar */}
-        <header className="h-16 border-b border-[var(--color-border)]/50 bg-[var(--color-surface)]/80 backdrop-blur-sm sticky top-0 z-30 flex items-center justify-between px-6">
+        <header className="erp-header h-16 border-b border-[var(--color-border)]/50 bg-[var(--color-surface)]/80 backdrop-blur-sm sticky top-0 z-30 flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen(true)}
@@ -611,12 +674,14 @@ export const App: React.FC = () => {
         </header>
 
         {/* Content Container Page Outlet */}
-        <main className={`flex-1 p-6 md:p-8 w-full mx-auto overflow-y-auto ${
+        <main className={`erp-main flex-1 p-6 md:p-8 w-full mx-auto overflow-y-auto ${
           currentPage === 'quotation-detail' || currentPage === 'invoice-detail' 
             ? 'max-w-[98%]' 
             : 'max-w-7xl'
         }`}>
-          {renderActiveView()}
+          <Suspense fallback={<PageLoading />}>
+            {renderActiveView()}
+          </Suspense>
         </main>
       </div>
     </div>

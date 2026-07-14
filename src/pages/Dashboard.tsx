@@ -179,6 +179,7 @@ export const Dashboard: React.FC = () => {
             icon={s.icon}
             format={s.format}
             currency={company.currency}
+            tone={(['teal', 'blue', 'amber', 'rose'] as const)[idx % 4]}
           />
         ))}
       </div>

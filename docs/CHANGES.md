@@ -454,6 +454,53 @@ warnings/errors.
 **Files:** `src/components/DesktopWorkspace.tsx`, `src/App.tsx`, `src/store.ts`,
 `src/components/CommandPalette.tsx`, `src/index.css`, `README.md`
 
+### Windows-style split screen
+
+- Added left and right snap controls to every desktop window.
+- Dragging a title bar to either viewport edge displays a placement preview and
+  snaps the window to that half when released.
+- Snapped and maximized windows restore to movable saved geometry when dragged.
+- Snap state persists with the per-user, per-company desktop layout.
+- Double-clicking a title bar toggles maximize/restore.
+
+**Verified:** two live windows render as equal halves with a stable divider;
+snap, restore, persisted geometry, production build, and browser console checks pass.
+
+---
+
+## 26. Platform routing, performance, and visual hierarchy
+
+**Platform access**
+- Added durable `/platform` access that survives refresh and browser navigation.
+- Added `admin.*` hostname recognition for production platform deployments.
+- Non-super-admin accounts receive an explicit control-plane access boundary.
+- Production tenant entry resolves to `{slug}.{root-domain}`; local development
+  continues to switch companies without invalid IP-based subdomains.
+
+**Performance**
+- Converted all major pages and the platform shell to lazy-loaded route chunks.
+- Added responsive loading skeletons for standard ERP, desktop windows, and the
+  platform control plane.
+- Reduced initial production JavaScript from about 3.39 MB to 452 KB (about 87%).
+- Excel, PDF/email, settings, reports, and document editors now load on demand.
+
+**UI and UX**
+- Replaced the muted beige/black surface system with neutral light and charcoal
+  dark foundations plus teal, blue, amber, and rose operational accents.
+- Added distinct KPI hierarchy, compact icon treatments, stronger application
+  chrome, and a responsive Platform Admin navigation.
+- Expanded Platform Overview with live health, quick operations, and a tenant
+  directory so the control plane is useful without changing tabs.
+- Fixed overlapping KPI animation frames that could briefly show invalid values.
+
+**Verified:** `/platform` direct access and refresh, company-workspace exit,
+1440x900 desktop and 390x844 mobile layouts, zero horizontal overflow, zero
+browser console warnings/errors, TypeScript, and production build.
+
+**Files:** `src/App.tsx`, `src/pages/PlatformShell.tsx`,
+`src/components/KPICard.tsx`, `src/pages/Dashboard.tsx`, `src/index.css`,
+`README.md`, `docs/CHANGES.md`
+
 ---
 
 ## Suggested advanced features (backlog)

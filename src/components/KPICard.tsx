@@ -8,6 +8,7 @@ interface KPICardProps {
   icon: LucideIcon;
   format?: 'currency' | 'number';
   currency?: string;
+  tone?: 'teal' | 'blue' | 'amber' | 'rose';
 }
 
 export const KPICard: React.FC<KPICardProps> = ({
@@ -16,17 +17,27 @@ export const KPICard: React.FC<KPICardProps> = ({
   change,
   icon: Icon,
   format = 'number',
-  currency = 'SAR'
+  currency = 'SAR',
+  tone = 'teal'
 }) => {
   const [displayValue, setDisplayValue] = useState(0);
 
   useEffect(() => {
-    let start = 0;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      setDisplayValue(value);
+      return;
+    }
+
+    let frameId = 0;
+    let cancelled = false;
+    const start = 0;
     const end = value;
     const duration = 800; // 800ms count animation
     const startTime = performance.now();
 
     const animate = (currentTime: number) => {
+      if (cancelled) return;
       const elapsedTime = currentTime - startTime;
       const progress = Math.min(elapsedTime / duration, 1);
       
@@ -37,13 +48,17 @@ export const KPICard: React.FC<KPICardProps> = ({
       setDisplayValue(currentValue);
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        frameId = requestAnimationFrame(animate);
       } else {
         setDisplayValue(end);
       }
     };
 
-    requestAnimationFrame(animate);
+    frameId = requestAnimationFrame(animate);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+    };
   }, [value]);
 
   const formatNumber = (num: number) => {
@@ -62,12 +77,12 @@ export const KPICard: React.FC<KPICardProps> = ({
   const isPositive = change >= 0;
 
   return (
-    <div className="premium-card p-6 flex flex-col justify-between transition-all duration-[var(--transition-interactive)] hover:border-[var(--color-primary)]/40 hover:shadow-md">
+    <div className={`kpi-card kpi-card--${tone} premium-card p-6 flex flex-col justify-between transition-all duration-[var(--transition-interactive)] hover:shadow-md`}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
           {label}
         </span>
-        <Icon className="w-5 h-5 text-[var(--color-text-muted)]" />
+        <span className="kpi-card__icon"><Icon className="w-4 h-4" /></span>
       </div>
 
       <div className="mt-4 flex items-baseline gap-2">

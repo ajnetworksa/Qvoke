@@ -101,6 +101,14 @@ The app will be available at **http://localhost:3001**
 
 > The dev server runs both the Vite HMR frontend and the Express API on the same port via Vite middleware mode.
 
+### Platform Admin
+
+Super-admins can open the platform control plane directly at
+`http://localhost:3001/platform` or from **System > Platform Admin**. In
+production, an `admin.example.com` hostname also resolves to the platform shell,
+while tenant entry uses `{company-slug}.example.com`. Configure wildcard DNS and
+TLS for tenant subdomains before deployment.
+
 ### 5. Default Login Credentials
 
 | Username | Password | Role |
@@ -123,6 +131,10 @@ independent windows with a searchable launcher and bottom taskbar. Window state
 is stored per user and company. Use **Standard ERP** in the workspace menu bar to
 return to the conventional layout. Mobile and tablet screens always use the
 standard responsive interface.
+
+Use the left/right title-bar controls, or drag a window to either screen edge,
+to place two applications side by side. Drag a snapped window away from the
+edge or select its active snap control to restore it.
 
 | Shortcut | Action |
 |---|---|
