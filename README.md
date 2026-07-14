@@ -23,6 +23,7 @@
 | **Backup & Restore** | SQLite snapshots · Download/upload .db files · Full Excel export (all tables) |
 | **Dual Logo** | Separate site logo (sidebar) vs PDF header logo |
 | **Appearance** | Light / dark / system theme · Comfortable / Compact density · modern UI refresh |
+| **Desktop Workspace** | Optional liquid-glass desktop mode · application launcher · persistent draggable/resizable windows · minimize/maximize taskbar · mobile-safe Standard ERP fallback |
 
 ---
 
@@ -113,6 +114,15 @@ The app will be available at **http://localhost:3001**
 ---
 
 ## ⌨️ Keyboard Shortcuts
+
+### Desktop Workspace
+
+On desktop screens, click the **window icon** in the top header or open the
+command palette and run **Open Desktop Workspace**. Applications open in
+independent windows with a searchable launcher and bottom taskbar. Window state
+is stored per user and company. Use **Standard ERP** in the workspace menu bar to
+return to the conventional layout. Mobile and tablet screens always use the
+standard responsive interface.
 
 | Shortcut | Action |
 |---|---|

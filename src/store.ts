@@ -15,6 +15,7 @@ interface ERPState {
   activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
   density: 'comfortable' | 'compact';
+  workspaceMode: 'standard' | 'desktop';
   themePreset: string | null;   // user's chosen preset; null = inherit company/default
   userAccent: string | null;    // user's custom accent hex override
   token: string | null;
@@ -38,6 +39,7 @@ interface ERPState {
   setRoute: (page: string, id?: string | null) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setDensity: (density: 'comfortable' | 'compact') => void;
+  setWorkspaceMode: (mode: 'standard' | 'desktop') => void;
   setThemePreset: (preset: string | null) => void;
   setUserAccent: (hex: string | null) => void;
   applyActiveTheme: () => void;
@@ -182,6 +184,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
   activeInvoiceId: localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
   density: (localStorage.getItem('erp_density') as 'comfortable' | 'compact') || 'comfortable',
+  workspaceMode: (localStorage.getItem('erp_workspace_mode') as 'standard' | 'desktop') || 'standard',
   themePreset: localStorage.getItem('erp_theme_preset') || null,
   userAccent: localStorage.getItem('erp_user_accent') || null,
   token: localStorage.getItem('erp_token'),
@@ -232,6 +235,11 @@ export const useERPStore = create<ERPState>((set, get) => ({
     document.documentElement.setAttribute('data-density', density);
     localStorage.setItem('erp_density', density);
     set({ density });
+  },
+
+  setWorkspaceMode: (workspaceMode) => {
+    localStorage.setItem('erp_workspace_mode', workspaceMode);
+    set({ workspaceMode });
   },
 
   setThemePreset: (preset) => {

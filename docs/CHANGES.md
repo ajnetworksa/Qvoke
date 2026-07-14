@@ -428,6 +428,34 @@ work, last-super-admin demotion blocked (400), theme commands switch live.
 
 ---
 
+## 25. Liquid-glass Desktop Workspace
+
+**Why:** adopt the strongest WebOSx interaction ideas without replacing the
+reliable, responsive ERP layout.
+
+**How:**
+- Optional desktop-only workspace entered from the header window icon or the
+  `Open Desktop Workspace` command in the command palette.
+- Searchable application launcher, desktop shortcuts, liquid-glass menu/taskbar
+  and draggable/resizable ERP windows with minimize, maximize, close and restore.
+- Dense ERP content remains opaque and readable inside each window; glass is
+  limited to window chrome, launcher and taskbar.
+- Opening routes/documents creates or focuses route-aware taskbar windows.
+- Open windows, placement, size and state persist in `localStorage`, isolated by
+  user and active company.
+- Standard ERP remains one click away; screens below 1024px automatically use the
+  existing responsive interface even if desktop mode is selected.
+
+**Verified:** production build passes; launcher renders 14 apps; dashboard and
+quotations coexist as two independent windows; taskbar minimize/restore works;
+desktop framing and mobile fallback tested at 1440×900 and 390×844; no console
+warnings/errors.
+
+**Files:** `src/components/DesktopWorkspace.tsx`, `src/App.tsx`, `src/store.ts`,
+`src/components/CommandPalette.tsx`, `src/index.css`, `README.md`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:

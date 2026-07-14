@@ -28,7 +28,8 @@ import {
   ChevronDown,
   Check,
   Plus,
-  ShieldCheck
+  ShieldCheck,
+  AppWindow
 } from 'lucide-react';
 
 // Subpage views imports
@@ -50,6 +51,7 @@ import { PlatformShell } from './pages/PlatformShell';
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
+import { DesktopWorkspace, type DesktopApp } from './components/DesktopWorkspace';
 
 export const App: React.FC = () => {
   const {
@@ -63,6 +65,8 @@ export const App: React.FC = () => {
     setTheme,
     density,
     setDensity,
+    workspaceMode,
+    setWorkspaceMode,
     currentUser,
     token,
     authChecked,
@@ -82,6 +86,7 @@ export const App: React.FC = () => {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
   const [creatingCompany, setCreatingCompany] = useState(false);
+  const [desktopViewport, setDesktopViewport] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
 
   const activeCompany = companies.find((c) => c.id === activeCompanyId);
 
@@ -133,6 +138,13 @@ export const App: React.FC = () => {
     document.documentElement.setAttribute('data-density', density);
   }, [density]);
 
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const update = () => setDesktopViewport(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL' },
     { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL', feature: 'tasks' },
@@ -161,6 +173,23 @@ export const App: React.FC = () => {
     (i) => isFeatureOn((i as any).feature) && (!(i as any).superAdminOnly || currentUser?.isSuperAdmin)
   );
 
+  const desktopApps: DesktopApp[] = [
+    { id: 'dashboard', page: 'dashboard', title: 'Dashboard', subtitle: 'Workspace overview', icon: LayoutDashboard },
+    { id: 'tasks', page: 'tasks', title: 'My Tasks', subtitle: 'Pending work', icon: CheckSquare, feature: 'tasks' },
+    { id: 'quotations', page: 'quotations', title: 'Quotations', subtitle: 'Sales proposals', icon: FileSpreadsheet, feature: 'quotations' },
+    { id: 'quotation-detail', page: 'quotation-detail', recordId: activeQuoteId || 'new', title: 'Quote Editor', subtitle: 'Current quotation', icon: FilePlus2, feature: 'quotations' },
+    { id: 'invoices', page: 'invoices', title: 'Invoices', subtitle: 'Billing journal', icon: FileText, feature: 'invoices' },
+    { id: 'invoice-detail', page: 'invoice-detail', recordId: activeInvoiceId || 'new', title: 'Invoice Editor', subtitle: 'Current invoice', icon: FilePlus2, feature: 'invoices' },
+    { id: 'boq', page: 'boq', title: 'BOQ / BOM', subtitle: 'Project quantities', icon: ClipboardList, feature: 'boq' },
+    { id: 'tracking', page: 'tracking', title: 'Tracking', subtitle: 'Follow-ups', icon: Radar, feature: 'tracking' },
+    { id: 'reports', page: 'reports', title: 'Financials', subtitle: 'Reports and aging', icon: TrendingUp, feature: 'reports' },
+    { id: 'customers', page: 'customers', title: 'Customers', subtitle: 'Accounts directory', icon: Users, feature: 'customers' },
+    { id: 'suppliers', page: 'suppliers', title: 'Suppliers', subtitle: 'Vendor directory', icon: Building, feature: 'suppliers' },
+    { id: 'products', page: 'products', title: 'Catalog', subtitle: 'Products and services', icon: Package, feature: 'products' },
+    { id: 'companies', page: 'companies', title: 'Companies', subtitle: 'Tenant workspaces', icon: Building },
+    { id: 'settings', page: 'settings', title: 'Settings', subtitle: 'Preferences and access', icon: SettingsIcon }
+  ].filter((app) => isFeatureOn(app.feature));
+
   // Map each routable page to the feature flag that gates it (if any).
   const pageFeature: Record<string, string> = {
     quotations: 'quotations',
@@ -177,9 +206,9 @@ export const App: React.FC = () => {
   };
 
   // Resolve current active page component
-  const renderActiveView = () => {
+  const renderActiveView = (page = currentPage, recordId = currentRecordId) => {
     // Deep-link guard: block pages whose feature is disabled on the active plan.
-    if (!isFeatureOn(pageFeature[currentPage])) {
+    if (!isFeatureOn(pageFeature[page])) {
       return (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-14 h-14 rounded-full bg-[var(--color-surface-offset)] flex items-center justify-center mb-4">
@@ -198,17 +227,17 @@ export const App: React.FC = () => {
         </div>
       );
     }
-    switch (currentPage) {
+    switch (page) {
       case 'dashboard':
         return <Dashboard />;
       case 'quotations':
         return <Quotations />;
       case 'quotation-detail':
-        return <QuotationDetail id={currentRecordId || 'new'} />;
+        return <QuotationDetail id={recordId || 'new'} />;
       case 'invoices':
         return <Invoices />;
       case 'invoice-detail':
-        return <InvoiceDetail id={currentRecordId || 'new'} />;
+        return <InvoiceDetail id={recordId || 'new'} />;
       case 'customers':
         return <Customers />;
       case 'suppliers':
@@ -271,6 +300,27 @@ export const App: React.FC = () => {
       <>
         <CommandPalette />
         <PlatformShell />
+      </>
+    );
+  }
+
+  // Optional desktop workspace. It is intentionally desktop-only; tablets and
+  // phones always retain the standard responsive ERP shell.
+  if (workspaceMode === 'desktop' && desktopViewport) {
+    return (
+      <>
+        <CommandPalette />
+        <DesktopWorkspace
+          apps={desktopApps}
+          currentPage={currentPage}
+          currentRecordId={currentRecordId}
+          companyName={activeCompany?.name || company.name}
+          userName={currentUser.name}
+          persistenceKey={`qvoke_desktop:${currentUser.id}:${activeCompanyId || 'default'}`}
+          renderWindow={(page, recordId) => renderActiveView(page, recordId)}
+          onNavigate={(page, recordId = null) => setRoute(page, recordId)}
+          onExit={() => setWorkspaceMode('standard')}
+        />
       </>
     );
   }
@@ -463,6 +513,16 @@ export const App: React.FC = () => {
               <Search className="w-3.5 h-3.5" />
               <span className="text-[11px] font-semibold hidden md:inline">Search…</span>
               <kbd className="hidden md:inline-flex">⌘K</kbd>
+            </button>
+
+            {/* Density toggle */}
+            <button
+              onClick={() => setWorkspaceMode('desktop')}
+              title="Open Desktop Workspace"
+              className="hidden lg:grid p-2 hover:bg-[var(--color-surface-offset)] rounded-full text-[var(--color-text-muted)] transition-colors cursor-pointer"
+              aria-label="Open desktop workspace"
+            >
+              <AppWindow className="w-4 h-4" />
             </button>
 
             {/* Density toggle */}
