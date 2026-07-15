@@ -16,6 +16,7 @@ import { renderToBuffer } from '@react-pdf/renderer';
 import React from 'react';
 import { QuotePdfDocument } from './src/pdf/quote-document.tsx';
 import { exec } from 'child_process';
+import OpenAI from 'openai';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -3129,6 +3130,81 @@ app.get('/api/pdf/boq/:id', requireAuth, async (req, res) => {
   } catch (err: any) {
     console.error('PDF generation error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI ASSISTANT ENDPOINT ──────────────────────────────────────────────────
+app.post('/api/ai/chat', requireAuth, requireFeature('aiAssistant'), requirePermission('canUseAI'), async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message required' });
+
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterKey) {
+      return res.status(500).json({ error: 'OpenRouter API key is not configured on the server.' });
+    }
+
+    const openai = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: openRouterKey
+    });
+
+    const tables = db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+    const schemaStr = tables.map((t: any) => t.sql).join('\n\n');
+
+    const completion = await openai.chat.completions.create({
+      model: 'openai/gpt-4o-mini', 
+      messages: [
+        { 
+          role: 'system', 
+          content: `You are an AI assistant for the Qvoke ERP system. Given the SQLite schema below, your task is to output ONLY a valid read-only SQL SELECT query to answer the user's question.
+DO NOT include markdown formatting (\`\`\`sql). Return ONLY the raw SQL query.
+If the question cannot be safely answered with a SELECT query (e.g. asking to UPDATE/DELETE, or unrelated to the database), output EXACTLY the word: ERROR.
+Schema:\n\n${schemaStr}` 
+        },
+        { role: 'user', content: message }
+      ],
+      temperature: 0.1
+    });
+
+    let sql = (completion.choices[0].message?.content || '').trim();
+    if (sql === 'ERROR') {
+      return res.status(400).json({ error: 'Sorry, I could not generate a valid read-only query for that question.' });
+    }
+
+    // Clean up possible markdown if the model disobeys
+    if (sql.startsWith('\`\`\`sql')) sql = sql.substring(6);
+    if (sql.startsWith('\`\`\`')) sql = sql.substring(3);
+    if (sql.endsWith('\`\`\`')) sql = sql.substring(0, sql.length - 3);
+    sql = sql.trim();
+
+    if (!sql.toUpperCase().startsWith('SELECT')) {
+      return res.status(400).json({ error: 'Only SELECT queries are allowed.' });
+    }
+
+    const results = db.prepare(sql).all();
+
+    const explainCompletion = await openai.chat.completions.create({
+      model: 'openai/gpt-4o-mini',
+      messages: [
+        { 
+          role: 'system', 
+          content: `You are a helpful ERP assistant. Summarize the following SQL query results in a brief, friendly, human-readable sentence or short paragraph. Do not mention SQL or databases. 
+Data: ${JSON.stringify(results).substring(0, 1000)}` 
+        },
+        { role: 'user', content: message }
+      ],
+      temperature: 0.3
+    });
+
+    res.json({
+      sql,
+      results,
+      explanation: explainCompletion.choices[0].message?.content
+    });
+  } catch (error: any) {
+    console.error('AI Chat error:', error);
+    res.status(500).json({ error: 'AI processing failed: ' + (error.message || 'Unknown error') });
   }
 });
 

@@ -23,7 +23,8 @@ import {
   Building,
   Radar,
   Palette,
-  AppWindow
+  AppWindow,
+  Bot
 } from 'lucide-react';
 
 interface CommandItem {
@@ -109,7 +110,11 @@ export const CommandPalette: React.FC = () => {
         icon: AppWindow, keywords: 'desktop liquid glass windows taskbar standard mode',
         run: () => { setWorkspaceMode(workspaceMode === 'desktop' ? 'standard' : 'desktop'); setOpen(false); }
       },
-    ];
+      featureOn('aiAssistant') && currentUser?.permissions?.canUseAI ? {
+        id: 'act-ai', label: 'Toggle AI Assistant', group: 'Actions', icon: Bot, keywords: 'ai assistant bot help sql data chat',
+        run: () => { window.dispatchEvent(new CustomEvent('toggle-ai-assistant')); setOpen(false); }
+      } : null,
+    ].filter(Boolean) as CommandItem[];
 
     const records: CommandItem[] = [];
     quotations.slice(0, 200).forEach((q) => {

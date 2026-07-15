@@ -29,13 +29,15 @@ import {
   Check,
   Plus,
   ShieldCheck,
-  AppWindow
+  AppWindow,
+  Bot
 } from 'lucide-react';
 
 import { Login } from './components/Login';
 import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
 import { DesktopWorkspace, type DesktopApp } from './components/DesktopWorkspace';
+import { AIAssistant } from './components/AIAssistant';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const Quotations = lazy(() => import('./pages/Quotations').then((module) => ({ default: module.Quotations })));
@@ -99,6 +101,7 @@ export const App: React.FC = () => {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isAIOpen, setIsAIOpen] = useState(false);
   const [identityDropdownOpen, setIdentityDropdownOpen] = useState(false);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
@@ -120,6 +123,13 @@ export const App: React.FC = () => {
       await switchCompany(id);
     }
   };
+
+  // ───────── THEME, LOCALSTORAGE & GLOBAL EVENTS ─────────
+  useEffect(() => {
+    const handleToggleAI = () => setIsAIOpen((prev) => !prev);
+    window.addEventListener('toggle-ai-assistant', handleToggleAI);
+    return () => window.removeEventListener('toggle-ai-assistant', handleToggleAI);
+  }, []);
 
   // Check auth status on load
   useEffect(() => {
@@ -279,11 +289,11 @@ export const App: React.FC = () => {
       case 'quotations':
         return <Quotations />;
       case 'quotation-detail':
-        return <QuotationDetail id={recordId || 'new'} />;
+        return <QuotationDetail key={recordId || 'new'} id={recordId || 'new'} />;
       case 'invoices':
         return <Invoices />;
       case 'invoice-detail':
-        return <InvoiceDetail id={recordId || 'new'} />;
+        return <InvoiceDetail key={recordId || 'new'} id={recordId || 'new'} />;
       case 'customers':
         return <Customers />;
       case 'suppliers':
@@ -392,6 +402,9 @@ export const App: React.FC = () => {
     <div className="erp-shell min-h-screen flex bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 relative">
       {/* Global command palette + keyboard shortcuts layer */}
       <CommandPalette />
+
+      {/* Floating AI Assistant */}
+      {isAIOpen && <AIAssistant onClose={() => setIsAIOpen(false)} />}
 
       {/* 1. Backdrop for mobile slider */}
       {mobileMenuOpen && (
@@ -599,6 +612,21 @@ export const App: React.FC = () => {
             </button>
 
             <NotificationBell />
+
+            {/* AI Assistant Toggle */}
+            {currentUser?.permissions?.canUseAI && features['aiAssistant'] !== false && (
+              <button
+                onClick={() => setIsAIOpen(!isAIOpen)}
+                title="AI Assistant"
+                className={`p-2 rounded-full transition-colors cursor-pointer ${
+                  isAIOpen 
+                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' 
+                    : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
+                }`}
+              >
+                <Bot className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Dynamic persistent theme toggle switch */}
             <button

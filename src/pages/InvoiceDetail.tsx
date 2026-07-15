@@ -58,6 +58,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const canOverridePrice = currentUser?.role === 'admin' || !!currentUser?.permissions?.canOverridePrice;
   const canUseWatermark = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUseWatermark;
   const canUsePricingControls = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUsePricingControls;
+  const canUseMarkup = currentUser?.role === 'admin' || !!currentUser?.permissions?.canUseMarkup;
   const existingInv = invoices.find((i) => i.id === id);
 
   // Form State
@@ -119,6 +120,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     setWatermarkType(s.watermarkType ?? 'none');
     setHidePrices(!!s.hidePrices);
     setManualTotal(s.manualTotal !== undefined && s.manualTotal !== null ? String(s.manualTotal) : '');
+    if (s.markup !== undefined && s.markup !== null) setMarkup(s.markup);
   };
 
   useEffect(() => {
@@ -211,17 +213,219 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     }
   }, [paymentTerms, date]);
 
+  useEffect(() => {
+    if (isNew) {
+      const token = useERPStore.getState().token;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      fetch('/api/settings/defaultMarkupPercentage', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.value) {
+            setMarkup(parseFloat(data.value) || 0);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [id, isNew]);
+
+  // Pricing Markup State (M.U. %)
+  const [markup, setMarkup] = useState<number>(8);
+
+  // MU keyword filters (legacy defaults: Installation excluded, Materials zero markup)
+  const [muFilters] = useState<{ zeroMarkup: string[]; excluded: string[] }>({
+    zeroMarkup: ['Materials'],
+    excluded: ['Installation']
+  });
+
   // Persist draft on every edit while dirty.
   useEffect(() => {
     if (!isDirty) return;
     draft.save({
       number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
-      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal,
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal, markup,
     });
   }, [isDirty, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
-      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal]);
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal, markup]);
 
-  const totals = calculateTotals(lineItems);
+  // Height synchronization states for side-by-side Analysis Sidebar
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const descriptionArRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
+  const descriptionRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const headerRef = useRef<HTMLTableRowElement | null>(null);
+  const tableWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [rowHeights, setRowHeights] = useState<number[]>([]);
+  const [headerHeight, setHeaderHeight] = useState<number>(44);
+
+  const adjustRowDescriptionHeights = (itemId: string) => {
+    const rowEl = descriptionRowRefs.current.get(itemId);
+    const arEl = descriptionArRefs.current.get(itemId);
+    if (!rowEl) return;
+    const searchInput = rowEl.querySelector('input, textarea') as HTMLElement | null;
+    if (searchInput) searchInput.style.height = 'auto';
+    if (arEl) arEl.style.height = 'auto';
+    const searchHeight = searchInput ? searchInput.scrollHeight : 0;
+    const arHeight = arEl ? arEl.scrollHeight : 0;
+    const maxHeight = Math.max(searchHeight, arHeight, 28);
+    if (searchInput) searchInput.style.height = `${maxHeight}px`;
+    if (arEl) arEl.style.height = `${maxHeight}px`;
+  };
+
+  const adjustAllDescriptionHeights = () => {
+    requestAnimationFrame(() => {
+      lineItems.forEach((item) => {
+        if (item.type === 'item') adjustRowDescriptionHeights(item.id);
+      });
+    });
+  };
+
+  useEffect(() => {
+    adjustAllDescriptionHeights();
+  }, [lineItems]);
+
+  useEffect(() => {
+    window.addEventListener('resize', adjustAllDescriptionHeights);
+    return () => window.removeEventListener('resize', adjustAllDescriptionHeights);
+  }, [lineItems]);
+
+  // Sync heights of table rows with Analysis Sidebar rows using ResizeObserver
+  useEffect(() => {
+    let animationFrameId = 0;
+
+    const updateHeights = () => {
+      animationFrameId = window.requestAnimationFrame(() => {
+        if (headerRef.current) {
+          setHeaderHeight(Math.ceil(headerRef.current.getBoundingClientRect().height));
+        }
+        const heights = lineItems.map((item) => {
+          const el = rowRefs.current.get(item.id);
+          return el ? Math.ceil(el.getBoundingClientRect().height) : 40;
+        });
+        setRowHeights(heights);
+      });
+    };
+
+    const observer = new ResizeObserver(updateHeights);
+
+    if (headerRef.current) observer.observe(headerRef.current);
+    if (tableWrapperRef.current) observer.observe(tableWrapperRef.current);
+    rowRefs.current.forEach((el) => {
+      if (el) observer.observe(el);
+    });
+
+    updateHeights();
+    const t1 = setTimeout(updateHeights, 50);
+    const t2 = setTimeout(updateHeights, 200);
+    const t3 = setTimeout(updateHeights, 500);
+
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(animationFrameId);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [lineItems]);
+
+  // Recalculate unitPrice based on global markup changes
+  useEffect(() => {
+    setLineItems((prevItems) =>
+      prevItems.map((item) => {
+        if (
+          item.type !== 'item' ||
+          (item.manualPrice !== undefined && item.manualPrice !== null) ||
+          item.originalPrice === undefined ||
+          item.originalPrice === null
+        ) {
+          return item;
+        }
+
+        const newUnitPrice = Math.round(item.originalPrice * (1 + markup / 100) * 100) / 100;
+        const baseAmount = item.quantity * newUnitPrice;
+        const discountAmount = baseAmount * (item.discountPercent / 100);
+
+        return {
+          ...item,
+          unitPrice: newUnitPrice,
+          subtotal: Math.round((baseAmount - discountAmount) * 100) / 100
+        };
+      })
+    );
+  }, [markup]);
+
+  const storeTotals = calculateTotals(lineItems);
+
+  // --- ADVANCED MU CALCULATIONS ---
+  const getItemRule = (item: LineItem) => {
+    if (item.type !== 'item') return 'EXCL';
+
+    // Manual override takes precedence
+    if (item.ruleOverride === 'EXCL') return 'EXCL';
+    if (item.ruleOverride === 'INCL') {
+      const desc = (item.description || '').toLowerCase();
+      if (muFilters.zeroMarkup.some((kw) => desc.includes(kw.toLowerCase()))) return 'ZM';
+      const hasManual = item.manualPrice !== undefined && item.manualPrice !== null;
+      const hasDB = item.originalPrice !== undefined && item.originalPrice !== null;
+      const isMaterials = desc.includes('materials');
+      if (hasManual && (isMaterials || !hasDB)) return 'MAN';
+      if (hasDB) return 'DB';
+      return '--';
+    }
+
+    // Default automatic keyword checks
+    const desc = (item.description || '').toLowerCase();
+    if (muFilters.excluded.some((kw) => desc.includes(kw.toLowerCase()))) return 'EXCL';
+    if (muFilters.zeroMarkup.some((kw) => desc.includes(kw.toLowerCase()))) return 'ZM';
+
+    const hasManual = item.manualPrice !== undefined && item.manualPrice !== null;
+    const hasDB = item.originalPrice !== undefined && item.originalPrice !== null;
+    const isMaterials = desc.includes('materials');
+
+    if (hasManual && (isMaterials || !hasDB)) return 'MAN';
+    if (hasDB) return 'DB';
+    return '--';
+  };
+
+  // Item numbering — delegates to the shared utility respecting the company-wide format setting
+  const getItemNumber = (idx: number): string => {
+    const fmt = (company.lineNumberFormat || 'sequential') as LineNumberFormat;
+    return getLineNumber(lineItems, idx, fmt);
+  };
+
+  const { baseTotal, markupProfit } = useMemo(() => {
+    let baseTotal = 0;
+    let markupProfit = 0;
+
+    lineItems.forEach((item) => {
+      if (item.type !== 'item') return;
+      const rule = getItemRule(item);
+      const saleTotal = item.subtotal || 0;
+
+      if (rule === 'EXCL') {
+        // Excluded from MU entirely
+      } else if (rule === 'ZM') {
+        baseTotal += saleTotal;
+      } else {
+        let itemBaseUnit = 0;
+        if (rule === 'MAN') itemBaseUnit = item.manualPrice!;
+        else if (rule === 'DB') itemBaseUnit = item.originalPrice!;
+
+        const itemBaseTotal = itemBaseUnit * item.quantity;
+        baseTotal += itemBaseTotal;
+        markupProfit += saleTotal - itemBaseTotal;
+      }
+    });
+
+    return { baseTotal, markupProfit };
+  }, [lineItems, muFilters]);
+
+  const totals = useMemo(() => {
+    return {
+      ...storeTotals,
+      baseTotal: Math.round(baseTotal * 100) / 100,
+      markupProfit: Math.round(markupProfit * 100) / 100
+    };
+  }, [storeTotals, baseTotal, markupProfit]);
 
   const getPayload = (): Invoice => {
     const finalTotal = manualTotal !== '' ? Number(manualTotal) : totals.total;
@@ -965,11 +1169,30 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
           </div>
 
           {activeTab === 'items' ? (
-            <div className="premium-card">
-              <div className="overflow-x-auto w-full pb-36 min-h-[300px]">
-                <table className="w-full text-sm text-left border-collapse">
-                  <thead>
-                    <tr className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+            <div className="w-full">
+              {/* M.U. % sits above the MU column so line-item headers align */}
+              {canUseMarkup && (
+                <div className="hidden lg:flex w-full mb-0">
+                  <div className="flex-1" />
+                  <div className="w-[320px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
+                    <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
+                    <input
+                      type="number"
+                      value={markup}
+                      onChange={(e) => setMarkup(parseFloat(e.target.value) || 0)}
+                      className="w-16 p-1 bg-yellow-400 text-black font-extrabold outline-none text-center rounded border border-yellow-500 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col lg:flex-row gap-4 items-stretch w-full lg:mt-0">
+                {/* Inline Line Items Grid */}
+                <div className="flex-1 premium-card min-w-0 w-full flex flex-col lg:rounded-tr-none">
+                  <div ref={tableWrapperRef} className="overflow-x-auto w-full pb-36 min-h-[300px]">
+                    <table className="w-full text-sm text-left border-collapse">
+                      <thead>
+                        <tr ref={headerRef} className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
                       <th className="py-2.5 px-3 w-8 text-center"></th>
                       <th className="py-2.5 px-3 w-8 text-center">#</th>
                       <th className="py-2.5 px-3 min-w-[650px] w-[700px]">Description / الوصف</th>
@@ -982,12 +1205,19 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                       <th className="py-2.5 px-3 w-10 text-center"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[var(--color-divider)]">
-                    {lineItems.map((item, idx) => (
-                      <tr
-                        key={item.id}
-                        className={item.type !== 'item' ? 'bg-[var(--color-surface-offset)] font-bold' : ''}
-                      >
+                      <tbody className="divide-y divide-[var(--color-divider)]">
+                        {lineItems.map((item, idx) => (
+                          <tr
+                            key={item.id}
+                            ref={(el) => {
+                              if (el) {
+                                rowRefs.current.set(item.id, el);
+                              } else {
+                                rowRefs.current.delete(item.id);
+                              }
+                            }}
+                            className={item.type !== 'item' ? 'bg-[var(--color-surface-offset)] font-bold' : ''}
+                          >
                         <td className="py-2 px-1 text-center">
                           <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] inline" />
                         </td>
@@ -1016,17 +1246,49 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                                     }
                                   }
                                 }}
-                                onProductSelect={(prod) => handleProductSelect(item.id, prod)}
+                                onProductSelect={(prod) => {
+                                  let enDesc = prod.name;
+                                  let arDesc = '';
+                                  if (prod.name.includes(' / ')) {
+                                    const parts = prod.name.split(' / ');
+                                    enDesc = parts[0].trim();
+                                    arDesc = parts[1]?.trim() || '';
+                                  }
+                                  if (prod.description) {
+                                    if (prod.description.includes(' / ')) {
+                                      const descParts = prod.description.split(' / ');
+                                      enDesc += `\n${descParts[0].trim()}`;
+                                      arDesc += arDesc ? `\n${descParts[1]?.trim() || ''}` : (descParts[1]?.trim() || '');
+                                    } else {
+                                      enDesc += `\n${prod.description}`;
+                                    }
+                                  }
+                                  const calculatedSellingPrice = Math.round(prod.unitPrice * (1 + markup / 100) * 100) / 100;
+                                  handleUpdateLine(item.id, {
+                                    productId: prod.id,
+                                    description: arDesc ? `${enDesc} / ${arDesc}` : enDesc,
+                                    unit: prod.unit,
+                                    originalPrice: prod.unitPrice,
+                                    manualPrice: undefined,
+                                    unitPrice: calculatedSellingPrice,
+                                    taxPercent: prod.taxRate
+                                  });
+                                }}
                                 placeholder="Search & Type English Description... / ابحث واكتب الوصف"
                               />
                               <textarea
                                 rows={1}
+                                ref={(el) => {
+                                  if (el) descriptionArRefs.current.set(item.id, el);
+                                  else descriptionArRefs.current.delete(item.id);
+                                }}
                                 value={item.description.includes(' / ') ? item.description.split(' / ').slice(1).join(' / ') : ''}
                                 onChange={(e) => {
                                   const parts = item.description.includes(' / ') ? item.description.split(' / ') : [item.description, ''];
                                   const enPart = parts[0] || '';
                                   handleUpdateLine(item.id, { description: `${enPart} / ${e.target.value}` });
                                 }}
+                                onInput={() => adjustRowDescriptionHeights(item.id)}
                                 className="w-1/2 bg-transparent border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-primary)] focus:bg-[var(--color-surface-2)] rounded py-1 px-1.5 text-xs text-[var(--color-text)] focus:outline-none text-right resize-y font-semibold"
                                 placeholder="الوصف بالعربي"
                                 dir="rtl"
@@ -1119,7 +1381,6 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                   </tbody>
                 </table>
               </div>
-
               <div className="flex flex-wrap gap-2 px-4 py-3 bg-[var(--color-surface-offset)] border-t border-[var(--color-border)] justify-start">
                 <button
                   type="button"
@@ -1142,6 +1403,125 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                 >
                   <FileText className="w-3.5 h-3.5" /> Add Note
                 </button>
+              </div>
+            </div>
+
+                {/* Analysis Sidebar — row heights synced with line items table */}
+                {canUseMarkup && (
+                  <div className="w-full lg:w-[320px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
+                    {/* M.U. % on mobile/tablet (desktop uses bar above) */}
+                    <div className="lg:hidden h-9 shrink-0 flex justify-between items-center px-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+                      <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
+                      <input
+                        type="number"
+                        value={markup}
+                        onChange={(e) => setMarkup(parseFloat(e.target.value) || 0)}
+                        className="w-16 p-1 bg-yellow-400 text-black font-extrabold outline-none text-center rounded border border-yellow-500 text-xs"
+                      />
+                    </div>
+
+                    {/* Column headers — height locked to line items thead */}
+                    <div
+                      style={{ height: `${headerHeight}px`, minHeight: `${headerHeight}px`, maxHeight: `${headerHeight}px` }}
+                      className="box-border grid grid-cols-[2.5rem_4.5rem_1fr_1fr] shrink-0 bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider"
+                    >
+                      <div className="flex items-center justify-center border-r border-[var(--color-border)]/50">Rule</div>
+                      <div className="flex items-center justify-center border-r border-[var(--color-border)]/50">Manual</div>
+                      <div className="flex items-center justify-center border-r border-[var(--color-border)]/50">Base</div>
+                      <div className="flex items-center justify-center">Total</div>
+                    </div>
+
+                    {/* Analysis rows — one per line item, pixel-matched height */}
+                    <div className="flex flex-col flex-1">
+                      {lineItems.map((item, index) => {
+                        const rule = getItemRule(item);
+                        let displayBase = 0;
+                        let displayTotal = 0;
+
+                        if (rule === 'EXCL') {
+                          displayBase = 0;
+                          displayTotal = 0;
+                        } else if (rule === 'ZM') {
+                          displayBase = item.unitPrice || 0;
+                          displayTotal = item.subtotal || 0;
+                        } else {
+                          if (rule === 'MAN') displayBase = item.manualPrice!;
+                          else if (rule === 'DB') displayBase = item.originalPrice!;
+                          displayTotal = displayBase * item.quantity;
+                        }
+
+                        const isBelowCost =
+                          item.manualPrice !== undefined &&
+                          item.originalPrice !== undefined &&
+                          item.manualPrice < item.originalPrice;
+
+                        const rowH = rowHeights[index] ?? 40;
+
+                        return (
+                          <div
+                            key={`side-${item.id}`}
+                            style={{ height: `${rowH}px`, minHeight: `${rowH}px`, maxHeight: `${rowH}px` }}
+                            className="box-border grid grid-cols-[2.5rem_4.5rem_1fr_1fr] border-b border-[var(--color-border)]/40 last:border-0 hover:bg-[var(--color-surface)] transition-colors overflow-hidden"
+                          >
+                            <div className="flex flex-col items-center justify-center border-r border-[var(--color-border)]/30 font-mono text-[9px] font-bold py-0.5">
+                              {item.type === 'item' ? (
+                                <>
+                                  <select
+                                    value={item.ruleOverride || (muFilters.excluded.some((kw) => (item.description || '').toLowerCase().includes(kw.toLowerCase())) ? 'EXCL' : 'INCL')}
+                                    onChange={(e) => handleUpdateLine(item.id, { ruleOverride: e.target.value as 'EXCL' | 'INCL' })}
+                                    className={`text-[9px] font-bold bg-transparent outline-none cursor-pointer rounded px-0.5 border border-transparent hover:border-[var(--color-border)] max-w-full truncate ${
+                                      rule === 'EXCL' ? 'text-red-500 bg-red-500/10' : 'text-green-600 bg-green-500/10'
+                                    }`}
+                                  >
+                                    <option value="INCL" className="bg-[var(--color-surface)] text-green-600 font-bold">INCL</option>
+                                    <option value="EXCL" className="bg-[var(--color-surface)] text-red-500 font-bold">EXCL</option>
+                                  </select>
+                                  {rule !== 'EXCL' && (
+                                    <span className="text-[7.5px] font-semibold text-[var(--color-text-muted)] scale-90 -mt-0.5">{rule}</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-red-500 bg-red-500/10 px-1 py-0.5 rounded">EXCL</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-center border-r border-[var(--color-border)]/30 px-0.5">
+                              {item.type === 'item' ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="none"
+                                  value={item.manualPrice !== undefined ? item.manualPrice : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                                    handleUpdateLine(item.id, { manualPrice: val });
+                                  }}
+                                  className={`w-full bg-[var(--color-surface-2)] border rounded text-[10px] font-mono py-0.5 text-center focus:outline-none ${
+                                    isBelowCost
+                                      ? 'border-red-500/50 text-red-500 focus:border-red-500'
+                                      : 'border-[var(--color-border)] text-[var(--color-text)] focus:border-[var(--color-primary)]'
+                                  }`}
+                                  disabled={!canOverridePrice}
+                                />
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-end border-r border-[var(--color-border)]/30 px-2 font-mono text-[10px] text-[var(--color-text)]">
+                              {displayBase.toFixed(2)}
+                            </div>
+
+                            <div className="flex items-center justify-end px-2 font-mono text-[10px] font-semibold text-[var(--color-text)]">
+                              {displayTotal.toFixed(2)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : activeTab === 'payments' && existingInv ? (

@@ -421,11 +421,13 @@ export function QuotePdfDocument({
 }: {
   quote: PdfQuote;
   settings: PdfSettings;
-  type?: "quotation" | "invoice";
+  type?: "quotation" | "invoice" | "boq" | "bom";
   amountPaid?: number;
   amountDue?: number;
 }) {
   const isInvoice = type === "invoice";
+  const isBoq = type === "boq";
+  const isBom = type === "bom";
 
   // Ensure brand color is never so dark it appears black in the PDF
   const ensureVisibleColor = (hex: string): string => {
@@ -473,9 +475,13 @@ export function QuotePdfDocument({
         {/* ── HEADER ─────────────────────────────────────────────────── */}
         <View fixed style={styles.headerRow}>
           <View>
-            <Text style={styles.title}>{isInvoice ? "TAX INVOICE" : "QUOTATION"}</Text>
+            <Text style={styles.title}>
+              {isInvoice ? "TAX INVOICE" : isBoq ? "BILL OF QUANTITIES" : isBom ? "BILL OF MATERIALS" : "QUOTATION"}
+            </Text>
             <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>{isInvoice ? "Invoice ID / رقم الفاتورة:" : "Quote ID / رقم العرض:"}</Text>
+              <Text style={styles.metaLabel}>
+                {isInvoice ? "Invoice ID / رقم الفاتورة:" : isBoq ? "BOQ ID / رقم الكميات:" : isBom ? "BOM ID / رقم المواد:" : "Quote ID / رقم العرض:"}
+              </Text>
               <Text style={styles.metaValue}>{quote.number}</Text>
             </View>
 
