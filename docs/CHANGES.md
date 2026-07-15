@@ -537,6 +537,63 @@ cross-tenant supplier update with `404`. Production client build passes.
 
 ---
 
+## 28. Critical bug fixes — document lifecycle & stability
+
+**Why:** multiple bugs surfaced during real-world testing on a LAN (non-HTTPS)
+environment, causing blank screens, stale data, and auto-save failures.
+
+**Fixes:**
+
+### 28a. `crypto.randomUUID()` crash on non-HTTPS (black screen)
+- **Root cause:** `crypto.randomUUID()` is a Web Crypto API that browsers restrict
+  to secure contexts (HTTPS or `localhost`). Accessing the app over a LAN IP
+  (e.g. `http://192.168.x.x:3000`) made the function `undefined`, crashing the
+  React component on mount — producing a black screen.
+- **Fix:** replaced client-side `crypto.randomUUID()` with
+  `Date.now() + Math.random()` in both `QuotationDetail` and `InvoiceDetail`
+  for new-document ID generation. Server-side Node.js `crypto` (imported module)
+  is unaffected.
+
+### 28b. Stale draft resurrection (old data loading into new documents)
+- **Root cause:** the `useDraft` hook keyed new-document drafts as
+  `qvoke:draft:quotation:new`. Every abandoned "new" session saved to the **same
+  key**. The next "New Quotation" click restored that old draft — including old
+  line items, customer, subject — making it look like a saved quote was loading.
+- **Fix:** restructured the initialization `useEffect` so `isNew` always clears
+  any stale draft and resets the form to blank defaults with an early `return`.
+  Draft restoration now only applies to **existing** documents (real IDs where
+  the user navigated away mid-edit).
+
+### 28c. Auto-save race condition (form wipe on first save)
+- **Root cause:** after auto-save POSTed a new quote, `onSaveSuccess` changed the
+  route from `id='new'` to the real ID. This triggered the `useEffect` to re-run.
+  At that moment `existingQuote` was still `undefined` in the Zustand store (the
+  store update hadn't propagated yet). The old `else` branch treated this as a
+  "new document" and **wiped all form fields to blank**. Then auto-save fired
+  again with empty data → 500 server error → "Auto-save failed (retry)".
+- **Fix:** the blank-reset `else` branch was removed. The effect now has three
+  clear paths: (1) `isNew` → blank reset + early return; (2) existing ID with
+  `existingQuote` loaded → populate from store; (3) existing ID but
+  `existingQuote` not yet available → **do nothing** and wait for the store to
+  update (which re-triggers the effect automatically).
+
+### 28d. VersionDiffViewer icon crash
+- **Root cause:** the `FileJson` icon was imported from `lucide-react` but does
+  not exist in the installed version (`v0.378.0`). React crashed trying to
+  render `undefined` as a component.
+- **Fix:** replaced with `FileText` (available in all versions).
+
+### 28e. Server syntax error (escaped backticks)
+- **Root cause:** a template literal on line 2446 of `server.ts` had escaped
+  backslashes before the backticks (`\`Snapshot \${...}\``), producing a
+  `TransformError` on startup.
+- **Fix:** removed the stray backslashes.
+
+**Files:** `src/pages/QuotationDetail.tsx`, `src/pages/InvoiceDetail.tsx`,
+`src/components/VersionDiffViewer.tsx`, `server.ts`
+
+---
+
 ## Suggested advanced features (backlog)
 
 Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remaining:
@@ -556,7 +613,7 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
 
 ### Legacy features still to port
 - **AI Assistant** (OpenRouter SQL chat) behind `canUseAI`.
-- **Version diff viewer** + timeline "undo/restore" actions.
+- ~~**Version diff viewer** + timeline "undo/restore" actions.~~ ✅ Shipped in Batch A + fixed in §28d.
 
 ### Polish / smaller gaps
 - **BOM** full visual + PDF parity with BOQ.
@@ -571,3 +628,5 @@ Proposed during the UI pass; **#1, #4, #7, #8 were implemented** (above). Remain
   is (`tsc --noEmit`).
 - All DB changes are additive (`addColumnIfNotExists`, `CREATE TABLE IF NOT EXISTS`).
 - Deleting a document does **not** roll back its number (gaps are expected/safe).
+- `crypto.randomUUID()` must not be used client-side — the app is accessed over
+  plain HTTP on local networks. Use `Date.now()` + `Math.random()` instead.

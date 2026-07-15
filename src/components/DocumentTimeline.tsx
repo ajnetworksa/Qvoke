@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useERPStore } from '../store';
 import { DocumentActivity } from '../types';
-import { History, Plus, Pencil, ArrowRightLeft, Trash2, Loader2, ChevronRight } from 'lucide-react';
+import { History, Plus, Pencil, ArrowRightLeft, Trash2, Loader2, ChevronRight, RotateCcw } from 'lucide-react';
+import { VersionDiffViewer } from './VersionDiffViewer';
 
 interface Props {
   docType: 'quotation' | 'invoice' | 'boq' | 'bom';
@@ -35,6 +36,7 @@ export const DocumentTimeline: React.FC<Props> = ({ docType, docId }) => {
 
   const [logs, setLogs] = useState<DocumentActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showViewer, setShowViewer] = useState(false);
 
   useEffect(() => {
     if (!canView || !docId || docId === 'new') {
@@ -60,9 +62,19 @@ export const DocumentTimeline: React.FC<Props> = ({ docType, docId }) => {
 
   return (
     <div className="premium-card p-5">
-      <h4 className="text-xs font-black uppercase text-[var(--color-text-muted)] tracking-wider flex items-center gap-2 mb-4">
-        <History className="w-3.5 h-3.5" /> Activity & History
-      </h4>
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-xs font-black uppercase text-[var(--color-text-muted)] tracking-wider flex items-center gap-2">
+          <History className="w-3.5 h-3.5" /> Activity & History
+        </h4>
+        {docId && docId !== 'new' && (
+          <button
+            onClick={() => setShowViewer(true)}
+            className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-wider px-2 py-1 bg-[var(--color-surface-hover)] hover:bg-[var(--color-border)] text-[var(--color-text-muted)] hover:text-white rounded transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" /> Versions
+          </button>
+        )}
+      </div>
 
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
@@ -103,6 +115,18 @@ export const DocumentTimeline: React.FC<Props> = ({ docType, docId }) => {
             );
           })}
         </ol>
+      )}
+
+      {showViewer && (
+        <VersionDiffViewer
+          docType={docType}
+          docId={docId}
+          onClose={() => setShowViewer(false)}
+          onRestored={() => {
+            setShowViewer(false);
+            window.location.reload(); // Reload to fetch the restored document state
+          }}
+        />
       )}
     </div>
   );

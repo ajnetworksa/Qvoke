@@ -219,6 +219,20 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_doc_activity ON document_activity(docType, docId);
 
+  -- Snapshots for document versioning and restore
+  CREATE TABLE IF NOT EXISTS document_snapshots (
+    id TEXT PRIMARY KEY,
+    docType TEXT NOT NULL,
+    docId TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    snapshot TEXT NOT NULL,       -- Full JSON of the document at this version
+    actorId TEXT,
+    actorName TEXT,
+    companyId TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_doc_snapshots ON document_snapshots(docType, docId);
+
   -- In-app notifications
   CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -331,8 +345,11 @@ const reconcileSequences = () => {
 };
 reconcileSequences();
 
-// Atomically reserve and format the next number for a document type
+// Atomically reserve and format the next number for a document type.
+// Retry-safe: if the generated number already exists in the target table
+// (e.g. due to manual edits or a race condition), it increments and retries.
 function getNextDocumentNumber(docType: string): string {
+  const MAX_RETRIES = 5;
   const seq = db.prepare('SELECT * FROM sequences WHERE docType = ?').get(docType) as
     | { docType: string; prefix: string; lastNumber: number; padding: number; resetPeriod: string; lastYear: number | null }
     | undefined;
@@ -341,12 +358,40 @@ function getNextDocumentNumber(docType: string): string {
   }
   const currentYear = new Date().getFullYear();
   const shouldReset = seq.resetPeriod === 'yearly' && seq.lastYear !== currentYear;
-  const nextNumber = shouldReset ? 1 : seq.lastNumber + 1;
+  let nextNumber = shouldReset ? 1 : seq.lastNumber + 1;
 
+  // Map docType to the actual table so we can detect clashing numbers
+  const tableMap: Record<string, string> = {
+    quotation: 'quotations', invoice: 'invoices', boq: 'boq', bom: 'boq',
+  };
+  const table = tableMap[docType];
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const padded = String(nextNumber).padStart(seq.padding, '0');
+    const candidate = seq.resetPeriod === 'yearly'
+      ? `${seq.prefix}-${currentYear}-${padded}`
+      : `${seq.prefix}-${padded}`;
+
+    // Check if this number is already taken (e.g. manually imported or race)
+    if (table) {
+      const clash = db.prepare(`SELECT 1 FROM ${table} WHERE number = ?`).get(candidate);
+      if (clash) {
+        nextNumber++;
+        continue; // try the next number
+      }
+    }
+
+    // Reserve the number
+    db.prepare(`
+      UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
+    `).run(nextNumber, currentYear, docType);
+    return candidate;
+  }
+
+  // Fallback after all retries (extremely unlikely)
   db.prepare(`
     UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
   `).run(nextNumber, currentYear, docType);
-
   const padded = String(nextNumber).padStart(seq.padding, '0');
   return seq.resetPeriod === 'yearly'
     ? `${seq.prefix}-${currentYear}-${padded}`
@@ -363,9 +408,11 @@ function logDocumentActivity(
   action: string,
   actor: { id?: string; name?: string } | undefined,
   companyId: string,
-  changes?: DocChange[]
+  changes?: DocChange[],
+  snapshot?: any // Optional full document snapshot before the change
 ) {
   try {
+    const timestamp = new Date().toISOString();
     db.prepare(`
       INSERT INTO document_activity (docType, docId, docNumber, action, changes, actorId, actorName, companyId, timestamp)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -378,8 +425,29 @@ function logDocumentActivity(
       actor?.id || null,
       actor?.name || null,
       companyId,
-      new Date().toISOString()
+      timestamp
     );
+
+    if (snapshot) {
+      // Determine next version number
+      const currentMax = db.prepare('SELECT MAX(version) as v FROM document_snapshots WHERE docType = ? AND docId = ? AND companyId = ?').get(docType, docId, companyId) as { v: number | null };
+      const nextVersion = (currentMax.v || 0) + 1;
+      
+      db.prepare(`
+        INSERT INTO document_snapshots (id, docType, docId, version, snapshot, actorId, actorName, companyId, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(),
+        docType,
+        docId,
+        nextVersion,
+        JSON.stringify(snapshot),
+        actor?.id || null,
+        actor?.name || null,
+        companyId,
+        timestamp
+      );
+    }
   } catch (err) {
     console.error('Failed to log document activity:', err);
   }
@@ -1381,7 +1449,11 @@ app.post('/api/quotes', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
-    const qId = id || `qt-${Date.now()}`;
+    // Prefer the client-sent id, but if it already exists (millisecond collision)
+    // generate a fresh UUID to avoid UNIQUE constraint errors.
+    let qId = id || `qt-${Date.now()}`;
+    const existing = db.prepare('SELECT 1 FROM quotations WHERE id = ?').get(qId);
+    if (existing) qId = `qt-${crypto.randomUUID()}`;
     const number = getNextDocumentNumber('quotation');
     db.prepare(`
       INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
@@ -1473,7 +1545,9 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
         ['subject', 'status', 'total', 'discountTotal', 'notes']
       );
       const statusChanged = before.status !== status;
-      logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
+      const snapshotData = { ...before };
+      try { if (typeof snapshotData.lineItems === 'string') snapshotData.lineItems = JSON.parse(snapshotData.lineItems); } catch(e){}
+      logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes, snapshotData);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -1518,7 +1592,9 @@ app.post('/api/invoices', requireAuth, (req, res) => {
     subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal
   } = req.body;
   try {
-    const invId = id || `inv-${Date.now()}`;
+    let invId = id || `inv-${Date.now()}`;
+    const existing = db.prepare('SELECT 1 FROM invoices WHERE id = ?').get(invId);
+    if (existing) invId = `inv-${crypto.randomUUID()}`;
     const number = getNextDocumentNumber('invoice');
     db.prepare(`
       INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
@@ -1619,7 +1695,10 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
         ['subject', 'status', 'total', 'amountPaid', 'notes']
       );
       const statusChanged = before.status !== status;
-      logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
+      const snapshotData = { ...before };
+      try { if (typeof snapshotData.lineItems === 'string') snapshotData.lineItems = JSON.parse(snapshotData.lineItems); } catch(e){}
+      try { if (typeof snapshotData.payments === 'string') snapshotData.payments = JSON.parse(snapshotData.payments); } catch(e){}
+      logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes, snapshotData);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -2223,7 +2302,9 @@ app.put('/api/boq/:id', requireAuth, (req, res) => {
         ['title', 'status', 'total', 'notes']
       );
       const statusChanged = before.status !== (status || 'draft');
-      logDocumentActivity(docType, req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes);
+      const snapshotData = { ...before };
+      try { if (typeof snapshotData.sections === 'string') snapshotData.sections = JSON.parse(snapshotData.sections); } catch(e){}
+      logDocumentActivity(docType, req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes, snapshotData);
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -2266,6 +2347,104 @@ app.get('/api/audit', requireAuth, requireFeature('tracking'), requirePermission
       `SELECT * FROM document_activity ${where} ORDER BY timestamp DESC LIMIT ?`
     ).all(...params, limit) as any[];
     res.json(logs.map(l => ({ ...l, changes: l.changes ? JSON.parse(l.changes) : [] })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── DOCUMENT SNAPSHOTS & RESTORE ──────────────────────────────────────────────
+app.get('/api/snapshots/:docType/:docId', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
+  try {
+    const snapshots = db.prepare(
+      'SELECT id, docType, docId, version, actorName, createdAt FROM document_snapshots WHERE docType = ? AND docId = ? AND companyId = ? ORDER BY version DESC'
+    ).all(req.params.docType, req.params.docId, (req as any).companyId);
+    res.json(snapshots);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/snapshots/:docType/:docId/:snapshotId', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
+  try {
+    const snapshot = db.prepare(
+      'SELECT snapshot FROM document_snapshots WHERE id = ? AND docType = ? AND docId = ? AND companyId = ?'
+    ).get(req.params.snapshotId, req.params.docType, req.params.docId, (req as any).companyId) as any;
+    if (!snapshot) return res.status(404).json({ error: 'Snapshot not found' });
+    res.json(JSON.parse(snapshot.snapshot));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/restore/:docType/:docId/:snapshotId', requireAuth, requireFeature('tracking'), requirePermission('canViewHistory'), (req, res) => {
+  const user = (req as any).user;
+  // Only admins or those with strict permissions can restore
+  if (user.role !== 'admin' && !user.permissions?.canManageSettings) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { docType, docId, snapshotId } = req.params;
+  const companyId = (req as any).companyId;
+
+  try {
+    const snapRow = db.prepare(
+      'SELECT snapshot FROM document_snapshots WHERE id = ? AND docType = ? AND docId = ? AND companyId = ?'
+    ).get(snapshotId, docType, docId, companyId) as any;
+    
+    if (!snapRow) return res.status(404).json({ error: 'Snapshot not found' });
+    
+    const snapData = JSON.parse(snapRow.snapshot);
+    const tableMap: Record<string, string> = { quotation: 'quotations', invoice: 'invoices', boq: 'boq', bom: 'boq' };
+    const table = tableMap[docType];
+    
+    if (!table) return res.status(400).json({ error: 'Invalid document type' });
+
+    // Capture the current state before overwriting, so we don't lose the present
+    const currentState = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND companyId = ?`).get(docId, companyId) as any;
+
+    // Depending on document type, restore the core fields. 
+    // We only restore fields that the user can edit, not ID or creation dates.
+    if (docType === 'quotation') {
+      db.prepare(`
+        UPDATE quotations SET
+          customerId = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?,
+          currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, manualTotal = ?,
+          updatedAt = ?, updatedBy = ?, updatedByName = ?
+        WHERE id = ? AND companyId = ?
+      `).run(
+        snapData.customerId, snapData.validUntil, snapData.status, JSON.stringify(snapData.lineItems || []),
+        snapData.notes, snapData.terms, snapData.subject, snapData.subjectAr, snapData.currency,
+        snapData.subtotal, snapData.discountTotal, snapData.taxTotal, snapData.total, snapData.manualTotal,
+        new Date().toISOString(), user.id, user.name, docId, companyId
+      );
+    } else if (docType === 'invoice') {
+      db.prepare(`
+        UPDATE invoices SET
+          customerId = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?,
+          currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, manualTotal = ?,
+          updatedAt = ?, updatedBy = ?, updatedByName = ?
+        WHERE id = ? AND companyId = ?
+      `).run(
+        snapData.customerId, snapData.dueDate, snapData.status, snapData.paymentTerms, JSON.stringify(snapData.lineItems || []),
+        snapData.notes, snapData.terms, snapData.subject, snapData.subjectAr, snapData.currency,
+        snapData.subtotal, snapData.discountTotal, snapData.taxTotal, snapData.total, snapData.manualTotal,
+        new Date().toISOString(), user.id, user.name, docId, companyId
+      );
+    } else if (docType === 'boq' || docType === 'bom') {
+      db.prepare(`
+        UPDATE boq SET
+          title = ?, customerId = ?, notes = ?, sections = ?, currency = ?, taxRate = ?, subtotal = ?, taxTotal = ?, total = ?,
+          updatedAt = ?, updatedBy = ?, updatedByName = ?
+        WHERE id = ? AND companyId = ?
+      `).run(
+        snapData.title, snapData.customerId, snapData.notes, JSON.stringify(snapData.sections || []),
+        snapData.currency, snapData.taxRate, snapData.subtotal, snapData.taxTotal, snapData.total,
+        new Date().toISOString(), user.id, user.name, docId, companyId
+      );
+    }
+
+    logDocumentActivity(docType, docId, currentState.number, 'restored', user, companyId, [{ field: 'Version', from: 'current', to: `Snapshot ${snapRow.id}` }], currentState);
+    res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

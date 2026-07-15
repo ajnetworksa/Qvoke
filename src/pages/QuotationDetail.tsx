@@ -86,7 +86,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   // Populate data on load
   const skipSyncRef = useRef(false);
   const committedRef = useRef(false); // true once this new quote has been created server-side
-  const [newId] = useState(() => `qt-${Date.now()}`);
+  const [newId] = useState(() => `qt-${Date.now()}-${Math.floor(Math.random() * 10000)}`);
 
   // localStorage-backed draft: survives navigation (e.g. jump to Products & back)
   // and reloads, independent of server autosave. Keyed by the route id ('new' or real id).
@@ -94,7 +94,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
   // Apply a draft/quote snapshot to all form fields.
   const applySnapshot = (s: any) => {
-    setNumber(s.number ?? '');
+    setNumber(id === 'new' ? '' : (s.number ?? ''));
     setCustomerId(s.customerId ?? '');
     setDate(s.date ? new Date(s.date) : new Date());
     setValidUntil(s.validUntil ? new Date(s.validUntil) : new Date(Date.now() + 15 * 24 * 60 * 60 * 1000));
@@ -117,34 +117,14 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       skipSyncRef.current = false;
       return;
     }
-    // Highest priority: an unsaved draft for this id (user navigated away mid-edit)
-    const saved = draft.load();
-    if (saved) {
-      applySnapshot(saved);
-      setIsDirty(true);
-      return;
-    }
-    if (existingQuote) {
-      setNumber(existingQuote.number);
-      setCustomerId(existingQuote.customerId);
-      setDate(new Date(existingQuote.date));
-      setValidUntil(new Date(existingQuote.validUntil));
-      setStatus(existingQuote.status);
-      setLineItems(JSON.parse(JSON.stringify(existingQuote.lineItems))); // copy
-      setNotes(existingQuote.notes || '');
-      setTerms(existingQuote.terms || '');
-      setCurrency(existingQuote.currency);
-      setSubject(existingQuote.subject || '');
-      setSubjectAr(existingQuote.subjectAr || '');
-      setWatermarkText(existingQuote.watermarkText || 'DRAFT');
-      setWatermarkType(existingQuote.watermarkType || 'none');
-      setHidePrices(existingQuote.hidePrices || false);
-      setManualTotal(existingQuote.manualTotal !== undefined && existingQuote.manualTotal !== null ? existingQuote.manualTotal : '');
-      setIsDirty(false);
-    } else {
-      // Create new QT number template
-      const nextNum = `QT-2026-${String(quotations.length + 1).padStart(4, '0')}`;
-      setNumber(nextNum);
+
+    if (isNew) {
+      // For NEW quotations: always start completely fresh.
+      // Clear any stale draft from a previous abandoned "new" session.
+      draft.clear();
+
+      // Reset form to blank defaults
+      setNumber('');
       setCustomerId('');
       setDate(new Date());
       setValidUntil(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000));
@@ -174,7 +154,40 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       setHidePrices(false);
       setManualTotal('');
       setIsDirty(false);
+      return;
     }
+
+    // ── EXISTING document (id is a real ID) ──
+
+    // Try restoring an unsaved draft (user navigated away mid-edit)
+    const saved = draft.load();
+    if (saved) {
+      applySnapshot(saved);
+      setIsDirty(true);
+      return;
+    }
+
+    // Populate from the store if the quote is loaded
+    if (existingQuote) {
+      setNumber(existingQuote.number);
+      setCustomerId(existingQuote.customerId);
+      setDate(new Date(existingQuote.date));
+      setValidUntil(new Date(existingQuote.validUntil));
+      setStatus(existingQuote.status);
+      setLineItems(JSON.parse(JSON.stringify(existingQuote.lineItems))); // copy
+      setNotes(existingQuote.notes || '');
+      setTerms(existingQuote.terms || '');
+      setCurrency(existingQuote.currency);
+      setSubject(existingQuote.subject || '');
+      setSubjectAr(existingQuote.subjectAr || '');
+      setWatermarkText(existingQuote.watermarkText || 'DRAFT');
+      setWatermarkType(existingQuote.watermarkType || 'none');
+      setHidePrices(existingQuote.hidePrices || false);
+      setManualTotal(existingQuote.manualTotal !== undefined && existingQuote.manualTotal !== null ? existingQuote.manualTotal : '');
+      setIsDirty(false);
+    }
+    // If existingQuote is not yet loaded (store still updating after POST),
+    // do nothing — the effect will re-run when existingQuote becomes available.
   }, [id, existingQuote]);
 
   useEffect(() => {
@@ -685,11 +698,10 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   };
 
   const handleDuplicate = () => {
-    const nextNum = `QT-2026-${String(quotations.length + 1).padStart(4, '0')}`;
-    setNumber(nextNum);
+    setNumber('');
     setStatus('draft');
     setIsDirty(true);
-    alert(`Duplicated! Please modify and save under new ID: ${nextNum}`);
+    alert(`Duplicated! Please modify and save.`);
   };
 
   const [isTranslating, setIsTranslating] = useState(false);
@@ -818,7 +830,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   return (
     <div className="animate-fade-in text-left">
       <PageHeader
-        title={isNew ? 'New Quotation / عرض سعر جديد' : `${number}`}
+        title={isNew ? (number || 'New Quotation / عرض سعر جديد') : `${number}`}
         breadcrumbs={[
           { label: 'Home', onClick: () => setRoute('dashboard') },
           { label: 'Quotations', onClick: () => setRoute('quotations') },

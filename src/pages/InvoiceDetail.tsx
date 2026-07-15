@@ -95,13 +95,14 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
   const skipSyncRef = useRef(false);
   const committedRef = useRef(false); // true once this new invoice has been created server-side
-  const [newId] = useState(() => `inv-${Date.now()}`);
+  const [newId] = useState(() => `inv-${Date.now()}-${Math.floor(Math.random() * 10000)}`);
 
   // localStorage-backed draft: survives navigation & reloads (see useDraft).
   const draft = useDraft<any>('invoice', id);
 
+  // Apply a draft/invoice snapshot to all form fields.
   const applySnapshot = (s: any) => {
-    setNumber(s.number ?? '');
+    setNumber(id === 'new' ? '' : (s.number ?? ''));
     setCustomerId(s.customerId ?? '');
     setDate(s.date ? new Date(s.date) : new Date());
     setDueDate(s.dueDate ? new Date(s.dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
@@ -125,34 +126,14 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       skipSyncRef.current = false;
       return;
     }
-    const saved = draft.load();
-    if (saved) {
-      applySnapshot(saved);
-      setIsDirty(true);
-      return;
-    }
-    if (existingInv) {
-      setNumber(existingInv.number);
-      setCustomerId(existingInv.customerId);
-      setDate(new Date(existingInv.date));
-      setDueDate(new Date(existingInv.dueDate));
-      setStatus(existingInv.status);
-      setPaymentTerms(existingInv.paymentTerms);
-      setLineItems(JSON.parse(JSON.stringify(existingInv.lineItems)));
-      setNotes(existingInv.notes || '');
-      setTerms(existingInv.terms || '');
-      setCurrency(existingInv.currency);
-      setLinkedQuoteId(existingInv.linkedQuoteId);
-      setSubject(existingInv.subject || '');
-      setSubjectAr(existingInv.subjectAr || '');
-      setWatermarkText(existingInv.watermarkText || 'PAID');
-      setWatermarkType(existingInv.watermarkType || 'none');
-      setHidePrices(!!existingInv.hidePrices);
-      setManualTotal(existingInv.manualTotal !== undefined && existingInv.manualTotal !== null ? String(existingInv.manualTotal) : '');
-      setIsDirty(false);
-    } else {
-      const nextNum = `INV-2026-${String(invoices.length + 1).padStart(4, '0')}`;
-      setNumber(nextNum);
+
+    if (isNew) {
+      // For NEW invoices: always start completely fresh.
+      // Clear any stale draft from a previous abandoned "new" session.
+      draft.clear();
+
+      // Reset form to blank defaults
+      setNumber('');
       setCustomerId('');
       setDate(new Date());
       setDueDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
@@ -184,7 +165,42 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       setHidePrices(false);
       setManualTotal('');
       setIsDirty(false);
+      return;
     }
+
+    // ── EXISTING document (id is a real ID) ──
+
+    // Try restoring an unsaved draft (user navigated away mid-edit)
+    const saved = draft.load();
+    if (saved) {
+      applySnapshot(saved);
+      setIsDirty(true);
+      return;
+    }
+
+    // Populate from the store if the invoice is loaded
+    if (existingInv) {
+      setNumber(existingInv.number);
+      setCustomerId(existingInv.customerId);
+      setDate(new Date(existingInv.date));
+      setDueDate(new Date(existingInv.dueDate));
+      setStatus(existingInv.status);
+      setPaymentTerms(existingInv.paymentTerms);
+      setLineItems(JSON.parse(JSON.stringify(existingInv.lineItems)));
+      setNotes(existingInv.notes || '');
+      setTerms(existingInv.terms || '');
+      setCurrency(existingInv.currency);
+      setLinkedQuoteId(existingInv.linkedQuoteId);
+      setSubject(existingInv.subject || '');
+      setSubjectAr(existingInv.subjectAr || '');
+      setWatermarkText(existingInv.watermarkText || 'PAID');
+      setWatermarkType(existingInv.watermarkType || 'none');
+      setHidePrices(!!existingInv.hidePrices);
+      setManualTotal(existingInv.manualTotal !== undefined && existingInv.manualTotal !== null ? String(existingInv.manualTotal) : '');
+      setIsDirty(false);
+    }
+    // If existingInv is not yet loaded (store still updating after POST),
+    // do nothing — the effect will re-run when existingInv becomes available.
   }, [id, existingInv]);
 
   // Handle automatic dynamic due-date setting based on terms drop-down
@@ -539,7 +555,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   return (
     <div className="animate-fade-in text-left">
       <PageHeader
-        title={isNew ? 'New Invoice / فاتورة جديدة' : `${number}`}
+        title={isNew ? (number || 'New Invoice / فاتورة جديدة') : `${number}`}
         breadcrumbs={[
           { label: 'Home', onClick: () => setRoute('dashboard') },
           { label: 'Invoices', onClick: () => setRoute('invoices') },
