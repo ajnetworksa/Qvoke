@@ -542,6 +542,7 @@ const FEATURE_CATALOG = [
   { key: 'kanban', label: 'Kanban Pipeline', core: false },
   { key: 'aiAssistant', label: 'AI Assistant', core: false },
   { key: 'tasks', label: 'Personal Task Tracker', core: false },
+  { key: 'pos', label: 'Point of Sale (POS)', core: false },
 ] as const;
 
 type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
@@ -554,7 +555,7 @@ const PLANS: Record<string, { label: string; features: FeatureKey[] }> = {
   },
   professional: {
     label: 'Professional',
-    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks'],
+    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks', 'pos'],
   },
   enterprise: {
     label: 'Enterprise',
@@ -803,7 +804,8 @@ const seedDatabase = () => {
       canUseRFQ: true,
       canUseAI: true,
       canViewHistory: true,
-      canViewCreatedBy: true
+      canViewCreatedBy: true,
+      canUsePOS: true
     }), 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80');
 
     insertUser.run('u-2', 'sarah', 'Sarah Rahman (Accountant)', 'sarah.r@ajnetwork.sa', hashedDefault, 'accountant', JSON.stringify({
@@ -1014,7 +1016,7 @@ const verifyPriceOverrides = (reqBody: any, existingQuoteOrInvoice?: any) => {
   const hasOldManualTotal = existingManualTotal !== null && existingManualTotal !== undefined && existingManualTotal !== '';
 
   if (hasNewManualTotal) {
-    if (Number(manualTotal) !== Number(existingManualTotal)) {
+    if (!hasOldManualTotal || Number(manualTotal) !== Number(existingManualTotal)) {
       return false;
     }
   } else if (hasOldManualTotal) {
@@ -1865,18 +1867,9 @@ app.post('/api/logs/clear', requireAuth, requirePermission('canManageSettings'),
 
 // ── REMOTE APP UPDATE API ──────────────────────────────────────────────────────
 app.post('/api/system/update', requireAuth, requirePermission('canManageSettings'), (req, res) => {
-  const user = (req as any).user;
-  logSystemEvent('info', 'Remote update triggered via GitHub pull', null, user?.id, user?.username);
-
-  exec('git pull', (err, stdout, stderr) => {
-    if (err) {
-      logSystemEvent('error', 'Remote update failed during git pull', { error: err.message, stderr }, user?.id, user?.username);
-      return res.status(500).json({ error: 'Git pull failed', details: err.message, stderr });
-    }
-    
-    logSystemEvent('info', 'Remote update pulled successfully from GitHub', { stdout, stderr }, user?.id, user?.username);
-    res.json({ success: true, stdout, stderr });
-  });
+  // Using \`exec\` to run git pull dynamically from a web route is inherently insecure.
+  // If remote updates are needed, it should be managed by an orchestrator or CI/CD runner.
+  res.status(501).json({ error: 'In-app update via git pull is disabled for security reasons.' });
 });
 
 // ── Translation API ───────────────────────────────────────────────────────────

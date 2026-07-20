@@ -315,7 +315,7 @@ export const Suppliers: React.FC = () => {
                         >
                           <ArrowRight className="w-3 h-3" /> Move To
                         </button>
-                        <button onClick={() => clearSelection(s.id)} className="text-gray-400 hover:text-gray-600 px-1 text-[10px] font-bold cursor-pointer">✕ Clear</button>
+                        <button onClick={() => clearSelection(s.id)} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 text-[10px] font-bold cursor-pointer">✕ Clear</button>
                       </div>
                     )}
 
