@@ -805,7 +805,8 @@ const seedDatabase = () => {
       canUseAI: true,
       canViewHistory: true,
       canViewCreatedBy: true,
-      canUsePOS: true
+      canUsePOS: true,
+      canDatabaseMaintenance: true
     }), 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80');
 
     insertUser.run('u-2', 'sarah', 'Sarah Rahman (Accountant)', 'sarah.r@ajnetwork.sa', hashedDefault, 'accountant', JSON.stringify({
@@ -1935,7 +1936,7 @@ app.post('/api/translate', requireAuth, async (req, res) => {
 import fs from 'fs';
 import path from 'path';
 
-app.post('/api/admin/optimize', requireAuth, (req, res) => {
+app.post('/api/admin/optimize', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     db.prepare('VACUUM').run();
     db.prepare('ANALYZE').run();
@@ -1945,7 +1946,7 @@ app.post('/api/admin/optimize', requireAuth, (req, res) => {
   }
 });
 
-app.get('/api/admin/backups', requireAuth, (req, res) => {
+app.get('/api/admin/backups', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     const backupDir = path.resolve('backups');
     if (!fs.existsSync(backupDir)) {
@@ -1969,7 +1970,7 @@ app.get('/api/admin/backups', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/admin/backup', requireAuth, (req, res) => {
+app.post('/api/admin/backup', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     const backupDir = path.resolve('backups');
     if (!fs.existsSync(backupDir)) {
@@ -1992,7 +1993,7 @@ app.post('/api/admin/backup', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/admin/restore', requireAuth, (req, res) => {
+app.post('/api/admin/restore', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { filename } = req.body;
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
@@ -2017,7 +2018,7 @@ app.post('/api/admin/restore', requireAuth, (req, res) => {
 });
 
 // ── DOWNLOAD A BACKUP FILE ────────────────────────────────────────────────────
-app.get('/api/admin/backup/download/:filename', requireAuth, (req, res) => {
+app.get('/api/admin/backup/download/:filename', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     const filename = path.basename(req.params.filename); // sanitize
     const backupPath = path.resolve('backups', filename);
@@ -2033,7 +2034,7 @@ app.get('/api/admin/backup/download/:filename', requireAuth, (req, res) => {
 });
 
 // ── DELETE A BACKUP FILE ──────────────────────────────────────────────────────
-app.delete('/api/admin/backup/:filename', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+app.delete('/api/admin/backup/:filename', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     const filename = path.basename(req.params.filename);
     const backupPath = path.resolve('backups', filename);
@@ -2062,7 +2063,7 @@ const uploadStorage = multer.diskStorage({
 });
 const uploadDb = multer({ storage: uploadStorage, limits: { fileSize: 200 * 1024 * 1024 } });
 
-app.post('/api/admin/restore/upload', requireAuth, requirePermission('canManageSettings'), uploadDb.single('dbfile'), (req, res) => {
+app.post('/api/admin/restore/upload', requireAuth, requirePermission('canDatabaseMaintenance'), uploadDb.single('dbfile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const uploadedPath = req.file.path;
@@ -2104,7 +2105,7 @@ app.get('/api/export/suppliers', requireAuth, (req, res) => {
 });
 
 // Full database Excel export (all tables as separate sheets)
-app.get('/api/export/full', requireAuth, (req, res) => {
+app.get('/api/export/full', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   try {
     const companyId = (req as any).companyId;
     const products = db.prepare('SELECT id, name, description, type, unitPrice, unit, taxRate, categoryId FROM products WHERE companyId = ? ORDER BY name ASC').all(companyId);
@@ -2124,7 +2125,7 @@ app.get('/api/export/full', requireAuth, (req, res) => {
 });
 
 // ── EXCEL IMPORT ENDPOINTS ────────────────────────────────────────────────────
-app.post('/api/import/products', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+app.post('/api/import/products', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, updated = 0, errors = 0;
@@ -2152,7 +2153,7 @@ app.post('/api/import/products', requireAuth, requirePermission('canManageSettin
   res.json({ success: true, inserted, updated, errors });
 });
 
-app.post('/api/import/customers', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+app.post('/api/import/customers', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, updated = 0, errors = 0;
@@ -2179,7 +2180,7 @@ app.post('/api/import/customers', requireAuth, requirePermission('canManageSetti
   res.json({ success: true, inserted, updated, errors });
 });
 
-app.post('/api/import/suppliers', requireAuth, requirePermission('canManageSettings'), (req, res) => {
+app.post('/api/import/suppliers', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { rows } = req.body;
   if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'No rows provided' });
   let inserted = 0, errors = 0;
