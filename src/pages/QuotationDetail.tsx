@@ -1496,7 +1496,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                                   disabled={!canOverridePrice}
                                 />
                               ) : (
-                                <span className="text-gray-400">—</span>
+                                <span className="text-[var(--color-text-muted)]">—</span>
                               )}
                             </div>
 
