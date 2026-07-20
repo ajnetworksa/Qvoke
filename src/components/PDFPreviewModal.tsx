@@ -122,6 +122,7 @@ const mapToPdfData = (
     watermarkType: documentData.watermarkType || 'none',
     hidePrices: documentData.hidePrices || false,
     manualTotal: documentData.manualTotal !== undefined && documentData.manualTotal !== null ? Number(documentData.manualTotal) : undefined,
+    printMode: documentData.printMode || 'standard',
   };
 
   return { quote, settings };
@@ -211,6 +212,17 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   const [ready, setReady] = React.useState(false);
   const [logoUrl, setLogoUrl] = React.useState<string | null>(null);
   const [footerImageUrl, setFooterImageUrl] = React.useState<string | null>(null);
+  const [printMode, setPrintMode] = React.useState<'zatca' | 'standard' | 'novat'>(type === 'invoice' ? 'zatca' : 'standard');
+
+  const modifiedDocumentData = React.useMemo(() => {
+    const isNoVat = printMode === 'novat';
+    return {
+      ...documentData,
+      printMode,
+      taxTotal: isNoVat ? 0 : documentData.taxTotal,
+      total: isNoVat ? (documentData.subtotal - (documentData.discountTotal || 0)) : documentData.total,
+    };
+  }, [documentData, printMode]);
 
   // Fetch logo and footer image from settings API
   React.useEffect(() => {
@@ -243,7 +255,7 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
 
   const pdfDocument = React.useMemo(() => {
     if (!isOpen) return null;
-    const { quote, settings } = mapToPdfData(documentData, companyProfile, customerProfile, type, logoUrl, footerImageUrl);
+    const { quote, settings } = mapToPdfData(modifiedDocumentData, companyProfile, customerProfile, type, logoUrl, footerImageUrl);
     return (
       <QuotePdfDocument
         quote={quote}
@@ -253,7 +265,7 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
         amountDue={amountDue}
       />
     );
-  }, [isOpen, documentData, companyProfile, customerProfile, type, amountPaid, amountDue, logoUrl, footerImageUrl]);
+  }, [isOpen, modifiedDocumentData, companyProfile, customerProfile, type, amountPaid, amountDue, logoUrl, footerImageUrl]);
 
   if (!isOpen) return null;
   const isInvoice = type === 'invoice';
@@ -432,7 +444,19 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
           </span>
 
           <div className="flex items-center gap-2">
-            <DownloadButton documentData={documentData} type={type} />
+            {type === 'invoice' && (
+              <select
+                value={printMode}
+                onChange={(e) => setPrintMode(e.target.value as 'zatca' | 'standard' | 'novat')}
+                className="bg-white border border-[var(--color-border)] text-[var(--color-text)] text-xs font-semibold py-1.5 px-2 rounded-md outline-none cursor-pointer"
+              >
+                <option value="zatca">ZATCA (Tax + QR)</option>
+                <option value="standard">Standard (Tax)</option>
+                <option value="novat">Non-VAT Invoice</option>
+              </select>
+            )}
+
+            <DownloadButton documentData={modifiedDocumentData} type={type} />
 
             <button
               onClick={() => window.print()}
@@ -489,7 +513,7 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
               <div className="flex justify-between items-start border-b border-neutral-800 pb-4 mb-5">
                 <div className="text-left">
                   <h2 className="text-xl font-black tracking-tight" style={{ color: pdfHeaderBgColorStart }}>
-                    {isInvoice ? 'TAX INVOICE' : 'QUOTATION'}
+                    {isInvoice ? (printMode === 'novat' ? 'INVOICE' : 'TAX INVOICE') : 'QUOTATION'}
                   </h2>
                   <div className="text-[10px] text-neutral-500 mt-1 space-y-0.5 font-semibold">
                     <div>Quote ID / رقم العرض: <span className="font-bold text-neutral-800">{documentData.number}</span></div>
@@ -632,18 +656,20 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
                 <div className="w-40 border border-neutral-800 shrink-0">
                   <div className="flex justify-between px-2 py-1 border-b border-neutral-800">
                     <span className="font-bold">SUBTOTAL</span>
-                    <span>{documentData.currency} {fmt(documentData.subtotal)}</span>
+                    <span>{modifiedDocumentData.currency} {fmt(modifiedDocumentData.subtotal)}</span>
                   </div>
-                  {documentData.discountTotal > 0 && (
+                  {modifiedDocumentData.discountTotal > 0 && (
                     <div className="flex justify-between px-2 py-1 border-b border-neutral-800">
                       <span className="font-bold">DISCOUNT</span>
-                      <span>-{documentData.currency} {fmt(documentData.discountTotal)}</span>
+                      <span>-{modifiedDocumentData.currency} {fmt(modifiedDocumentData.discountTotal)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between px-2 py-1 border-b border-neutral-800">
-                    <span className="font-bold">VAT 15%</span>
-                    <span>{documentData.currency} {fmt(documentData.taxTotal)}</span>
-                  </div>
+                  {printMode !== 'novat' && (
+                    <div className="flex justify-between px-2 py-1 border-b border-neutral-800">
+                      <span className="font-bold">VAT 15%</span>
+                      <span>{modifiedDocumentData.currency} {fmt(modifiedDocumentData.taxTotal)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between px-2 py-1.5 font-bold" style={{
                     background: pdfHeaderBgType === 'gradient'
                       ? `linear-gradient(90deg, ${pdfHeaderBgColorStart}, ${pdfHeaderBgColorEnd})`
@@ -651,7 +677,7 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
                     color: pdfTableTextColor
                   }}>
                     <span>TOTAL PACKAGE</span>
-                    <span>{documentData.currency} {fmt(documentData.total)}</span>
+                    <span>{modifiedDocumentData.currency} {fmt(modifiedDocumentData.total)}</span>
                   </div>
                 </div>
               </div>

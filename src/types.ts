@@ -49,6 +49,8 @@ export interface Product {
   unit: string;
   taxRate: number;
   categoryId?: string;
+  itemCode?: string;
+  supplierName?: string;
 }
 
 export interface LineItem {

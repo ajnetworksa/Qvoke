@@ -1399,7 +1399,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
                 {/* Analysis Sidebar — row heights synced with line items table */}
                 {canUseMarkup && (
-                  <div className="w-full lg:w-[320px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
+                  <div className="w-full lg:w-[280px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
                     {/* M.U. % on mobile/tablet (desktop uses bar above) */}
                     <div className="lg:hidden h-9 shrink-0 flex justify-between items-center px-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                       <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
@@ -1414,7 +1414,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                     {/* Column headers — height locked to line items thead */}
                     <div
                       style={{ height: `${headerHeight}px`, minHeight: `${headerHeight}px`, maxHeight: `${headerHeight}px` }}
-                      className="box-border grid grid-cols-[2.5rem_4.5rem_1fr_1fr] shrink-0 bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider"
+                      className="box-border grid grid-cols-[3.5rem_4.5rem_1fr_1fr] shrink-0 bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider"
                     >
                       <div className="flex items-center justify-center border-r border-[var(--color-border)]/50">Rule</div>
                       <div className="flex items-center justify-center border-r border-[var(--color-border)]/50">Manual</div>
@@ -1452,7 +1452,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                           <div
                             key={`side-${item.id}`}
                             style={{ height: `${rowH}px`, minHeight: `${rowH}px`, maxHeight: `${rowH}px` }}
-                            className="box-border grid grid-cols-[2.5rem_4.5rem_1fr_1fr] border-b border-[var(--color-border)]/40 last:border-0 hover:bg-[var(--color-surface)] transition-colors overflow-hidden"
+                            className="box-border grid grid-cols-[3.5rem_4.5rem_1fr_1fr] border-b border-[var(--color-border)]/40 last:border-0 hover:bg-[var(--color-surface)] transition-colors overflow-hidden"
                           >
                             <div className="flex flex-col items-center justify-center border-r border-[var(--color-border)]/30 font-mono text-[9px] font-bold py-0.5">
                               {item.type === 'item' ? (

@@ -81,6 +81,8 @@ export type PdfQuote = {
   watermarkType?: string | null;
   hidePrices?: boolean;
   manualTotal?: number;
+  zatcaQrCodeImage?: string;
+  printMode?: 'zatca' | 'standard' | 'novat';
 };
 
 export function lineNetPrice(line: PdfLine): number {
@@ -475,8 +477,9 @@ export function QuotePdfDocument({
         {/* ── HEADER ─────────────────────────────────────────────────── */}
         <View fixed style={styles.headerRow}>
           <View>
-            <Text style={styles.title}>
-              {isInvoice ? "TAX INVOICE" : isBoq ? "BILL OF QUANTITIES" : isBom ? "BILL OF MATERIALS" : "QUOTATION"}
+            <Text style={[styles.title, { color: headerBgColorStart }]} render={({ pageNumber }) => pageNumber > 1 ? "" : (
+              isInvoice ? (quote.printMode === 'novat' ? "INVOICE" : "TAX INVOICE") : isBoq ? "BILL OF QUANTITIES" : isBom ? "BILL OF MATERIALS" : "QUOTATION"
+            )}>
             </Text>
             <View style={styles.metaRow}>
               <Text style={styles.metaLabel}>
@@ -713,10 +716,12 @@ export function QuotePdfDocument({
                   <Text>-{quote.currency} {fmt(quote.discountTotal)}</Text>
                 </View>
               ) : null}
-              <View style={styles.totalRow}>
-                <Text style={{ fontWeight: "bold" }}>{settings.taxLabel}</Text>
-                <Text>{quote.currency} {fmt(quote.taxTotal)}</Text>
-              </View>
+              {quote.printMode !== 'novat' && (
+                <View style={styles.totalRow}>
+                  <Text style={{ fontWeight: "bold" }}>{settings.taxLabel}</Text>
+                  <Text>{quote.currency} {fmt(quote.taxTotal)}</Text>
+                </View>
+              )}
               <View style={[styles.totalPkg, { position: "relative", minHeight: 18, borderBottomWidth: 0, backgroundColor: "#18181b" }]}>
                 <Text style={{ fontWeight: "bold", color: "#ffffff" }}>TOTAL PACKAGE</Text>
                 <Text style={{ color: "#ffffff", fontWeight: "bold" }}>{quote.currency} {fmt(quote.manualTotal !== undefined && quote.manualTotal !== null ? quote.manualTotal : quote.total)}</Text>
@@ -770,7 +775,12 @@ export function QuotePdfDocument({
           <Text style={styles.footerText}>
             {settings.companyName || "Qvoke"} | Tel: +966 920002087 | info@ajnetworksa.com
           </Text>
-          <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            {quote.zatcaQrCodeImage ? (
+              <Image src={quote.zatcaQrCodeImage} style={{ width: 40, height: 40, objectFit: "contain" }} />
+            ) : null}
+            <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+          </View>
         </View>
 
         {settings.footerImageUrl ? (

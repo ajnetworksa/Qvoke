@@ -24,9 +24,11 @@ export const Products: React.FC = () => {
   const [unit, setUnit] = useState('pc');
   const [taxRate, setTaxRate] = useState(15);
   const [categoryId, setCategoryId] = useState('general');
+  const [itemCode, setItemCode] = useState('');
+  const [supplierName, setSupplierName] = useState('');
 
   const filtered = products.filter(p =>
-    matchSearchQuery(search, [p.name, p.description, p.unit, p.categoryId, p.id, p.unitPrice])
+    matchSearchQuery(search, [p.name, p.description, p.unit, p.categoryId, p.id, p.unitPrice, p.itemCode, p.supplierName])
   );
 
   const handleOpenCreate = () => {
@@ -38,6 +40,8 @@ export const Products: React.FC = () => {
     setUnit('pc');
     setTaxRate(company.defaultTax);
     setCategoryId('general');
+    setItemCode('');
+    setSupplierName('');
     setFormOpen(true);
   };
 
@@ -50,19 +54,21 @@ export const Products: React.FC = () => {
     setUnit(p.unit);
     setTaxRate(p.taxRate);
     setCategoryId(p.categoryId || 'general');
+    setItemCode(p.itemCode || '');
+    setSupplierName(p.supplierName || '');
     setFormOpen(true);
   };
 
   const buildPayload = (): Product => ({
     id: editProdId || `p-${Date.now()}`,
-    name, description, type, unitPrice, unit, taxRate, categoryId
+    name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName
   });
 
   // Autosave edits to an existing product (debounced); create stays explicit.
   const autoSave = useDebouncedAutosave(
     formOpen && !!editProdId,
     editProdId,
-    [name, description, type, unitPrice, unit, taxRate, categoryId],
+    [name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName],
     () => { if (name.trim()) updateProduct(buildPayload()); }
   );
 
@@ -99,8 +105,10 @@ export const Products: React.FC = () => {
                 { key: 'unit', label: 'Unit' },
                 { key: 'taxRate', label: 'Tax Rate' },
                 { key: 'categoryId', label: 'Category' },
+                { key: 'itemCode', label: 'Item Code' },
+                { key: 'supplierName', label: 'Supplier Name' },
               ]}
-              templateSample={[{ id: '', name: 'Sample Product', description: 'EN / عربي', type: 'product', unitPrice: 100, unit: 'pc', taxRate: 15, categoryId: 'general' }]}
+              templateSample={[{ id: '', name: 'Sample Product', description: 'EN / عربي', type: 'product', unitPrice: 100, unit: 'pc', taxRate: 15, categoryId: 'general', itemCode: 'SKU-123', supplierName: 'Supplier Inc' }]}
             />
             <button
               onClick={handleOpenCreate}
@@ -145,11 +153,10 @@ export const Products: React.FC = () => {
               <div className="text-left">
                 <div className="flex items-start justify-between mb-3 border-b border-[var(--color-divider)]/30 pb-3">
                   <div>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mb-1.5 ${
-                      p.type === 'product'
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mb-1.5 ${p.type === 'product'
                         ? 'bg-blue-500/10 border-blue-500/20 text-blue-600'
                         : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600'
-                    }`}>
+                      }`}>
                       {p.type.toUpperCase()}
                     </span>
                     <h3 className="text-sm font-bold text-[var(--color-text)] leading-tight">{p.name}</h3>
@@ -178,6 +185,13 @@ export const Products: React.FC = () => {
                   <p className="text-xs text-[var(--color-text-muted)] leading-relaxed mb-4 line-clamp-3">
                     {p.description}
                   </p>
+                )}
+
+                {(p.itemCode || p.supplierName) && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {p.itemCode && <span className="text-[10px] bg-[var(--color-surface-offset)] border border-[var(--color-border)] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] font-mono">{p.itemCode}</span>}
+                    {p.supplierName && <span className="text-[10px] bg-[var(--color-surface-offset)] border border-[var(--color-border)] px-1.5 py-0.5 rounded text-[var(--color-text-muted)] flex items-center gap-1"><Package className="w-3 h-3" /> {p.supplierName}</span>}
+                  </div>
                 )}
               </div>
 
@@ -243,6 +257,29 @@ export const Products: React.FC = () => {
                   className="w-full premium-input text-xs"
                   placeholder="Bilingual details (AR/EN) printed in lines..."
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block mb-1.5">Item Code (Optional)</label>
+                  <input
+                    type="text"
+                    value={itemCode}
+                    onChange={(e) => setItemCode(e.target.value)}
+                    className="w-full premium-input text-xs font-mono"
+                    placeholder="e.g. SKU-1234"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1.5">Supplier Name (Optional)</label>
+                  <input
+                    type="text"
+                    value={supplierName}
+                    onChange={(e) => setSupplierName(e.target.value)}
+                    className="w-full premium-input text-xs"
+                    placeholder="e.g. Hikvision KSA"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

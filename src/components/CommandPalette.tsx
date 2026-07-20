@@ -87,8 +87,7 @@ export const CommandPalette: React.FC = () => {
       featureOn('customers') && { id: 'nav-customers', label: 'Customers', group: 'Navigate', icon: Users, run: go('customers') },
       featureOn('suppliers') && { id: 'nav-suppliers', label: 'Suppliers', group: 'Navigate', icon: Building, run: go('suppliers') },
       featureOn('products') && { id: 'nav-products', label: 'Catalog', group: 'Navigate', icon: Package, run: go('products') },
-      { id: 'nav-companies', label: 'Companies', group: 'Navigate', icon: Building, keywords: 'organization tenant switch', run: go('companies') },
-      currentUser?.isSuperAdmin && { id: 'nav-platform', label: 'Platform Admin', group: 'Navigate', icon: Building, keywords: 'super admin tenants notifications', run: go('platform-admin') },
+
       { id: 'nav-settings', label: 'Settings', group: 'Navigate', icon: SettingsIcon, run: go('settings') },
     ].filter(Boolean) as CommandItem[];
 
@@ -310,9 +309,8 @@ export const CommandPalette: React.FC = () => {
                           data-idx={idx}
                           onMouseEnter={() => setActive(idx)}
                           onClick={() => item.run()}
-                          className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors cursor-pointer ${
-                            isActive ? 'bg-[var(--color-primary-highlight)]/40' : 'hover:bg-[var(--color-surface-offset)]'
-                          }`}
+                          className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors cursor-pointer ${isActive ? 'bg-[var(--color-primary-highlight)]/40' : 'hover:bg-[var(--color-surface-offset)]'
+                            }`}
                         >
                           <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'}`} />
                           <span className="flex-1 min-w-0">

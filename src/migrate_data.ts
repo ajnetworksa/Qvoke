@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-const legacyDbPath = 'd:/Devlopment/App/Dynamic Quotation/Dynamic-Quotation-main/quotes.db';
-const newDbPath = 'd:/Devlopment/App/Dynamic Quotation/New ERP/quotes.db';
+const legacyDbPath = 'D:/Devlopment/Dynamic-Quotation-main/quotes.db';
+const newDbPath = 'd:/Devlopment/Qvoke/quotes.db';
 
 console.log('🚀 INITIALIZING DATABASE MIGRATION ENGINE...');
 

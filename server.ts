@@ -17,12 +17,15 @@ import React from 'react';
 import { QuotePdfDocument } from './src/pdf/quote-document.tsx';
 import { exec } from 'child_process';
 import OpenAI from 'openai';
+import QRCode from 'qrcode';
+import { generateZatcaQRBase64 } from './src/utils/zatca.ts';
 
 const app = express();
 app.set('trust proxy', 1);
 
 // ── ENVIRONMENT CONFIGURATION ─────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3000;
+const ADMIN_PORT = Number(process.env.ADMIN_PORT) || 3001;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 12;
 const DB_PATH = process.env.DB_PATH || 'quotes.db';
 const SESSION_EXPIRY_DAYS = Number(process.env.SESSION_EXPIRY_DAYS) || 30;
@@ -119,7 +122,9 @@ db.exec(`
     unitPrice REAL NOT NULL,
     unit TEXT NOT NULL,
     taxRate REAL NOT NULL,
-    categoryId TEXT
+    categoryId TEXT,
+    itemCode TEXT,
+    supplierName TEXT
   );
 
   CREATE TABLE IF NOT EXISTS quotations (
@@ -273,6 +278,9 @@ addColumnIfNotExists('invoices', 'createdBy', 'TEXT');
 addColumnIfNotExists('invoices', 'createdByName', 'TEXT');
 addColumnIfNotExists('invoices', 'updatedBy', 'TEXT');
 addColumnIfNotExists('invoices', 'updatedByName', 'TEXT');
+
+addColumnIfNotExists('products', 'itemCode', 'TEXT');
+addColumnIfNotExists('products', 'supplierName', 'TEXT');
 
 // Seed default numbering sequences
 const seedSequences = () => {
@@ -932,6 +940,14 @@ app.use(helmet({ contentSecurityPolicy: false })); // Allow external assets and 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+// Restrict /api/admin endpoints to the dedicated admin port
+app.use('/api/admin', (req, res, next) => {
+  if (req.socket.localPort !== ADMIN_PORT) {
+    return res.status(403).json({ error: 'Access Denied: Admin Panel endpoints must be accessed via the dedicated admin port.' });
+  }
+  next();
+});
+
 // Rate limiter for login
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -1343,12 +1359,12 @@ app.get('/api/products', requireAuth, (req, res) => {
 });
 
 app.post('/api/products', requireAuth, (req, res) => {
-  const { id, name, description, type, unitPrice, unit, taxRate, categoryId } = req.body;
+  const { id, name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName } = req.body;
   try {
     const prodId = id || `p-${Date.now()}`;
     db.prepare(`
-      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId, itemCode, supplierName)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       prodId,
       name,
@@ -1358,7 +1374,9 @@ app.post('/api/products', requireAuth, (req, res) => {
       unit,
       taxRate,
       categoryId || '',
-      (req as any).companyId
+      (req as any).companyId,
+      itemCode || null,
+      supplierName || null
     );
     res.json({ id: prodId });
   } catch (error: any) {
@@ -1367,11 +1385,11 @@ app.post('/api/products', requireAuth, (req, res) => {
 });
 
 app.put('/api/products/:id', requireAuth, (req, res) => {
-  const { name, description, type, unitPrice, unit, taxRate, categoryId } = req.body;
+  const { name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName } = req.body;
   try {
     db.prepare(`
       UPDATE products
-      SET name = ?, description = ?, type = ?, unitPrice = ?, unit = ?, taxRate = ?, categoryId = ?
+      SET name = ?, description = ?, type = ?, unitPrice = ?, unit = ?, taxRate = ?, categoryId = ?, itemCode = ?, supplierName = ?
       WHERE id = ? AND companyId = ?
     `).run(
       name,
@@ -1381,6 +1399,8 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
       unit,
       taxRate,
       categoryId || '',
+      itemCode || null,
+      supplierName || null,
       req.params.id,
       (req as any).companyId
     );
@@ -3029,6 +3049,22 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
       };
     });
 
+  let zatcaQrCodeImage: string | undefined;
+  if (isInvoice && settings.vatNumber && docData.printMode === 'zatca') {
+    const base64TLV = generateZatcaQRBase64(
+      settings.companyName,
+      settings.vatNumber,
+      docData.createdAt || docData.date || new Date().toISOString(),
+      docData.total,
+      docData.taxTotal
+    );
+    try {
+      zatcaQrCodeImage = await QRCode.toDataURL(base64TLV, { errorCorrectionLevel: 'M', margin: 1 });
+    } catch (e) {
+      console.error('Failed to generate ZATCA QR code for PDF', e);
+    }
+  }
+
   const quote = {
     number: docData.number,
     createdAt: docData.date || docData.createdAt,
@@ -3060,6 +3096,7 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
     watermarkType: docData.watermarkType || 'none',
     hidePrices: !!docData.hidePrices,
     manualTotal: docData.manualTotal != null ? Number(docData.manualTotal) : undefined,
+    zatcaQrCodeImage,
   };
 
   const element = React.createElement(QuotePdfDocument, { quote, settings, type });
@@ -3230,6 +3267,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // ── SERVER STARTUP & VITE INTEGRATION ─────────────────────────────────────────
 async function startServer() {
   const httpServer = http.createServer(app);
+  const adminHttpServer = http.createServer(app);
 
   if (process.env.NODE_ENV !== 'production') {
     console.log('⚡ Starting Vite development middleware...');
@@ -3251,6 +3289,10 @@ async function startServer() {
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 ${process.env.VITE_APP_NAME || 'New ERP'} Backend operational on http://localhost:${PORT}`);
     console.log(`   Database: ${DB_PATH} | Env: ${process.env.NODE_ENV || 'development'}`);
+  });
+
+  adminHttpServer.listen(ADMIN_PORT, '0.0.0.0', () => {
+    console.log(`🛡️ Admin Panel Backend operational on http://localhost:${ADMIN_PORT}`);
   });
 }
 

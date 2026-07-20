@@ -32,7 +32,10 @@ export function useAutoSave<T>({
     onSaveSuccessRef.current = onSaveSuccess;
   });
 
-  // Whenever isDirty or isReady changes, trigger debounce save
+  // We stringify the payload to detect actual content changes so we can reset the debounce timer
+  const payloadHash = JSON.stringify(getPayload());
+
+  // Whenever isDirty, isReady, or the actual payload changes, trigger debounce save
   useEffect(() => {
     if (!isDirty) {
       // Clear only pending states; preserve a 'saved' confirmation.
@@ -63,7 +66,7 @@ export function useAutoSave<T>({
         clearTimeout(timerRef.current);
       }
     };
-  }, [isDirty, isReady, debounceDelay]);
+  }, [isDirty, isReady, debounceDelay, payloadHash]);
 
   const performSave = async (): Promise<boolean> => {
     if (timerRef.current) {
@@ -73,13 +76,22 @@ export function useAutoSave<T>({
 
     setStatus('saving');
     try {
-      const payload = getPayloadRef.current();
-      const success = await saveFnRef.current(payload);
+      const payloadToSave = getPayloadRef.current();
+      const payloadHashToSave = JSON.stringify(payloadToSave);
+
+      const success = await saveFnRef.current(payloadToSave);
       if (success) {
         setStatus('saved');
-        if (onSaveSuccessRef.current) {
-          onSaveSuccessRef.current(payload);
+        
+        // If the payload changed while we were saving, don't trigger success
+        // which clears the dirty flag. Let the useEffect trigger another save.
+        const currentPayload = getPayloadRef.current();
+        if (JSON.stringify(currentPayload) === payloadHashToSave) {
+          if (onSaveSuccessRef.current) {
+            onSaveSuccessRef.current(payloadToSave);
+          }
         }
+
         // Transition back to idle after a short delay
         setTimeout(() => {
           setStatus((current) => (current === 'saved' ? 'idle' : current));

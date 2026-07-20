@@ -55,12 +55,17 @@ const MyTasks = lazy(() => import('./pages/MyTasks').then((module) => ({ default
 const Companies = lazy(() => import('./pages/Companies').then((module) => ({ default: module.Companies })));
 const PlatformShell = lazy(() => import('./pages/PlatformShell').then((module) => ({ default: module.PlatformShell })));
 
+const isAdminPort = () => {
+  const adminPort = import.meta.env.VITE_ADMIN_PORT || '3001';
+  return window.location.port === adminPort;
+};
+
 const isAdminHostname = () => {
   const parts = window.location.hostname.toLowerCase().split('.');
   return parts.length >= 3 && parts[0] === 'admin';
 };
 
-const isPlatformUrl = () => isAdminHostname() || window.location.pathname.startsWith('/platform');
+const isPlatformUrl = () => isAdminHostname() || isAdminPort();
 
 const PageLoading = () => (
   <div className="page-loading" role="status" aria-label="Loading page">
@@ -186,6 +191,13 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (currentPage !== 'platform-admin' || platformLocation) return;
+    
+    const adminPort = import.meta.env.VITE_ADMIN_PORT || '3001';
+    if (window.location.port !== adminPort && !isAdminHostname()) {
+      window.location.assign(`${window.location.protocol}//${window.location.hostname}:${adminPort}/`);
+      return;
+    }
+
     window.history.pushState({ surface: 'platform' }, '', '/platform');
     setPlatformLocation(true);
   }, [currentPage, platformLocation]);
@@ -196,27 +208,30 @@ export const App: React.FC = () => {
       window.location.assign(`${window.location.protocol}//${rootHost}${window.location.port ? `:${window.location.port}` : ''}`);
       return;
     }
+    if (isAdminPort()) {
+      const mainPort = import.meta.env.VITE_PORT || '3000';
+      window.location.assign(`${window.location.protocol}//${window.location.hostname}:${mainPort}/`);
+      return;
+    }
     window.history.pushState({ surface: 'workspace' }, '', '/');
     setPlatformLocation(false);
     setRoute('dashboard');
   };
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL' },
-    { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL', feature: 'tasks' },
-    { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES', feature: 'quotations' },
-    { id: 'quotations', label: 'Quotations / سجل العروض', icon: FileSpreadsheet, category: 'SALES', feature: 'quotations' },
-    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES', feature: 'invoices' },
-    { id: 'invoices', label: 'Invoices / سجل الفواتير', icon: FileText, category: 'SALES', feature: 'invoices' },
-    { id: 'boq', label: 'BOQ / جدول الكميات', icon: ClipboardList, category: 'SALES', feature: 'boq' },
-    { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'SALES', feature: 'tracking' },
-    { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL', feature: 'reports' },
-    { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG', feature: 'customers' },
-    { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG', feature: 'suppliers' },
-    { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG', feature: 'products' },
-    { id: 'platform-admin', label: 'Platform Admin / لوحة المنصة', icon: ShieldCheck, category: 'SYSTEM', superAdminOnly: true },
-    { id: 'companies', label: 'Companies / الشركات', icon: Building, category: 'SYSTEM' },
-    { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM' }
+    { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL / عام' },
+    { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL / عام', feature: 'tasks' },
+    { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'quotations' },
+    { id: 'quotations', label: 'Quotations / سجل العروض', icon: FileSpreadsheet, category: 'SALES / المبيعات', feature: 'quotations' },
+    { id: 'boq', label: 'BOQ & BOM / الكميات والمواد', icon: ClipboardList, category: 'SALES / المبيعات', feature: 'boq' },
+    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'OPERATIONS / العمليات', feature: 'invoices' },
+    { id: 'invoices', label: 'Invoices / سجل الفواتير', icon: FileText, category: 'OPERATIONS / العمليات', feature: 'invoices' },
+    { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'OPERATIONS / العمليات', feature: 'tracking' },
+    { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL / المالية', feature: 'reports' },
+    { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG / الكتالوج', feature: 'customers' },
+    { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG / الكتالوج', feature: 'suppliers' },
+    { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG / الكتالوج', feature: 'products' },
+    { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM / النظام' }
   ];
 
   // A feature is on unless explicitly disabled. BOQ nav also covers BOM.
@@ -332,7 +347,7 @@ export const App: React.FC = () => {
   };
 
   // Grouped nav items
-  const categories = ['GENERAL', 'SALES', 'FINANCIAL', 'CATALOG', 'SYSTEM'];
+  const categories = ['GENERAL / عام', 'SALES / المبيعات', 'OPERATIONS / العمليات', 'FINANCIAL / المالية', 'CATALOG / الكتالوج', 'SYSTEM / النظام'];
 
   // 1. Initial Authorization / Session Check Splash Loader
   if (!authChecked) {
