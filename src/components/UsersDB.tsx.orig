@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useERPStore } from '../store';
-import { 
-  Plus, Trash2, Edit2, Save, X, Shield, User, Bot, FileSearch, 
-  Settings as SettingsIcon, Database, Users, Eye, UserCheck, 
-  Layers, ChevronDown, FileText, Bookmark, Send, Printer, History, KeyRound 
+import {
+  Plus, Trash2, Edit2, Save, X, Shield, User, Bot, FileSearch,
+  Settings as SettingsIcon, Database, Users, Eye, UserCheck,
+  Layers, ChevronDown, FileText, Bookmark, Send, Printer, History, KeyRound
 } from 'lucide-react';
 
 interface Permissions {
@@ -79,7 +79,6 @@ const ALL_PERMISSIONS: { key: keyof Permissions; label: string; icon: React.Reac
   { key: 'canEditSharedQuote', label: 'Edit Shared Quotes', icon: <Eye size={14} />, description: 'Allow editing and saving quotes that were shared with this user (not just viewing).' },
   { key: 'canUseWatermark', label: 'Document Watermark', icon: <FileText size={14} />, description: 'Access watermark controls to add status text overlay on document PDFs.' },
   { key: 'canUsePricingControls', label: 'Pricing Controls', icon: <Bot size={14} />, description: 'Access pricing controls like hiding price columns and manual total overrides.' },
-  { key: 'canUsePOS', label: 'Use Point of Sale', icon: <Bot size={14} />, description: 'Allows access to the POS retail system checkout.' },
   { key: 'canUseMarkup', label: 'Pricing Markup', icon: <Bookmark size={14} />, description: 'Access and update the quotation default markup percentage and markup sidebar calculations.' },
 ];
 
@@ -113,8 +112,8 @@ function PermissionToggles({ perms, role, onChange }: { perms: Permissions; role
             <label
               key={p.key}
               className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer select-none transition-all ${
-                checked 
-                  ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/20' 
+                checked
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/20'
                   : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]'
               }`}
             >
@@ -292,7 +291,7 @@ function UsersTab({ groups }: { groups: PermissionGroup[] }) {
       {editForm.role !== 'admin' && (
         <PermissionToggles perms={(editForm.permissions || {}) as Permissions} role={editForm.role || 'salesperson'} onChange={togglePerm} />
       )}
-      
+
       <div className="flex gap-2 justify-end border-t border-[var(--color-divider)]/40 pt-3">
         <button onClick={onSave} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors"><Save size={14} /> Commit Changes</button>
         <button onClick={onCancel} className="flex items-center gap-1.5 px-4 py-2 border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] rounded-lg text-xs font-bold cursor-pointer transition-colors"><X size={14} /> Cancel</button>
@@ -353,10 +352,10 @@ function UsersTab({ groups }: { groups: PermissionGroup[] }) {
                   </td>
                   <td className="p-4">
                     <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                      user.role === 'admin' 
-                        ? 'bg-purple-500/10 border border-purple-500/20 text-purple-400' 
-                        : user.role === 'accountant' 
-                          ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400' 
+                      user.role === 'admin'
+                        ? 'bg-purple-500/10 border border-purple-500/20 text-purple-400'
+                        : user.role === 'accountant'
+                          ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400'
                           : 'bg-slate-500/10 border border-slate-500/20 text-slate-400'
                     }`}>
                       {user.role.replace('_', ' ')}
@@ -574,8 +573,8 @@ export default function UsersDB() {
         <button
           onClick={() => setTab('users')}
           className={`flex items-center gap-2 px-6 py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
-            tab === 'users' 
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-highlight)]/10' 
+            tab === 'users'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-highlight)]/10'
               : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
           }`}
         >
@@ -584,8 +583,8 @@ export default function UsersDB() {
         <button
           onClick={() => setTab('groups')}
           className={`flex items-center gap-2 px-6 py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 cursor-pointer ${
-            tab === 'groups' 
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-highlight)]/10' 
+            tab === 'groups'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-highlight)]/10'
               : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
           }`}
         >
