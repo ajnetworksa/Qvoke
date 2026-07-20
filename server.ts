@@ -542,6 +542,7 @@ const FEATURE_CATALOG = [
   { key: 'kanban', label: 'Kanban Pipeline', core: false },
   { key: 'aiAssistant', label: 'AI Assistant', core: false },
   { key: 'tasks', label: 'Personal Task Tracker', core: false },
+  { key: 'pos', label: 'Point of Sale (POS)', core: false },
 ] as const;
 
 type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
@@ -554,7 +555,7 @@ const PLANS: Record<string, { label: string; features: FeatureKey[] }> = {
   },
   professional: {
     label: 'Professional',
-    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks'],
+    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks', 'pos'],
   },
   enterprise: {
     label: 'Enterprise',
@@ -803,7 +804,8 @@ const seedDatabase = () => {
       canUseRFQ: true,
       canUseAI: true,
       canViewHistory: true,
-      canViewCreatedBy: true
+      canViewCreatedBy: true,
+      canUsePOS: true
     }), 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80');
 
     insertUser.run('u-2', 'sarah', 'Sarah Rahman (Accountant)', 'sarah.r@ajnetwork.sa', hashedDefault, 'accountant', JSON.stringify({

@@ -148,8 +148,8 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
-  avatar?: string;
   permissions?: Record<string, boolean>;
+  avatar?: string;
   isSuperAdmin?: boolean;
 }
 

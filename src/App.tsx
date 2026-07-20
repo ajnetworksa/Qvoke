@@ -29,6 +29,7 @@ import {
   Check,
   Plus,
   ShieldCheck,
+  Receipt,
   AppWindow,
   Bot
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { DesktopWorkspace, type DesktopApp } from './components/DesktopWorkspace';
 import { AIAssistant } from './components/AIAssistant';
 
+const POS = lazy(() => import("./pages/POS").then((module) => ({ default: module.default })));
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const Quotations = lazy(() => import('./pages/Quotations').then((module) => ({ default: module.Quotations })));
 const QuotationDetail = lazy(() => import('./pages/QuotationDetail').then((module) => ({ default: module.QuotationDetail })));
@@ -269,7 +271,7 @@ export const App: React.FC = () => {
     'invoice-detail': 'invoices',
     boq: 'boq',
     tracking: 'tracking',
-    reports: 'reports',
+    reports: 'reports', pos: 'pos',
     customers: 'customers',
     suppliers: 'suppliers',
     products: 'products',
@@ -327,6 +329,8 @@ export const App: React.FC = () => {
         return <Dashboard />; // super-admins are intercepted into PlatformShell above
       case 'settings':
         return <SettingsPage />;
+      case 'pos':
+        return <POS />;
       case 'reports':
         return <Reports />;
       default:

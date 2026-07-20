@@ -38,7 +38,7 @@ export const Settings: React.FC = () => {
   } = useERPStore();
   const activeCompanyMembership = companies.find((c) => c.id === activeCompanyId);
   const canEditCompanyTheme = currentUser?.isSuperAdmin || activeCompanyMembership?.role === 'owner' || activeCompanyMembership?.role === 'admin';
-  const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs'>('company');
+  const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs' | 'integrations'>('company');
 
   // Local Form states (initialized from store)
   const [companyName, setCompanyName] = useState(company.name);
@@ -464,6 +464,18 @@ export const Settings: React.FC = () => {
             <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
             Logs & Updates / السجلات والتحديث
           </button>
+
+          <button
+            onClick={() => setActiveSubTab('integrations')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              activeSubTab === 'integrations'
+                ? 'bg-[var(--color-primary-highlight)]/30 text-[var(--color-primary)]'
+                : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
+            }`}
+          >
+            <Blocks className="w-4 h-4 text-[var(--color-text-muted)]" />
+            Integrations / التكامل
+          </button>
         </div>
 
         {/* Right Content Sheet */}
@@ -643,6 +655,65 @@ export const Settings: React.FC = () => {
                 </button>
               </div>
             </form>
+          )}
+
+          {activeSubTab === 'integrations' && (
+            <div className="premium-card p-6 flex flex-col gap-6">
+              <div className="border-b border-[var(--color-divider)]/30 pb-4">
+                <h3 className="text-sm font-bold text-[var(--color-text)]">Third-Party Integrations</h3>
+                <p className="text-xs text-[var(--color-text-muted)]">Configure external systems like Payments, POS, and Accounting.</p>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <h4 className="text-sm font-bold text-[var(--color-text)] mb-3">Accounting Software</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 border border-[var(--color-border)] rounded-xl flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-sm">Odoo ERP</div>
+                        <div className="text-xs text-[var(--color-text-muted)] mt-1">Sync invoices, customers, and ledger</div>
+                      </div>
+                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                        Connect
+                      </button>
+                    </div>
+                    <div className="p-4 border border-[var(--color-border)] rounded-xl flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-sm">Tally</div>
+                        <div className="text-xs text-[var(--color-text-muted)] mt-1">Two-way accounting sync</div>
+                      </div>
+                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                        Connect
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-[var(--color-divider)]/30">
+                  <h4 className="text-sm font-bold text-[var(--color-text)] mb-3">Payment Gateways</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 border border-[var(--color-border)] rounded-xl flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-sm">Moyasar (Mada)</div>
+                        <div className="text-xs text-[var(--color-text-muted)] mt-1">Accept local Saudi payments</div>
+                      </div>
+                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                        Configure
+                      </button>
+                    </div>
+                    <div className="p-4 border border-[var(--color-border)] rounded-xl flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-sm">Tabby / Tamara (BNPL)</div>
+                        <div className="text-xs text-[var(--color-text-muted)] mt-1">Buy Now, Pay Later options</div>
+                      </div>
+                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                        Configure
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           {activeSubTab === 'document' && (
