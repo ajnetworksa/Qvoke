@@ -79,6 +79,7 @@ const ALL_PERMISSIONS: { key: keyof Permissions; label: string; icon: React.Reac
   { key: 'canEditSharedQuote', label: 'Edit Shared Quotes', icon: <Eye size={14} />, description: 'Allow editing and saving quotes that were shared with this user (not just viewing).' },
   { key: 'canUseWatermark', label: 'Document Watermark', icon: <FileText size={14} />, description: 'Access watermark controls to add status text overlay on document PDFs.' },
   { key: 'canUsePricingControls', label: 'Pricing Controls', icon: <Bot size={14} />, description: 'Access pricing controls like hiding price columns and manual total overrides.' },
+  { key: 'canDatabaseMaintenance', label: 'Database Maintenance', icon: <Bot size={14} />, description: 'Allows backing up, optimizing, and importing data.' },
   { key: 'canUsePOS', label: 'Use Point of Sale', icon: <Bot size={14} />, description: 'Allows access to the POS retail system checkout.' },
   { key: 'canUseMarkup', label: 'Pricing Markup', icon: <Bookmark size={14} />, description: 'Access and update the quotation default markup percentage and markup sidebar calculations.' },
 ];
