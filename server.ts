@@ -24,8 +24,8 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ── ENVIRONMENT CONFIGURATION ─────────────────────────────────────────────────
-const PORT = Number(process.env.PORT) || 3000;
-const ADMIN_PORT = Number(process.env.ADMIN_PORT) || 3001;
+const PORT = Number(process.env.PORT || process.env.VITE_PORT) || 3000;
+const ADMIN_PORT = Number(process.env.ADMIN_PORT || process.env.VITE_ADMIN_PORT) || 3001;
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS) || 12;
 const DB_PATH = process.env.DB_PATH || 'quotes.db';
 const SESSION_EXPIRY_DAYS = Number(process.env.SESSION_EXPIRY_DAYS) || 30;
@@ -267,6 +267,102 @@ db.exec(`
     completedAt TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_personal_tasks_user ON personal_tasks(userId, status);
+
+  -- Expenses & Vendor Bills tracking
+  CREATE TABLE IF NOT EXISTS expenses (
+    id TEXT PRIMARY KEY,
+    number TEXT UNIQUE NOT NULL,
+    companyId TEXT NOT NULL,
+    category TEXT NOT NULL,
+    vendor TEXT,
+    description TEXT NOT NULL,
+    amount REAL NOT NULL,
+    taxAmount REAL NOT NULL DEFAULT 0,
+    taxRate REAL NOT NULL DEFAULT 15,
+    total REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'SAR',
+    date TEXT NOT NULL,
+    paymentMethod TEXT NOT NULL DEFAULT 'bank_transfer',
+    reference TEXT,
+    receiptUrl TEXT,
+    status TEXT NOT NULL DEFAULT 'paid',
+    taxDeductible INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    createdBy TEXT,
+    createdByName TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_expenses_company ON expenses(companyId, date);
+
+  -- Recurring Invoices & Subscription schedules
+  CREATE TABLE IF NOT EXISTS recurring_invoices (
+    id TEXT PRIMARY KEY,
+    number TEXT UNIQUE NOT NULL,
+    companyId TEXT NOT NULL,
+    customerId TEXT NOT NULL,
+    profileName TEXT NOT NULL,
+    frequency TEXT NOT NULL DEFAULT 'monthly',
+    startDate TEXT NOT NULL,
+    nextRunDate TEXT NOT NULL,
+    endDate TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    autoSendEmail INTEGER NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'SAR',
+    lineItems TEXT NOT NULL,
+    notes TEXT,
+    terms TEXT,
+    total REAL NOT NULL,
+    lastGeneratedInvoiceId TEXT,
+    lastGeneratedAt TEXT,
+    generationCount INTEGER NOT NULL DEFAULT 0,
+    createdBy TEXT,
+    createdByName TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY(customerId) REFERENCES customers(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_recurring_company ON recurring_invoices(companyId, status);
+
+  -- Inventory transactions & Stock movement ledger
+  CREATE TABLE IF NOT EXISTS inventory_transactions (
+    id TEXT PRIMARY KEY,
+    companyId TEXT NOT NULL,
+    productId TEXT NOT NULL,
+    type TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    previousStock REAL NOT NULL DEFAULT 0,
+    newStock REAL NOT NULL DEFAULT 0,
+    unitCost REAL,
+    referenceDocType TEXT,
+    referenceDocId TEXT,
+    notes TEXT,
+    createdBy TEXT,
+    createdByName TEXT,
+    createdAt TEXT NOT NULL,
+    FOREIGN KEY(productId) REFERENCES products(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_prod ON inventory_transactions(companyId, productId);
+
+  -- Public Shareable Client Portal links with electronic confirmation
+  CREATE TABLE IF NOT EXISTS public_shares (
+    id TEXT PRIMARY KEY,
+    token TEXT UNIQUE NOT NULL,
+    companyId TEXT NOT NULL,
+    docType TEXT NOT NULL,
+    docId TEXT NOT NULL,
+    expiresAt TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    viewsCount INTEGER NOT NULL DEFAULT 0,
+    lastViewedAt TEXT,
+    acceptedAt TEXT,
+    acceptedByName TEXT,
+    acceptedSignature TEXT,
+    feedbackNote TEXT,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_public_shares_token ON public_shares(token);
+  CREATE INDEX IF NOT EXISTS idx_public_shares_doc ON public_shares(companyId, docType, docId);
 `);
 
 // Attribution columns on documents (who created / last updated)
@@ -281,6 +377,9 @@ addColumnIfNotExists('invoices', 'updatedByName', 'TEXT');
 
 addColumnIfNotExists('products', 'itemCode', 'TEXT');
 addColumnIfNotExists('products', 'supplierName', 'TEXT');
+addColumnIfNotExists('products', 'stockQuantity', 'REAL DEFAULT 0');
+addColumnIfNotExists('products', 'minStockLevel', 'REAL DEFAULT 5');
+addColumnIfNotExists('products', 'trackStock', 'INTEGER DEFAULT 1');
 
 // Seed default numbering sequences
 const seedSequences = () => {
@@ -289,6 +388,9 @@ const seedSequences = () => {
     { docType: 'invoice', prefix: 'INV' },
     { docType: 'boq', prefix: 'BOQ' },
     { docType: 'bom', prefix: 'BOM' },
+    { docType: 'expense', prefix: 'EXP' },
+    { docType: 'recurring', prefix: 'REC' },
+    { docType: 'po', prefix: 'PO' },
   ];
   const insertSeq = db.prepare(`
     INSERT INTO sequences (docType, prefix, lastNumber, padding, resetPeriod, lastYear)
@@ -372,6 +474,7 @@ function getNextDocumentNumber(docType: string): string {
   // Map docType to the actual table so we can detect clashing numbers
   const tableMap: Record<string, string> = {
     quotation: 'quotations', invoice: 'invoices', boq: 'boq', bom: 'boq',
+    expense: 'expenses', recurring: 'recurring_invoices'
   };
   const table = tableMap[docType];
 
@@ -543,6 +646,10 @@ const FEATURE_CATALOG = [
   { key: 'aiAssistant', label: 'AI Assistant', core: false },
   { key: 'tasks', label: 'Personal Task Tracker', core: false },
   { key: 'pos', label: 'Point of Sale (POS)', core: false },
+  { key: 'expenses', label: 'Expenses & Vendor Bills', core: false },
+  { key: 'recurring', label: 'Recurring Invoices & Subscriptions', core: false },
+  { key: 'inventory', label: 'Inventory & Stock Control', core: false },
+  { key: 'portal', label: 'Client Approval Portal', core: false },
 ] as const;
 
 type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
@@ -551,11 +658,11 @@ type FeatureKey = typeof FEATURE_CATALOG[number]['key'];
 const PLANS: Record<string, { label: string; features: FeatureKey[] }> = {
   starter: {
     label: 'Starter',
-    features: ['quotations', 'invoices', 'customers', 'products', 'notifications', 'tasks'],
+    features: ['quotations', 'invoices', 'customers', 'products', 'notifications', 'tasks', 'expenses'],
   },
   professional: {
     label: 'Professional',
-    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks', 'pos'],
+    features: ['quotations', 'invoices', 'boq', 'bom', 'reports', 'customers', 'suppliers', 'products', 'tracking', 'notifications', 'usage', 'tasks', 'pos', 'expenses', 'inventory', 'portal'],
   },
   enterprise: {
     label: 'Enterprise',
@@ -643,6 +750,14 @@ addColumnIfNotExists('quotations', 'followUpNote', 'TEXT');
 addColumnIfNotExists('invoices', 'followUpDate', 'TEXT');
 addColumnIfNotExists('invoices', 'followUpNote', 'TEXT');
 
+// Recycle Bin & Soft-Delete tracking
+addColumnIfNotExists('quotations', 'deleted_at', 'TEXT');
+addColumnIfNotExists('quotations', 'deleted_by', 'TEXT');
+addColumnIfNotExists('quotations', 'retain_forever', 'INTEGER DEFAULT 0');
+addColumnIfNotExists('invoices', 'deleted_at', 'TEXT');
+addColumnIfNotExists('invoices', 'deleted_by', 'TEXT');
+addColumnIfNotExists('invoices', 'retain_forever', 'INTEGER DEFAULT 0');
+
 // ── MULTI-COMPANY / MULTI-TENANCY ─────────────────────────────────────────────
 // Shared tables scoped by a companyId column. A single default company is seeded
 // from existing settings and all legacy rows are backfilled into it, so existing
@@ -650,7 +765,8 @@ addColumnIfNotExists('invoices', 'followUpNote', 'TEXT');
 const DEFAULT_COMPANY_ID = 'comp-default';
 const SCOPED_TABLES = [
   'customers', 'products', 'suppliers', 'quotations', 'invoices', 'boq',
-  'document_activity', 'personal_tasks'
+  'document_activity', 'personal_tasks', 'expenses', 'recurring_invoices',
+  'inventory_transactions', 'public_shares'
 ] as const;
 
 db.exec(`
@@ -1362,12 +1478,12 @@ app.get('/api/products', requireAuth, (req, res) => {
 });
 
 app.post('/api/products', requireAuth, (req, res) => {
-  const { id, name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName } = req.body;
+  const { id, name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName, stockQuantity, minStockLevel, trackStock } = req.body;
   try {
     const prodId = id || `p-${Date.now()}`;
     db.prepare(`
-      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId, itemCode, supplierName)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (id, name, description, type, unitPrice, unit, taxRate, categoryId, companyId, itemCode, supplierName, stockQuantity, minStockLevel, trackStock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       prodId,
       name,
@@ -1379,7 +1495,10 @@ app.post('/api/products', requireAuth, (req, res) => {
       categoryId || '',
       (req as any).companyId,
       itemCode || null,
-      supplierName || null
+      supplierName || null,
+      Number(stockQuantity) || 0,
+      Number(minStockLevel) || 5,
+      trackStock !== undefined ? (trackStock ? 1 : 0) : 1
     );
     res.json({ id: prodId });
   } catch (error: any) {
@@ -1388,11 +1507,12 @@ app.post('/api/products', requireAuth, (req, res) => {
 });
 
 app.put('/api/products/:id', requireAuth, (req, res) => {
-  const { name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName } = req.body;
+  const { name, description, type, unitPrice, unit, taxRate, categoryId, itemCode, supplierName, stockQuantity, minStockLevel, trackStock } = req.body;
   try {
     db.prepare(`
       UPDATE products
-      SET name = ?, description = ?, type = ?, unitPrice = ?, unit = ?, taxRate = ?, categoryId = ?, itemCode = ?, supplierName = ?
+      SET name = ?, description = ?, type = ?, unitPrice = ?, unit = ?, taxRate = ?, categoryId = ?, itemCode = ?, supplierName = ?,
+          stockQuantity = ?, minStockLevel = ?, trackStock = ?
       WHERE id = ? AND companyId = ?
     `).run(
       name,
@@ -1404,6 +1524,9 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
       categoryId || '',
       itemCode || null,
       supplierName || null,
+      Number(stockQuantity) || 0,
+      Number(minStockLevel) || 5,
+      trackStock !== undefined ? (trackStock ? 1 : 0) : 1,
       req.params.id,
       (req as any).companyId
     );
@@ -1447,7 +1570,7 @@ app.put('/api/sequences/:docType', requireAuth, requirePermission('canManageSett
 });
 
 app.get('/api/quotes', requireAuth, (req, res) => {
-  const quotes = db.prepare('SELECT * FROM quotations WHERE companyId = ? ORDER BY date DESC').all((req as any).companyId) as any[];
+  const quotes = db.prepare('SELECT * FROM quotations WHERE companyId = ? AND (deleted_at IS NULL OR deleted_at = \'\') ORDER BY date DESC').all((req as any).companyId) as any[];
   const parsed = quotes.map(q => ({
     ...q,
     lineItems: JSON.parse(q.lineItems || '[]'),
@@ -1582,14 +1705,15 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
 app.delete('/api/quotes/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   const user = (req as any).user;
   const before = db.prepare('SELECT number FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
-  db.prepare('DELETE FROM quotations WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
+  const now = new Date().toISOString();
+  db.prepare('UPDATE quotations SET deleted_at = ?, deleted_by = ? WHERE id = ? AND companyId = ?').run(now, user.name || user.username, req.params.id, (req as any).companyId);
   logDocumentActivity('quotation', req.params.id, before?.number || null, 'deleted', user, (req as any).companyId);
   res.json({ success: true });
 });
 
 // ── INVOICES CRUD ─────────────────────────────────────────────────────────────
 app.get('/api/invoices', requireAuth, (req, res) => {
-  const invoices = db.prepare('SELECT * FROM invoices WHERE companyId = ? ORDER BY date DESC').all((req as any).companyId) as any[];
+  const invoices = db.prepare('SELECT * FROM invoices WHERE companyId = ? AND (deleted_at IS NULL OR deleted_at = \'\') ORDER BY date DESC').all((req as any).companyId) as any[];
   const parsed = invoices.map(i => ({
     ...i,
     lineItems: JSON.parse(i.lineItems || '[]'),
@@ -1656,6 +1780,41 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       (req as any).companyId
     );
     logDocumentActivity('invoice', invId, number, 'created', user, (req as any).companyId);
+
+    // Auto-adjust inventory for products with stock tracking
+    if (status === 'posted' || (payments && payments.length > 0)) {
+      try {
+        for (const item of (lineItems || [])) {
+          if (item.productId && (item.type === 'item' || !item.type)) {
+            const prod = db.prepare('SELECT id, stockQuantity, trackStock FROM products WHERE id = ? AND companyId = ?').get(item.productId, (req as any).companyId) as any;
+            if (prod && (prod.trackStock === 1 || prod.trackStock === undefined)) {
+              const qty = Number(item.quantity) || 0;
+              const prev = Number(prod.stockQuantity) || 0;
+              const nextStock = Math.max(0, prev - qty);
+              db.prepare('UPDATE products SET stockQuantity = ? WHERE id = ? AND companyId = ?').run(nextStock, item.productId, (req as any).companyId);
+              db.prepare(`
+                INSERT INTO inventory_transactions (id, companyId, productId, type, quantity, previousStock, newStock, referenceDocType, referenceDocId, notes, createdBy, createdByName, createdAt)
+                VALUES (?, ?, ?, 'out', ?, ?, ?, 'invoice', ?, 'Deducted on invoice posting', ?, ?, ?)
+              `).run(
+                `invlog-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                (req as any).companyId,
+                item.productId,
+                qty,
+                prev,
+                nextStock,
+                invId,
+                user?.id || null,
+                user?.name || null,
+                new Date().toISOString()
+              );
+            }
+          }
+        }
+      } catch (stockErr) {
+        console.error('Inventory auto-deduction error:', stockErr);
+      }
+    }
+
     res.json({ id: invId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1733,9 +1892,103 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
 app.delete('/api/invoices/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
   const user = (req as any).user;
   const before = db.prepare('SELECT number FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
-  db.prepare('DELETE FROM invoices WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
+  const now = new Date().toISOString();
+  db.prepare('UPDATE invoices SET deleted_at = ?, deleted_by = ? WHERE id = ? AND companyId = ?').run(now, user.name || user.username, req.params.id, (req as any).companyId);
   logDocumentActivity('invoice', req.params.id, before?.number || null, 'deleted', user, (req as any).companyId);
   res.json({ success: true });
+});
+
+// ── RECYCLE BIN ENDPOINTS ──────────────────────────────────────────────────
+app.get('/api/recycle-bin', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const deletedQuotes = db.prepare(`
+    SELECT q.id as quote_id, q.number, q.subject, c.companyName as customer_name, q.createdByName as author_name, q.deleted_at, q.deleted_by, COALESCE(q.retain_forever, 0) as retain_forever, 'quotation' as type
+    FROM quotations q
+    LEFT JOIN customers c ON q.customerId = c.id
+    WHERE q.companyId = ? AND q.deleted_at IS NOT NULL AND q.deleted_at != ''
+  `).all(companyId) as any[];
+
+  const deletedInvoices = db.prepare(`
+    SELECT i.id as quote_id, i.number, i.subject, c.companyName as customer_name, i.createdByName as author_name, i.deleted_at, i.deleted_by, COALESCE(i.retain_forever, 0) as retain_forever, 'invoice' as type
+    FROM invoices i
+    LEFT JOIN customers c ON i.customerId = c.id
+    WHERE i.companyId = ? AND i.deleted_at IS NOT NULL AND i.deleted_at != ''
+  `).all(companyId) as any[];
+
+  const allItems = [...deletedQuotes, ...deletedInvoices].sort((a, b) => new Date(b.deleted_at).getTime() - new Date(a.deleted_at).getTime());
+  res.json(allItems);
+});
+
+app.post('/api/recycle-bin/:id/restore', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const quote = db.prepare('SELECT number FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
+  if (quote) {
+    db.prepare('UPDATE quotations SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+    logDocumentActivity('quotation', req.params.id, quote.number, 'status_changed', user, companyId);
+    return res.json({ success: true, type: 'quotation' });
+  }
+
+  const invoice = db.prepare('SELECT number FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
+  if (invoice) {
+    db.prepare('UPDATE invoices SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+    logDocumentActivity('invoice', req.params.id, invoice.number, 'status_changed', user, companyId);
+    return res.json({ success: true, type: 'invoice' });
+  }
+
+  res.status(404).json({ error: 'Item not found in recycle bin' });
+});
+
+app.delete('/api/recycle-bin/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const quote = db.prepare('SELECT number FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
+  if (quote) {
+    db.prepare('DELETE FROM quotations WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+    logDocumentActivity('quotation', req.params.id, quote.number, 'deleted', user, companyId);
+    return res.json({ success: true });
+  }
+
+  const invoice = db.prepare('SELECT number FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
+  if (invoice) {
+    db.prepare('DELETE FROM invoices WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+    logDocumentActivity('invoice', req.params.id, invoice.number, 'deleted', user, companyId);
+    return res.json({ success: true });
+  }
+
+  res.status(404).json({ error: 'Item not found in recycle bin' });
+});
+
+app.patch('/api/recycle-bin/:id/retain', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const retain = req.body.retain ? 1 : 0;
+  const res1 = db.prepare('UPDATE quotations SET retain_forever = ? WHERE id = ? AND companyId = ?').run(retain, req.params.id, companyId);
+  const res2 = db.prepare('UPDATE invoices SET retain_forever = ? WHERE id = ? AND companyId = ?').run(retain, req.params.id, companyId);
+  if (res1.changes > 0 || res2.changes > 0) {
+    res.json({ success: true, retain });
+  } else {
+    res.status(404).json({ error: 'Item not found' });
+  }
+});
+
+app.post('/api/recycle-bin/prune', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const companyId = (req as any).companyId;
+  const days = Number(req.body.days) || 30;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  
+  const qResult = db.prepare(`
+    DELETE FROM quotations
+    WHERE companyId = ? AND (retain_forever IS NULL OR retain_forever = 0)
+      AND deleted_at IS NOT NULL AND deleted_at != '' AND deleted_at < ?
+  `).run(companyId, cutoff);
+
+  const iResult = db.prepare(`
+    DELETE FROM invoices
+    WHERE companyId = ? AND (retain_forever IS NULL OR retain_forever = 0)
+      AND deleted_at IS NOT NULL AND deleted_at != '' AND deleted_at < ?
+  `).run(companyId, cutoff);
+
+  res.json({ success: true, purgedQuotes: qResult.changes, purgedInvoices: iResult.changes });
 });
 
 // ── SYSTEM CONFIGURATION & SETTINGS API ───────────────────────────────────────
@@ -1866,24 +2119,683 @@ app.post('/api/logs/clear', requireAuth, requirePermission('canManageSettings'),
   }
 });
 
-// ── REMOTE APP UPDATE API ──────────────────────────────────────────────────────
-app.post('/api/system/update', requireAuth, requirePermission('canManageSettings'), (req, res) => {
-  // Using \`exec\` to run git pull dynamically from a web route is inherently insecure.
-  // If remote updates are needed, it should be managed by an orchestrator or CI/CD runner.
-  res.status(501).json({ error: 'In-app update via git pull is disabled for security reasons.' });
+// Ingest client-side UI & runtime errors with full action context
+app.post('/api/logs/client-error', (req, res) => {
+  try {
+    const { action, error, stack, componentStack, route, metadata } = req.body || {};
+    const token = req.headers.authorization?.split(' ')[1];
+    let user: any = null;
+    if (token) {
+      const session = db.prepare('SELECT user_id FROM sessions WHERE token = ?').get(token) as any;
+      if (session) {
+        user = db.prepare('SELECT id, username, name FROM users WHERE id = ?').get(session.user_id);
+      }
+    }
+
+    const message = `[Client Error] Action: "${action || 'UI Interaction'}" | Error: ${error || 'Unknown Error'}`;
+    const details = {
+      actionAttempted: action || 'Unknown action',
+      route: route || 'unknown',
+      errorMessage: error,
+      stackTrace: stack,
+      componentStack: componentStack,
+      metadata: metadata || {},
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      timestamp: new Date().toISOString()
+    };
+
+    logSystemEvent('error', message, details, user?.id, user?.username);
+    res.json({ success: true, logged: true });
+  } catch (err: any) {
+    console.error('Failed to log client error:', err);
+    res.status(500).json({ error: 'Failed to record error log' });
+  }
+});
+
+// ── EXPENSES & VENDOR BILLS API ───────────────────────────────────────────────
+app.get('/api/expenses', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const { category, status, search, from, to } = req.query as Record<string, string>;
+  let sql = 'SELECT * FROM expenses WHERE companyId = ?';
+  const params: any[] = [companyId];
+
+  if (category && category !== 'all') {
+    sql += ' AND category = ?';
+    params.push(category);
+  }
+  if (status && status !== 'all') {
+    sql += ' AND status = ?';
+    params.push(status);
+  }
+  if (from) {
+    sql += ' AND date >= ?';
+    params.push(from);
+  }
+  if (to) {
+    sql += ' AND date <= ?';
+    params.push(to);
+  }
+  if (search) {
+    sql += ' AND (description LIKE ? OR vendor LIKE ? OR number LIKE ? OR reference LIKE ?)';
+    const term = `%${search}%`;
+    params.push(term, term, term, term);
+  }
+
+  sql += ' ORDER BY date DESC, createdAt DESC';
+  const rows = db.prepare(sql).all(...params);
+  res.json(rows);
+});
+
+app.get('/api/expenses/summary', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const totalRow = db.prepare(`
+    SELECT 
+      COALESCE(SUM(total), 0) as totalAmount,
+      COALESCE(SUM(taxAmount), 0) as totalTax,
+      COALESCE(SUM(amount), 0) as totalPreTax,
+      COALESCE(SUM(CASE WHEN status = 'paid' THEN total ELSE 0 END), 0) as paidAmount,
+      COALESCE(SUM(CASE WHEN status = 'pending' THEN total ELSE 0 END), 0) as pendingAmount,
+      COALESCE(SUM(CASE WHEN taxDeductible = 1 THEN taxAmount ELSE 0 END), 0) as deductibleTax
+    FROM expenses WHERE companyId = ?
+  `).get(companyId) as any;
+
+  const categoryBreakdown = db.prepare(`
+    SELECT category, COALESCE(SUM(total), 0) as amount, COUNT(*) as count
+    FROM expenses WHERE companyId = ?
+    GROUP BY category ORDER BY amount DESC
+  `).all(companyId);
+
+  res.json({
+    totals: totalRow,
+    byCategory: categoryBreakdown
+  });
+});
+
+app.post('/api/expenses', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const {
+    category, vendor, description, amount, taxRate, currency, date,
+    paymentMethod, reference, receiptUrl, status, taxDeductible, notes
+  } = req.body;
+
+  if (!description || amount === undefined) {
+    return res.status(400).json({ error: 'Description and amount are required' });
+  }
+
+  try {
+    const id = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const number = getNextDocumentNumber('expense');
+    const amt = Number(amount) || 0;
+    const rate = taxRate !== undefined ? Number(taxRate) : 15;
+    const taxAmt = Math.round((amt * (rate / 100)) * 100) / 100;
+    const totalAmt = Math.round((amt + taxAmt) * 100) / 100;
+    const timestamp = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO expenses (
+        id, number, companyId, category, vendor, description, amount, taxAmount, taxRate,
+        total, currency, date, paymentMethod, reference, receiptUrl, status,
+        taxDeductible, notes, createdBy, createdByName, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      number,
+      companyId,
+      category || 'other',
+      vendor || '',
+      description.trim(),
+      amt,
+      taxAmt,
+      rate,
+      totalAmt,
+      currency || 'SAR',
+      date || new Date().toISOString().slice(0, 10),
+      paymentMethod || 'bank_transfer',
+      reference || '',
+      receiptUrl || null,
+      status || 'paid',
+      taxDeductible !== undefined ? (taxDeductible ? 1 : 0) : 1,
+      notes || '',
+      user?.id || null,
+      user?.name || null,
+      timestamp,
+      timestamp
+    );
+
+    logSystemEvent('info', `Expense recorded: ${number} (${description})`, { id, number, totalAmt }, user?.id, user?.username);
+    res.json({ id, number, total: totalAmt });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/expenses/:id', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const {
+    category, vendor, description, amount, taxRate, currency, date,
+    paymentMethod, reference, receiptUrl, status, taxDeductible, notes
+  } = req.body;
+
+  try {
+    const amt = Number(amount) || 0;
+    const rate = taxRate !== undefined ? Number(taxRate) : 15;
+    const taxAmt = Math.round((amt * (rate / 100)) * 100) / 100;
+    const totalAmt = Math.round((amt + taxAmt) * 100) / 100;
+    const timestamp = new Date().toISOString();
+
+    const result = db.prepare(`
+      UPDATE expenses
+      SET category = ?, vendor = ?, description = ?, amount = ?, taxAmount = ?, taxRate = ?,
+          total = ?, currency = ?, date = ?, paymentMethod = ?, reference = ?, receiptUrl = ?,
+          status = ?, taxDeductible = ?, notes = ?, updatedAt = ?
+      WHERE id = ? AND companyId = ?
+    `).run(
+      category || 'other',
+      vendor || '',
+      description.trim(),
+      amt,
+      taxAmt,
+      rate,
+      totalAmt,
+      currency || 'SAR',
+      date || new Date().toISOString().slice(0, 10),
+      paymentMethod || 'bank_transfer',
+      reference || '',
+      receiptUrl || null,
+      status || 'paid',
+      taxDeductible !== undefined ? (taxDeductible ? 1 : 0) : 1,
+      notes || '',
+      timestamp,
+      req.params.id,
+      companyId
+    );
+
+    if (result.changes === 0) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true, total: totalAmt });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/expenses/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const companyId = (req as any).companyId;
+  db.prepare('DELETE FROM expenses WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+  res.json({ success: true });
+});
+
+// ── RECURRING INVOICES & SUBSCRIPTIONS API ─────────────────────────────────────
+app.get('/api/recurring-invoices', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const rows = db.prepare(`
+    SELECT r.*, c.companyName as customerName, c.email as customerEmail
+    FROM recurring_invoices r
+    LEFT JOIN customers c ON c.id = r.customerId
+    WHERE r.companyId = ?
+    ORDER BY r.createdAt DESC
+  `).all(companyId);
+  res.json(rows);
+});
+
+app.post('/api/recurring-invoices', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const {
+    customerId, profileName, frequency, startDate, nextRunDate,
+    endDate, status, autoSendEmail, currency, lineItems, notes, terms, total
+  } = req.body;
+
+  if (!customerId || !profileName) {
+    return res.status(400).json({ error: 'Customer and profile name are required' });
+  }
+
+  try {
+    const id = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const number = getNextDocumentNumber('recurring');
+    const timestamp = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO recurring_invoices (
+        id, number, companyId, customerId, profileName, frequency, startDate, nextRunDate,
+        endDate, status, autoSendEmail, currency, lineItems, notes, terms, total,
+        generationCount, createdBy, createdByName, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+    `).run(
+      id,
+      number,
+      companyId,
+      customerId,
+      profileName.trim(),
+      frequency || 'monthly',
+      startDate || timestamp.slice(0, 10),
+      nextRunDate || startDate || timestamp.slice(0, 10),
+      endDate || null,
+      status || 'active',
+      autoSendEmail ? 1 : 0,
+      currency || 'SAR',
+      typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []),
+      notes || '',
+      terms || '',
+      Number(total) || 0,
+      user?.id || null,
+      user?.name || null,
+      timestamp,
+      timestamp
+    );
+
+    res.json({ id, number });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/recurring-invoices/:id', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const {
+    customerId, profileName, frequency, startDate, nextRunDate,
+    endDate, status, autoSendEmail, currency, lineItems, notes, terms, total
+  } = req.body;
+
+  try {
+    const timestamp = new Date().toISOString();
+    const result = db.prepare(`
+      UPDATE recurring_invoices
+      SET customerId = ?, profileName = ?, frequency = ?, startDate = ?, nextRunDate = ?,
+          endDate = ?, status = ?, autoSendEmail = ?, currency = ?, lineItems = ?,
+          notes = ?, terms = ?, total = ?, updatedAt = ?
+      WHERE id = ? AND companyId = ?
+    `).run(
+      customerId,
+      profileName.trim(),
+      frequency || 'monthly',
+      startDate,
+      nextRunDate,
+      endDate || null,
+      status || 'active',
+      autoSendEmail ? 1 : 0,
+      currency || 'SAR',
+      typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []),
+      notes || '',
+      terms || '',
+      Number(total) || 0,
+      timestamp,
+      req.params.id,
+      companyId
+    );
+
+    if (result.changes === 0) return res.status(404).json({ error: 'Recurring profile not found' });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/recurring-invoices/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
+  const companyId = (req as any).companyId;
+  db.prepare('DELETE FROM recurring_invoices WHERE id = ? AND companyId = ?').run(req.params.id, companyId);
+  res.json({ success: true });
+});
+
+// Trigger generation of an invoice from recurring schedule
+app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const profile = db.prepare('SELECT * FROM recurring_invoices WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
+
+  if (!profile) return res.status(404).json({ error: 'Recurring profile not found' });
+
+  try {
+    const invoiceId = `inv-${Date.now()}`;
+    const invoiceNumber = getNextDocumentNumber('invoice');
+    const today = new Date().toISOString().slice(0, 10);
+    const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const timestamp = new Date().toISOString();
+
+    const items = typeof profile.lineItems === 'string' ? JSON.parse(profile.lineItems) : (profile.lineItems || []);
+    let subtotal = 0, taxTotal = 0;
+    for (const it of items) {
+      if (it.type === 'item') {
+        const lineSub = (Number(it.quantity) || 1) * (Number(it.unitPrice) || 0);
+        subtotal += lineSub;
+        taxTotal += lineSub * ((Number(it.taxPercent) || 15) / 100);
+      }
+    }
+    const total = Math.round((subtotal + taxTotal) * 100) / 100;
+
+    // Create the invoice
+    db.prepare(`
+      INSERT INTO invoices (
+        id, number, customerId, date, dueDate, status, paymentTerms, lineItems,
+        notes, terms, currency, subtotal, discountTotal, taxTotal, total,
+        payments, amountPaid, amountDue, createdAt, updatedAt, companyId,
+        createdBy, createdByName
+      ) VALUES (?, ?, ?, ?, ?, 'posted', 'Net 30', ?, ?, ?, ?, ?, 0, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?)
+    `).run(
+      invoiceId,
+      invoiceNumber,
+      profile.customerId,
+      today,
+      due,
+      typeof profile.lineItems === 'string' ? profile.lineItems : JSON.stringify(profile.lineItems),
+      profile.notes || `Generated from recurring subscription ${profile.number}`,
+      profile.terms || '',
+      profile.currency || 'SAR',
+      subtotal,
+      taxTotal,
+      total,
+      total,
+      timestamp,
+      timestamp,
+      companyId,
+      user?.id || null,
+      user?.name || 'Subscription Engine'
+    );
+
+    // Compute next run date
+    const currentRun = new Date(profile.nextRunDate || today);
+    const nextDate = new Date(currentRun);
+    switch (profile.frequency) {
+      case 'weekly': nextDate.setDate(nextDate.getDate() + 7); break;
+      case 'monthly': nextDate.setMonth(nextDate.getMonth() + 1); break;
+      case 'quarterly': nextDate.setMonth(nextDate.getMonth() + 3); break;
+      case 'semi_annual': nextDate.setMonth(nextDate.getMonth() + 6); break;
+      case 'yearly': nextDate.setFullYear(nextDate.getFullYear() + 1); break;
+      default: nextDate.setMonth(nextDate.getMonth() + 1); break;
+    }
+
+    const nextRunStr = nextDate.toISOString().slice(0, 10);
+    db.prepare(`
+      UPDATE recurring_invoices
+      SET lastGeneratedInvoiceId = ?, lastGeneratedAt = ?, nextRunDate = ?,
+          generationCount = generationCount + 1, updatedAt = ?
+      WHERE id = ? AND companyId = ?
+    `).run(invoiceId, timestamp, nextRunStr, timestamp, profile.id, companyId);
+
+    logDocumentActivity('invoice', invoiceId, invoiceNumber, 'created', { id: user?.id, name: 'Subscription Engine' }, companyId);
+
+    res.json({
+      success: true,
+      invoiceId,
+      invoiceNumber,
+      nextRunDate: nextRunStr
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── INVENTORY TRANSACTIONS & STOCK ADJUSTMENT API ──────────────────────────────
+app.get('/api/inventory/logs', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const rows = db.prepare(`
+    SELECT it.*, p.name as productName, p.itemCode, p.unit, p.stockQuantity as currentStock
+    FROM inventory_transactions it
+    JOIN products p ON p.id = it.productId
+    WHERE it.companyId = ?
+    ORDER BY it.createdAt DESC LIMIT 200
+  `).all(companyId);
+  res.json(rows);
+});
+
+app.post('/api/inventory/adjust', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const user = (req as any).user;
+  const { productId, type, quantity, notes } = req.body;
+
+  if (!productId || !type || quantity === undefined) {
+    return res.status(400).json({ error: 'Product ID, adjustment type, and quantity are required' });
+  }
+
+  try {
+    const prod = db.prepare('SELECT id, name, stockQuantity FROM products WHERE id = ? AND companyId = ?').get(productId, companyId) as any;
+    if (!prod) return res.status(404).json({ error: 'Product not found' });
+
+    const prevStock = Number(prod.stockQuantity) || 0;
+    const qty = Number(quantity) || 0;
+    let newStock = prevStock;
+
+    if (type === 'in') newStock = prevStock + qty;
+    else if (type === 'out') newStock = Math.max(0, prevStock - qty);
+    else if (type === 'adjustment') newStock = Math.max(0, qty);
+
+    db.prepare('UPDATE products SET stockQuantity = ? WHERE id = ? AND companyId = ?').run(newStock, productId, companyId);
+
+    const logId = `invlog-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    db.prepare(`
+      INSERT INTO inventory_transactions (
+        id, companyId, productId, type, quantity, previousStock, newStock, notes, createdBy, createdByName, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      logId,
+      companyId,
+      productId,
+      type,
+      qty,
+      prevStock,
+      newStock,
+      notes || 'Manual stock adjustment',
+      user?.id || null,
+      user?.name || null,
+      new Date().toISOString()
+    );
+
+    res.json({ success: true, productId, previousStock: prevStock, newStock });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── PUBLIC CLIENT PORTAL & SHAREABLE LINKS API ────────────────────────────────
+app.post('/api/portal/generate-link/:docType/:docId', requireAuth, (req, res) => {
+  const companyId = (req as any).companyId;
+  const { docType, docId } = req.params;
+
+  if (docType !== 'quotation' && docType !== 'invoice') {
+    return res.status(400).json({ error: 'Invalid document type for public sharing' });
+  }
+
+  try {
+    const table = docType === 'quotation' ? 'quotations' : 'invoices';
+    const doc = db.prepare(`SELECT id, number FROM ${table} WHERE id = ? AND companyId = ?`).get(docId, companyId) as any;
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    // Check if an active token already exists
+    let share = db.prepare("SELECT * FROM public_shares WHERE companyId = ? AND docType = ? AND docId = ? AND status != 'expired'").get(companyId, docType, docId) as any;
+
+    if (!share) {
+      const id = `share-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const token = crypto.randomBytes(24).toString('hex');
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 90 * 86400000).toISOString(); // 90 days
+
+      db.prepare(`
+        INSERT INTO public_shares (id, token, companyId, docType, docId, expiresAt, status, viewsCount, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?)
+      `).run(id, token, companyId, docType, docId, expiresAt, createdAt);
+
+      share = { token, docType, docId, status: 'active', expiresAt };
+    }
+
+    res.json({
+      token: share.token,
+      docType,
+      docId,
+      shareUrl: `/portal/${docType}/${share.token}`
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public GET portal document (No auth required)
+app.get('/api/portal/:docType/:token', (req, res) => {
+  const { docType, token } = req.params;
+  if (docType !== 'quotation' && docType !== 'invoice') {
+    return res.status(400).json({ error: 'Invalid document type' });
+  }
+
+  try {
+    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
+    if (!share) return res.status(404).json({ error: 'Public link invalid or expired.' });
+
+    // Increment view count
+    db.prepare('UPDATE public_shares SET viewsCount = viewsCount + 1, lastViewedAt = ? WHERE id = ?').run(new Date().toISOString(), share.id);
+
+    const table = docType === 'quotation' ? 'quotations' : 'invoices';
+    const doc = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(share.docId) as any;
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    // Fetch company & customer
+    const companyRow = db.prepare('SELECT * FROM companies WHERE id = ?').get(share.companyId) as any;
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(doc.customerId) as any;
+    const settings = readTenantSettings(share.companyId);
+
+    let zatcaQr: string | null = null;
+    if (docType === 'invoice') {
+      try {
+        zatcaQr = generateZatcaQRBase64(
+          settings.profile?.name || companyRow?.name || 'Qvoke Enterprise',
+          settings.profile?.vatNumber || '300000000000003',
+          doc.date,
+          doc.total,
+          doc.taxTotal
+        );
+      } catch (err) {
+        console.error('Failed to generate ZATCA QR for portal:', err);
+      }
+    }
+
+    res.json({
+      docType,
+      share: {
+        token: share.token,
+        status: share.status,
+        acceptedAt: share.acceptedAt,
+        acceptedByName: share.acceptedByName,
+        acceptedSignature: share.acceptedSignature
+      },
+      company: {
+        name: companyRow?.name || 'Qvoke Enterprise',
+        email: settings.profile?.email || '',
+        phone: settings.profile?.phone || '',
+        vatNumber: settings.profile?.vatNumber || '',
+        crNumber: settings.profile?.crNumber || '',
+        address: settings.profile?.address || { street: '', city: 'Riyadh', country: 'SA' },
+        logo: settings.logo || settings.profile?.logo || null
+      },
+      customer: customer ? {
+        id: customer.id,
+        companyName: customer.companyName,
+        contactPerson: customer.contactPerson,
+        email: customer.email,
+        phone: customer.phone,
+        vatNumber: customer.vatNumber,
+        billingAddress: typeof customer.billingAddress === 'string' ? JSON.parse(customer.billingAddress) : customer.billingAddress
+      } : null,
+      document: {
+        ...doc,
+        lineItems: typeof doc.lineItems === 'string' ? JSON.parse(doc.lineItems) : (doc.lineItems || []),
+        payments: doc.payments ? (typeof doc.payments === 'string' ? JSON.parse(doc.payments) : doc.payments) : []
+      },
+      zatcaQr
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public POST accept quotation / invoice (No auth required)
+app.post('/api/portal/:docType/:token/accept', (req, res) => {
+  const { docType, token } = req.params;
+  const { clientName, signature } = req.body;
+
+  if (!clientName) return res.status(400).json({ error: 'Signer name is required for approval' });
+
+  try {
+    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
+    if (!share) return res.status(404).json({ error: 'Public link invalid' });
+
+    const timestamp = new Date().toISOString();
+    db.prepare(`
+      UPDATE public_shares
+      SET status = 'accepted', acceptedAt = ?, acceptedByName = ?, acceptedSignature = ?
+      WHERE id = ?
+    `).run(timestamp, clientName.trim(), signature || null, share.id);
+
+    if (docType === 'quotation') {
+      db.prepare("UPDATE quotations SET status = 'confirmed', updatedAt = ? WHERE id = ?").run(timestamp, share.docId);
+      logDocumentActivity('quotation', share.docId, null, 'status_changed', { id: 'client-portal', name: `${clientName} (Portal)` }, share.companyId, [
+        { field: 'status', from: 'sent', to: 'confirmed' }
+      ]);
+    }
+
+    res.json({ success: true, acceptedAt: timestamp });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public POST decline quotation (No auth required)
+app.post('/api/portal/:docType/:token/decline', (req, res) => {
+  const { docType, token } = req.params;
+  const { feedbackNote } = req.body;
+
+  try {
+    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
+    if (!share) return res.status(404).json({ error: 'Public link invalid' });
+
+    const timestamp = new Date().toISOString();
+    db.prepare(`
+      UPDATE public_shares
+      SET status = 'declined', feedbackNote = ?
+      WHERE id = ?
+    `).run(feedbackNote || 'Client requested revision', share.id);
+
+    if (docType === 'quotation') {
+      logDocumentActivity('quotation', share.docId, null, 'updated', { id: 'client-portal', name: 'Client Portal' }, share.companyId, [
+        { field: 'client_feedback', from: '', to: feedbackNote || 'Declined / revision requested' }
+      ]);
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ── LIVE / CACHED CURRENCY EXCHANGE RATES API ──────────────────────────────────
+app.get('/api/currency/rates', (req, res) => {
+  // Baseline currency exchange matrix (Base: SAR)
+  const rates = {
+    base: 'SAR',
+    timestamp: new Date().toISOString(),
+    rates: {
+      SAR: 1.0,
+      USD: 0.2666,
+      EUR: 0.2450,
+      GBP: 0.2105,
+      AED: 0.9790,
+      QAR: 0.9700,
+      KWD: 0.0818,
+      BHD: 0.1005,
+      OMR: 0.1025
+    }
+  };
+  res.json(rates);
 });
 
 // ── Translation API ───────────────────────────────────────────────────────────
 // Proxies to Google Translate with chunking + retry for reliability.
-app.post('/api/translate', requireAuth, async (req, res) => {
-  const { text } = req.body;
-  if (!text) return res.json({ translation: '' });
+app.post('/api/translate', async (req, res) => {
+  const text = (req.body.text || req.body.q || '').trim();
+  if (!text) return res.json({ translation: '', translatedText: '' });
 
   // Split on sentence boundaries so each chunk stays under 400 chars
   const splitIntoChunks = (str: string, maxLen = 400): string[] => {
     if (str.length <= maxLen) return [str];
     const chunks: string[] = [];
-    // Try to split on '. ', '\n', then fallback to hard split
     const sentences = str.split(/(?<=[\.\!\?\n])\s+/);
     let current = '';
     for (const s of sentences) {
@@ -1898,34 +2810,93 @@ app.post('/api/translate', requireAuth, async (req, res) => {
     return chunks;
   };
 
+  const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
   const translateChunk = async (chunk: string, attempt = 0): Promise<string> => {
+    // Strategy 1: Google Chrome Translate API (clients5 - fast & reliable)
+    try {
+      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=ar&q=${encodeURIComponent(chunk)}`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': BROWSER_UA },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          if (typeof data[0] === 'string' && data[0].trim()) return data[0].trim();
+          if (Array.isArray(data[0]) && typeof data[0][0] === 'string' && data[0][0].trim()) return data[0][0].trim();
+        }
+      }
+    } catch (err: any) {
+      // Continue to next strategy
+    }
+
+    // Strategy 2: Google Translate GTX Endpoint with browser UA
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ar&dt=t&q=${encodeURIComponent(chunk)}`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      const data = await response.json();
-      let result = '';
-      if (data && data[0]) {
-        data[0].forEach((segment: any) => { if (segment[0]) result += segment[0]; });
+      const response = await fetch(url, {
+        headers: { 'User-Agent': BROWSER_UA },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          let result = '';
+          if (data && data[0]) {
+            data[0].forEach((segment: any) => { if (segment[0]) result += segment[0]; });
+          }
+          if (result.trim()) return result.trim();
+        }
       }
-      // Retry on empty result (up to 3 attempts)
-      if (!result.trim() && attempt < 2) {
-        await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
-        return translateChunk(chunk, attempt + 1);
-      }
-      return result.trim();
     } catch (err: any) {
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
-        return translateChunk(chunk, attempt + 1);
-      }
-      throw err;
+      // Continue to next strategy
     }
+
+    // Strategy 3: AI Translation fallback (Gemini / OpenRouter / OpenAI) if configured
+    const aiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+    if (aiKey && aiKey !== 'dummy_key_to_prevent_startup_crash') {
+      try {
+        const isRouter = !!process.env.OPENROUTER_API_KEY;
+        const isGemini = !isRouter && !!process.env.GEMINI_API_KEY;
+        const aiClient = new OpenAI({
+          baseURL: isRouter ? 'https://openrouter.ai/api/v1' : isGemini ? 'https://generativelanguage.googleapis.com/v1beta/openai/' : undefined,
+          apiKey: aiKey
+        });
+        const aiResponse = await aiClient.chat.completions.create({
+          model: isRouter ? 'openai/gpt-4o-mini' : isGemini ? 'gemini-2.0-flash' : 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a professional English-to-Arabic translator. Translate the given text to Modern Standard Arabic accurately and concisely. Return ONLY the Arabic translation without explanation, markdown quotes, or notes.'
+            },
+            {
+              role: 'user',
+              content: chunk
+            }
+          ],
+          temperature: 0.2,
+        });
+        const aiText = aiResponse.choices[0]?.message?.content?.trim();
+        if (aiText) return aiText;
+      } catch (err: any) {
+        // Fall through to retry
+      }
+    }
+
+    // Retry with backoff if attempts remaining
+    if (attempt < 2) {
+      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+      return translateChunk(chunk, attempt + 1);
+    }
+    throw new Error('Translation failed across all translation backends.');
   };
 
   try {
     const chunks = splitIntoChunks(text);
     const translated = await Promise.all(chunks.map(c => translateChunk(c)));
-    res.json({ translation: translated.join(' ').trim() });
+    const finalTranslation = translated.join(' ').trim();
+    res.json({ translation: finalTranslation, translatedText: finalTranslation });
   } catch (error: any) {
     console.error('Translation error:', error);
     res.status(500).json({ error: 'Translation failed' });
@@ -2755,6 +3726,7 @@ app.get('/api/admin/companies', requireAuth, requireSuperAdmin, (req, res) => {
         locale: tenantSettings.locale || 'en-SA',
         currency: tenantSettings.currency || tenantSettings.profile?.currency || 'SAR',
         owner: owner || null,
+        features: (() => { try { return c.featureFlags ? JSON.parse(c.featureFlags) : {}; } catch { return {}; } })(),
         counts: {
           users: count('SELECT COUNT(*) c FROM user_companies WHERE companyId = ?', c.id),
           customers: count('SELECT COUNT(*) c FROM customers WHERE companyId = ?', c.id),
@@ -2834,13 +3806,19 @@ app.patch('/api/admin/companies/:id', requireAuth, requireSuperAdmin, (req, res)
   try {
     const existing = db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id) as any;
     if (!existing) return res.status(404).json({ error: 'Company not found.' });
-    const { status, activePlan, name } = req.body;
+    const { status, activePlan, name, features } = req.body;
     if (status && !['active', 'suspended'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
     if (activePlan && !PLANS[activePlan]) return res.status(400).json({ error: 'Invalid subscription plan.' });
     const nextPlan = activePlan ?? existing.activePlan;
-    const nextFlags = activePlan && activePlan !== existing.activePlan
-      ? JSON.stringify(featuresFromPlan(nextPlan))
-      : existing.featureFlags;
+    
+    // Use manual features if provided, otherwise default to plan features if plan changed, else keep existing
+    let nextFlags = existing.featureFlags;
+    if (features) {
+      nextFlags = JSON.stringify(features);
+    } else if (activePlan && activePlan !== existing.activePlan) {
+      nextFlags = JSON.stringify(featuresFromPlan(nextPlan));
+    }
+
     db.prepare('UPDATE companies SET status = ?, activePlan = ?, featureFlags = ?, name = ? WHERE id = ?').run(
       status ?? existing.status ?? 'active',
       nextPlan,
@@ -3164,75 +4142,201 @@ app.get('/api/pdf/boq/:id', requireAuth, async (req, res) => {
   }
 });
 
+const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+// ── AI RFQ PARSER ENDPOINT (MULTIMODAL EXTRACTION) ─────────────────────────
+app.post('/api/rfq/parse', requireAuth, memoryUpload.single('file'), async (req, res) => {
+  const aiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!aiKey || aiKey === 'dummy_key_to_prevent_startup_crash') {
+    return res.status(400).json({ error: 'Please set OPENROUTER_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY in your .env file to use AI features.' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  try {
+    const base64Data = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/jpeg';
+    const isRouter = !!process.env.OPENROUTER_API_KEY;
+    const isGemini = !isRouter && !!process.env.GEMINI_API_KEY;
+
+    const aiClient = new OpenAI({
+      baseURL: isRouter ? 'https://openrouter.ai/api/v1' : isGemini ? 'https://generativelanguage.googleapis.com/v1beta/openai/' : undefined,
+      apiKey: aiKey
+    });
+
+    const messages = [
+      {
+        role: "user",
+        // @ts-ignore
+        content: [
+          {
+            type: "text",
+            text: "You are a professional estimator. Extract line items from this Request for Quotation (RFQ) document. " +
+              "Return a JSON array ONLY, where each object has: " +
+              "1. 'description' (string, the name or details of the product/service), " +
+              "2. 'quantity' (number, the requested quantity, default to 1), " +
+              "3. 'unit' (string, the unit of measure like 'pcs', 'ls', 'meters'). " +
+              "Do not include any other markdown formatting or conversational text, just the raw JSON array."
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType};base64,${base64Data}`
+            }
+          }
+        ]
+      }
+    ];
+
+    const response = await aiClient.chat.completions.create({
+      model: isRouter ? "openai/gpt-4o-mini" : isGemini ? "gemini-2.0-flash" : "gpt-4o-mini",
+      // @ts-ignore
+      messages: messages,
+      temperature: 0.1,
+    });
+
+    const aiRes = response.choices[0]?.message?.content || '[]';
+    let cleaned = aiRes.trim();
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    if (cleaned.toLowerCase().startsWith('```json')) cleaned = cleaned.substring(7);
+    if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```/, '');
+    if (cleaned.endsWith('```')) cleaned = cleaned.replace(/```$/, '');
+    cleaned = cleaned.trim();
+
+    const rawItems = JSON.parse(cleaned);
+    const items = Array.isArray(rawItems) ? rawItems.map((it: any) => ({
+      description: it.description || it.item || 'Item',
+      quantity: Number(it.quantity || it.qty) || 1,
+      unit: it.unit || 'pcs',
+      unitPrice: Number(it.unitPrice || it.price) || 0
+    })) : [];
+
+    res.json({ items });
+  } catch (err: any) {
+    console.error('RFQ Parse Error:', err);
+    res.status(500).json({ error: 'Failed to process RFQ document: ' + (err.message || 'Unknown error') });
+  }
+});
+
 // ── AI ASSISTANT ENDPOINT ──────────────────────────────────────────────────
 app.post('/api/ai/chat', requireAuth, requireFeature('aiAssistant'), requirePermission('canUseAI'), async (req, res) => {
   try {
-    const { message } = req.body;
+    const message = (req.body.message || req.body.question || '').trim();
     if (!message) return res.status(400).json({ error: 'Message required' });
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openRouterKey) {
-      return res.status(500).json({ error: 'OpenRouter API key is not configured on the server.' });
-    }
+    const companyId = (req as any).companyId;
+    const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
 
-    const openai = new OpenAI({
-      baseURL: 'https://openrouter.ai/api/v1',
-      apiKey: openRouterKey
-    });
+    if (apiKey) {
+      const isRouter = !!process.env.OPENROUTER_API_KEY;
+      const isGemini = !isRouter && !!process.env.GEMINI_API_KEY;
+      const openai = new OpenAI({
+        baseURL: isRouter ? 'https://openrouter.ai/api/v1' : isGemini ? 'https://generativelanguage.googleapis.com/v1beta/openai/' : undefined,
+        apiKey
+      });
 
-    const tables = db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-    const schemaStr = tables.map((t: any) => t.sql).join('\n\n');
+      const tables = db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+      const schemaStr = tables.map((t: any) => t.sql).join('\n\n');
 
-    const completion = await openai.chat.completions.create({
-      model: 'openai/gpt-4o-mini', 
-      messages: [
-        { 
-          role: 'system', 
-          content: `You are an AI assistant for the Qvoke ERP system. Given the SQLite schema below, your task is to output ONLY a valid read-only SQL SELECT query to answer the user's question.
+      const completion = await openai.chat.completions.create({
+        model: isRouter ? 'openai/gpt-4o-mini' : isGemini ? 'gemini-2.0-flash' : 'gpt-4o-mini', 
+        messages: [
+          { 
+            role: 'system', 
+            content: `You are an AI assistant for the Qvoke ERP system. Given the SQLite schema below, your task is to output ONLY a valid read-only SQL SELECT query to answer the user's question. Scope queries to companyId = '${companyId}' where applicable.
 DO NOT include markdown formatting (\`\`\`sql). Return ONLY the raw SQL query.
 If the question cannot be safely answered with a SELECT query (e.g. asking to UPDATE/DELETE, or unrelated to the database), output EXACTLY the word: ERROR.
 Schema:\n\n${schemaStr}` 
-        },
-        { role: 'user', content: message }
-      ],
-      temperature: 0.1
-    });
+          },
+          { role: 'user', content: message }
+        ],
+        temperature: 0.1
+      });
 
-    let sql = (completion.choices[0].message?.content || '').trim();
-    if (sql === 'ERROR') {
-      return res.status(400).json({ error: 'Sorry, I could not generate a valid read-only query for that question.' });
-    }
+      let sql = (completion.choices[0].message?.content || '').trim();
+      if (sql !== 'ERROR') {
+        if (sql.startsWith('```sql')) sql = sql.substring(6);
+        if (sql.startsWith('```')) sql = sql.substring(3);
+        if (sql.endsWith('```')) sql = sql.substring(0, sql.length - 3);
+        sql = sql.trim();
 
-    // Clean up possible markdown if the model disobeys
-    if (sql.startsWith('\`\`\`sql')) sql = sql.substring(6);
-    if (sql.startsWith('\`\`\`')) sql = sql.substring(3);
-    if (sql.endsWith('\`\`\`')) sql = sql.substring(0, sql.length - 3);
-    sql = sql.trim();
-
-    if (!sql.toUpperCase().startsWith('SELECT')) {
-      return res.status(400).json({ error: 'Only SELECT queries are allowed.' });
-    }
-
-    const results = db.prepare(sql).all();
-
-    const explainCompletion = await openai.chat.completions.create({
-      model: 'openai/gpt-4o-mini',
-      messages: [
-        { 
-          role: 'system', 
-          content: `You are a helpful ERP assistant. Summarize the following SQL query results in a brief, friendly, human-readable sentence or short paragraph. Do not mention SQL or databases. 
+        if (sql.toUpperCase().startsWith('SELECT')) {
+          const results = db.prepare(sql).all();
+          const explainCompletion = await openai.chat.completions.create({
+            model: isRouter ? 'openai/gpt-4o-mini' : isGemini ? 'gemini-2.0-flash' : 'gpt-4o-mini',
+            messages: [
+              { 
+                role: 'system', 
+                content: `You are a helpful ERP assistant. Summarize the following SQL query results in a brief, friendly, human-readable sentence or short paragraph. Do not mention SQL or databases. 
 Data: ${JSON.stringify(results).substring(0, 1000)}` 
-        },
-        { role: 'user', content: message }
-      ],
-      temperature: 0.3
-    });
+              },
+              { role: 'user', content: message }
+            ],
+            temperature: 0.3
+          });
 
-    res.json({
-      sql,
-      results,
-      explanation: explainCompletion.choices[0].message?.content
-    });
+          const explanation = explainCompletion.choices[0].message?.content || '';
+          return res.json({
+            sql,
+            query: sql,
+            results,
+            data: results,
+            explanation,
+            answer: explanation
+          });
+        }
+      }
+    }
+
+    // Smart Local Fallback when API key is missing or model returns ERROR
+    const q = message.toLowerCase();
+    let localSql = '';
+    let explanation = '';
+
+    if (q.includes('revenue') || q.includes('total sales') || q.includes('income')) {
+      localSql = "SELECT COALESCE(SUM(total), 0) as total_revenue, COALESCE(SUM(amountPaid), 0) as collected_amount, COUNT(*) as invoice_count FROM invoices WHERE companyId = ?";
+      const row = db.prepare(localSql).get(companyId) as any;
+      explanation = `Your total invoiced revenue is SAR ${Number(row?.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} across ${row?.invoice_count || 0} invoices (Collected: SAR ${Number(row?.collected_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}).`;
+      return res.json({ sql: localSql, query: localSql, results: [row], data: [row], explanation, answer: explanation });
+    }
+
+    if (q.includes('unpaid') || q.includes('due') || q.includes('overdue') || q.includes('pending payment')) {
+      localSql = "SELECT number, total, amountDue, date, dueDate, status FROM invoices WHERE companyId = ? AND status IN ('draft', 'posted', 'partial', 'overdue') ORDER BY dueDate ASC LIMIT 10";
+      const rows = db.prepare(localSql).all(companyId);
+      const totalDue = rows.reduce((acc: number, r: any) => acc + (r.amountDue || 0), 0);
+      explanation = `You have ${rows.length} pending/unpaid invoices totaling SAR ${totalDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`;
+      return res.json({ sql: localSql, query: localSql, results: rows, data: rows, explanation, answer: explanation });
+    }
+
+    if (q.includes('customer') || q.includes('top customer') || q.includes('clients')) {
+      localSql = "SELECT c.companyName, c.email, c.phone, COALESCE(SUM(i.total), 0) as total_spent FROM customers c LEFT JOIN invoices i ON c.id = i.customerId WHERE c.companyId = ? GROUP BY c.id ORDER BY total_spent DESC LIMIT 5";
+      const rows = db.prepare(localSql).all(companyId);
+      explanation = `Here are your top customers ranked by invoiced total: ${rows.map((r: any) => `${r.companyName} (SAR ${Number(r.total_spent || 0).toLocaleString()})`).join(', ')}.`;
+      return res.json({ sql: localSql, query: localSql, results: rows, data: rows, explanation, answer: explanation });
+    }
+
+    if (q.includes('quote') || q.includes('quotation')) {
+      localSql = "SELECT number, status, total, date FROM quotations WHERE companyId = ? AND (deleted_at IS NULL OR deleted_at = '') ORDER BY date DESC LIMIT 5";
+      const rows = db.prepare(localSql).all(companyId);
+      explanation = `Found ${rows.length} recent quotations in your active company.`;
+      return res.json({ sql: localSql, query: localSql, results: rows, data: rows, explanation, answer: explanation });
+    }
+
+    if (q.includes('product') || q.includes('catalog') || q.includes('items')) {
+      localSql = "SELECT name, unitPrice, unit, taxRate FROM products WHERE companyId = ? LIMIT 10";
+      const rows = db.prepare(localSql).all(companyId);
+      explanation = `You have ${rows.length} products listed in your catalog.`;
+      return res.json({ sql: localSql, query: localSql, results: rows, data: rows, explanation, answer: explanation });
+    }
+
+    // Default overview response
+    localSql = "SELECT (SELECT COUNT(*) FROM quotations WHERE companyId = ?) as quotes_count, (SELECT COUNT(*) FROM invoices WHERE companyId = ?) as invoices_count, (SELECT COUNT(*) FROM customers WHERE companyId = ?) as customers_count, (SELECT COUNT(*) FROM products WHERE companyId = ?) as products_count";
+    const overview = db.prepare(localSql).get(companyId, companyId, companyId, companyId) as any;
+    explanation = `Qvoke Overview: ${overview?.quotes_count || 0} Quotations, ${overview?.invoices_count || 0} Invoices, ${overview?.customers_count || 0} Customers, and ${overview?.products_count || 0} Products in your catalog.`;
+    return res.json({ sql: localSql, query: localSql, results: [overview], data: [overview], explanation, answer: explanation });
   } catch (error: any) {
     console.error('AI Chat error:', error);
     res.status(500).json({ error: 'AI processing failed: ' + (error.message || 'Unknown error') });
@@ -3280,14 +4384,37 @@ async function startServer() {
     });
   }
 
+  // Handle Primary Server port conflicts gracefully
+  httpServer.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ [PORT CONFLICT] Primary port ${PORT} is already in use by another process.`);
+      console.error(`👉 Solution: Set PORT in your .env file (e.g., PORT=3005) or terminate the process on port ${PORT}.\n`);
+    } else {
+      console.error('❌ Primary Server error:', err);
+    }
+    process.exit(1);
+  });
+
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${process.env.VITE_APP_NAME || 'New ERP'} Backend operational on http://localhost:${PORT}`);
+    console.log(`🚀 ${process.env.VITE_APP_NAME || 'Qvoke'} Backend operational on http://localhost:${PORT}`);
     console.log(`   Database: ${DB_PATH} | Env: ${process.env.NODE_ENV || 'development'}`);
   });
 
-  adminHttpServer.listen(ADMIN_PORT, '0.0.0.0', () => {
-    console.log(`🛡️ Admin Panel Backend operational on http://localhost:${ADMIN_PORT}`);
-  });
+  // Only start separate Admin server if distinct port is configured
+  if (ADMIN_PORT && ADMIN_PORT !== PORT) {
+    adminHttpServer.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`\n⚠️  [ADMIN PORT CONFLICT] Admin port ${ADMIN_PORT} is already in use.`);
+        console.warn(`👉 Solution: Change ADMIN_PORT in .env (e.g., ADMIN_PORT=3002) or terminate the process holding port ${ADMIN_PORT}.\n`);
+      } else {
+        console.error('❌ Admin Server error:', err);
+      }
+    });
+
+    adminHttpServer.listen(ADMIN_PORT, '0.0.0.0', () => {
+      console.log(`🛡️ Admin Panel Backend operational on http://localhost:${ADMIN_PORT}`);
+    });
+  }
 }
 
 startServer().catch((err) => {

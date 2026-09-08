@@ -1,6 +1,219 @@
 import { create } from 'zustand';
-import { Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem, UserRole, Supplier, PersonalTask, CompanyMembership } from './types';
+import {
+  Company, Customer, Product, Quotation, Invoice, User, Payment, LineItem,
+  UserRole, Supplier, PersonalTask, CompanyMembership, Expense, RecurringInvoice,
+  InventoryTransaction, PublicShare, PDFTemplateConfig
+} from './types';
 import { resolveAccent, applyAccent, DEFAULT_PRESET } from './theme';
+import { pathToRoute, routeToPath } from './utils/routing';
+
+export const DEFAULT_PDF_TEMPLATE: PDFTemplateConfig = {
+  preset: 'executive',
+  name: 'Executive Modern (النموذج التنفيذي الحديث)',
+  headerStyle: 'gradient',
+  sections: [
+    {
+      id: 'header',
+      name: 'Header & Brand Info',
+      nameAr: 'الهيدر ومعلومات المنشأة',
+      enabled: true,
+      width: 'full',
+      order: 1,
+      fields: [
+        { id: 'h_logo', key: 'logo', label: 'Logo', labelAr: 'الشعار', enabled: true, isLocked: true, order: 1 },
+        { id: 'h_name', key: 'companyName', label: 'Company Name', labelAr: 'اسم المؤسسة', enabled: true, isLocked: true, order: 2 },
+        { id: 'h_addr', key: 'address', label: 'Address', labelAr: 'العنوان', enabled: true, order: 3 },
+        { id: 'h_phone', key: 'phone', label: 'Phone', labelAr: 'رقم الهاتف', enabled: true, order: 4 },
+        { id: 'h_email', key: 'email', label: 'Email', labelAr: 'البريد الإلكتروني', enabled: true, order: 5 },
+        { id: 'h_org', key: 'orgNumber', label: 'Organization Number (CR/VAT)', labelAr: 'السجل التجاري والضريبي', enabled: true, order: 6 }
+      ]
+    },
+    {
+      id: 'customer',
+      name: 'Customer Details',
+      nameAr: 'بيانات العميل',
+      enabled: true,
+      width: 'half',
+      order: 2,
+      fields: [
+        { id: 'c_name', key: 'customerName', label: 'Customer Name', labelAr: 'اسم العميل', enabled: true, isLocked: true, order: 1 },
+        { id: 'c_comp', key: 'customerCompany', label: 'Customer Company', labelAr: 'اسم الشركة', enabled: true, order: 2 },
+        { id: 'c_addr', key: 'customerAddress', label: 'Customer Address', labelAr: 'عنوان العميل', enabled: true, order: 3 },
+        { id: 'c_email', key: 'customerEmail', label: 'Customer Email', labelAr: 'البريد الإلكتروني للعميل', enabled: true, order: 4 },
+        { id: 'c_phone', key: 'customerPhone', label: 'Customer Phone', labelAr: 'هاتف العميل', enabled: true, order: 5 },
+        { id: 'c_tax', key: 'customerTaxId', label: 'Customer Tax ID (VAT)', labelAr: 'الرقم الضريبي للعميل', enabled: true, order: 6 }
+      ]
+    },
+    {
+      id: 'vehicle',
+      name: 'Project / Service Specs',
+      nameAr: 'مواصفات المشروع / الخدمة',
+      enabled: true,
+      width: 'half',
+      order: 3,
+      fields: [
+        { id: 'v_ref', key: 'poNumber', label: 'Purchase Order #', labelAr: 'رقم أمر الشراء', enabled: true, order: 1 },
+        { id: 'v_model', key: 'projectRef', label: 'Project / Vehicle Reference', labelAr: 'مرجع المشروع أو المركبة', enabled: true, order: 2 },
+        { id: 'v_plate', key: 'siteLocation', label: 'Site / Bay Location', labelAr: 'موقع العمل أو الورشة', enabled: true, order: 3 },
+        { id: 'v_contact', key: 'siteContact', label: 'Site Contact Person', labelAr: 'المسؤول الميداني', enabled: true, order: 4 }
+      ]
+    },
+    {
+      id: 'line_items',
+      name: 'Work & Parts Line Items',
+      nameAr: 'جدول الأعمال والمواد والبنود',
+      enabled: true,
+      width: 'full',
+      order: 4,
+      fields: [
+        { id: 'li_desc', key: 'description', label: 'Item Description', labelAr: 'وصف البند', enabled: true, isLocked: true, order: 1 },
+        { id: 'li_qty', key: 'quantity', label: 'Quantity & Units', labelAr: 'الكمية والوحدة', enabled: true, isLocked: true, order: 2 },
+        { id: 'li_price', key: 'unitPrice', label: 'Unit Price', labelAr: 'سعر الوحدة', enabled: true, order: 3 },
+        { id: 'li_tax', key: 'taxRate', label: 'VAT 15%', labelAr: 'ضريبة القيمة المضافة', enabled: true, order: 4 },
+        { id: 'li_total', key: 'total', label: 'Line Total', labelAr: 'المجموع', enabled: true, isLocked: true, order: 5 }
+      ]
+    },
+    {
+      id: 'summary',
+      name: 'Financial Summary & Totals',
+      nameAr: 'الملخص المالي والإجماليات',
+      enabled: true,
+      width: 'half',
+      order: 5,
+      fields: [
+        { id: 's_sub', key: 'subtotal', label: 'Subtotal Amount', labelAr: 'المجموع الفرعي', enabled: true, isLocked: true, order: 1 },
+        { id: 's_disc', key: 'discount', label: 'Total Discount', labelAr: 'إجمالي الخصم', enabled: true, order: 2 },
+        { id: 's_tax', key: 'taxTotal', label: 'VAT (15%)', labelAr: 'إجمالي الضريبة', enabled: true, isLocked: true, order: 3 },
+        { id: 's_total', key: 'grandTotal', label: 'Grand Total', labelAr: 'الإجمالي النهائي', enabled: true, isLocked: true, order: 4 },
+        { id: 's_due', key: 'balanceDue', label: 'Balance Due', labelAr: 'المبلغ المستحق', enabled: true, order: 5 }
+      ]
+    },
+    {
+      id: 'zatca_qr',
+      name: 'ZATCA Compliance & Bank QR',
+      nameAr: 'رمز هيئة الزكاة والحساب البنكي',
+      enabled: true,
+      width: 'half',
+      order: 6,
+      fields: [
+        { id: 'z_qr', key: 'zatcaQr', label: 'ZATCA TLV Base64 QR', labelAr: 'رمز هيئة الزكاة والضريبة', enabled: true, isLocked: true, order: 1 },
+        { id: 'z_bank', key: 'bankName', label: 'Bank Name & IBAN', labelAr: 'اسم البنك ورقم الآيبان', enabled: true, order: 2 }
+      ]
+    },
+    {
+      id: 'payment_terms',
+      name: 'Terms & Conditions',
+      nameAr: 'الشروط والأحكام والضمان',
+      enabled: true,
+      width: 'full',
+      order: 7,
+      fields: [
+        { id: 't_pay', key: 'paymentTerms', label: 'Payment Terms Clause', labelAr: 'بند شروط الدفع', enabled: true, order: 1 },
+        { id: 't_war', key: 'warrantyTerms', label: 'Warranty & Maintenance Clause', labelAr: 'بند الضمان والصيانة', enabled: true, order: 2 }
+      ]
+    },
+    {
+      id: 'signatures',
+      name: 'Authorized Signatures',
+      nameAr: 'قسم التواقيع والاعتماد',
+      enabled: true,
+      width: 'full',
+      order: 8,
+      fields: [
+        { id: 'sig_comp', key: 'companySignature', label: 'Company Signatory & Seal', labelAr: 'توقيع وختم المنشأة', enabled: true, order: 1 },
+        { id: 'sig_client', key: 'clientSignature', label: 'Client Acceptance & Signature', labelAr: 'توقيع وقبول العميل', enabled: true, order: 2 }
+      ]
+    },
+    {
+      id: 'footer',
+      name: 'Page Footer',
+      nameAr: 'تذييل الصفحة',
+      enabled: true,
+      width: 'full',
+      order: 9,
+      fields: [
+        { id: 'f_contact', key: 'footerContact', label: 'Company Contact & Website', labelAr: 'معلومات التواصل والموقع', enabled: true, order: 1 },
+        { id: 'f_page', key: 'pageNumbers', label: 'Page Numbers (Page X of Y)', labelAr: 'ترقيم الصفحات', enabled: true, order: 2 }
+      ]
+    }
+  ],
+  customFields: [
+    {
+      id: 'cf_1',
+      name: 'Purchase order number',
+      key: 'purchase_order',
+      type: 'text',
+      appliesTo: 'all',
+      sectionId: 'vehicle',
+      sectionName: 'Project / Service Specs'
+    },
+    {
+      id: 'cf_2',
+      name: 'Site contact',
+      key: 'site_contact',
+      type: 'text',
+      appliesTo: 'quotation',
+      sectionId: 'vehicle',
+      sectionName: 'Project / Service Specs'
+    },
+    {
+      id: 'cf_3',
+      name: 'Workshop bay',
+      key: 'bay',
+      type: 'select',
+      appliesTo: 'invoice',
+      options: ['Bay 1 (Mechanical)', 'Bay 2 (Electrical)', 'Bay 3 (Diagnostics)', 'On-Site Riyadh Client Site'],
+      sectionId: 'vehicle',
+      sectionName: 'Project / Service Specs'
+    },
+    {
+      id: 'cf_4',
+      name: 'Courtesy vehicle issued',
+      key: 'courtesy_vehicle',
+      type: 'checkbox',
+      appliesTo: 'invoice',
+      sectionId: 'vehicle',
+      sectionName: 'Project / Service Specs'
+    }
+  ],
+  colors: {
+    primary: '#01696f',
+    headerBgStart: '#01696f',
+    headerBgEnd: '#0d9488',
+    headerText: '#ffffff',
+    tableHeaderBg: '#01696f',
+    tableHeaderText: '#ffffff',
+    zebraRowBg: '#f8fafc',
+    accentBorder: '#01696f'
+  },
+  tableColumns: {
+    showIndex: true,
+    showItemCode: true,
+    showDescEn: true,
+    showDescAr: true,
+    showQty: true,
+    showUnit: true,
+    showUnitPrice: true,
+    showDiscount: true,
+    showTax: true,
+    showTotal: true
+  },
+  typography: {
+    fontFamily: 'Tajawal',
+    bodyFontSize: 9,
+    titleFontSize: 22
+  },
+  watermark: {
+    enabled: true,
+    text: 'PAID',
+    opacity: 0.08,
+    angle: 45
+  },
+  page: {
+    size: 'A4',
+    margins: 'normal'
+  }
+};
 
 // Is the effective mode dark, given the user's theme setting?
 const isDarkMode = (theme: 'light' | 'dark' | 'system') =>
@@ -14,6 +227,7 @@ interface ERPState {
   activeQuoteId: string | null;
   activeInvoiceId: string | null;
   theme: 'light' | 'dark' | 'system';
+  uiTheme: string; // 'modern' | 'glassmorphism' | 'neumorphism' | 'daisy-cyberpunk' | 'daisy-synthwave' | 'daisy-luxury' | 'daisy-emerald' | 'daisy-cupcake' | 'daisy-retro'
   density: 'comfortable' | 'compact';
   workspaceMode: 'standard' | 'desktop';
   themePreset: string | null;   // user's chosen preset; null = inherit company/default
@@ -27,6 +241,9 @@ interface ERPState {
   invoices: Invoice[];
   suppliers: Supplier[];
   tasks: PersonalTask[];
+  expenses: Expense[];
+  recurringInvoices: RecurringInvoice[];
+  inventoryLogs: InventoryTransaction[];
   companies: CompanyMembership[];
   activeCompanyId: string | null;
   features: Record<string, boolean>;
@@ -36,8 +253,9 @@ interface ERPState {
   authChecked: boolean;
   
   setCurrentPage: (page: string) => void;
-  setRoute: (page: string, id?: string | null) => void;
+  setRoute: (page: string, id?: string | null, pushHistory?: boolean) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setUITheme: (theme: string) => void;
   setDensity: (density: 'comfortable' | 'compact') => void;
   setWorkspaceMode: (mode: 'standard' | 'desktop') => void;
   setThemePreset: (preset: string | null) => void;
@@ -99,6 +317,26 @@ interface ERPState {
   addTask: (task: Partial<PersonalTask>) => Promise<void>;
   updateTask: (id: string, patch: Partial<PersonalTask>) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
+
+  // Expenses CRUD
+  fetchExpenses: (filters?: Record<string, string>) => Promise<void>;
+  addExpense: (expense: Partial<Expense>) => Promise<boolean>;
+  updateExpense: (expense: Partial<Expense>) => Promise<boolean>;
+  deleteExpense: (id: string) => Promise<void>;
+
+  // Recurring Invoices & Subscriptions
+  fetchRecurringInvoices: () => Promise<void>;
+  addRecurringInvoice: (recurring: Partial<RecurringInvoice>) => Promise<boolean>;
+  updateRecurringInvoice: (recurring: Partial<RecurringInvoice>) => Promise<boolean>;
+  deleteRecurringInvoice: (id: string) => Promise<void>;
+  processRecurringInvoice: (id: string) => Promise<{ success: boolean; invoiceId?: string; invoiceNumber?: string }>;
+
+  // Inventory & Stock
+  fetchInventoryLogs: () => Promise<void>;
+  adjustInventory: (productId: string, type: 'in' | 'out' | 'adjustment', quantity: number, notes?: string) => Promise<boolean>;
+
+  // Public Client Portal
+  generatePortalLink: (docType: 'quotation' | 'invoice', docId: string) => Promise<{ token: string; shareUrl: string } | null>;
 }
 
 // Helper: Calculate totals for Line Items
@@ -107,7 +345,7 @@ export const calculateTotals = (items: LineItem[]) => {
   let discountTotal = 0;
   let taxTotal = 0;
 
-  items.forEach((item) => {
+  (items || []).forEach((item) => {
     if (item.type !== 'item') return;
     
     const baseAmount = item.quantity * item.unitPrice;
@@ -174,15 +412,21 @@ const defaultCompany: Company = {
   email: '',
   currency: import.meta.env.VITE_DEFAULT_CURRENCY || 'SAR',
   defaultTax: Number(import.meta.env.VITE_DEFAULT_TAX) || 15,
-  brandColor: import.meta.env.VITE_BRAND_COLOR || '#01696f'
+  brandColor: import.meta.env.VITE_BRAND_COLOR || '#01696f',
+  pdfTemplate: DEFAULT_PDF_TEMPLATE
 };
 
+const initialRoute = typeof window !== 'undefined' && !window.location.pathname.startsWith('/portal/')
+  ? pathToRoute(window.location.pathname)
+  : { page: 'dashboard', id: null };
+
 export const useERPStore = create<ERPState>((set, get) => ({
-  currentPage: 'dashboard',
-  currentRecordId: null,
-  activeQuoteId: localStorage.getItem('erp_active_quote'),
-  activeInvoiceId: localStorage.getItem('erp_active_invoice'),
+  currentPage: initialRoute.page,
+  currentRecordId: initialRoute.id,
+  activeQuoteId: initialRoute.page === 'quotation-detail' && initialRoute.id ? initialRoute.id : localStorage.getItem('erp_active_quote'),
+  activeInvoiceId: initialRoute.page === 'invoice-detail' && initialRoute.id ? initialRoute.id : localStorage.getItem('erp_active_invoice'),
   theme: (localStorage.getItem('erp_theme') as 'light' | 'dark' | 'system') || 'system',
+  uiTheme: localStorage.getItem('qvoke_ui_theme') || 'modern',
   density: (localStorage.getItem('erp_density') as 'comfortable' | 'compact') || 'comfortable',
   workspaceMode: (localStorage.getItem('erp_workspace_mode') as 'standard' | 'desktop') || 'standard',
   themePreset: localStorage.getItem('erp_theme_preset') || null,
@@ -196,6 +440,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
   invoices: [],
   suppliers: [],
   tasks: [],
+  expenses: [],
+  recurringInvoices: [],
+  inventoryLogs: [],
   companies: [],
   activeCompanyId: localStorage.getItem('erp_active_company'),
   features: {},
@@ -205,7 +452,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
   authChecked: false,
 
   setCurrentPage: (page) => set({ currentPage: page, currentRecordId: null }),
-  setRoute: (page, id = null) => {
+  setRoute: (page, id = null, pushHistory = true) => {
     const patch: Partial<ERPState> = { currentPage: page, currentRecordId: id };
     // Remember the document being edited so the user can resume it later.
     if (page === 'quotation-detail' && id) {
@@ -215,6 +462,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
     if (page === 'invoice-detail' && id) {
       patch.activeInvoiceId = id;
       localStorage.setItem('erp_active_invoice', id);
+    }
+    if (pushHistory && typeof window !== 'undefined' && !window.location.pathname.startsWith('/portal/')) {
+      const path = routeToPath(page, id);
+      if (window.location.pathname !== path) {
+        window.history.pushState({ page, id }, '', path);
+      }
     }
     set(patch);
   },
@@ -229,6 +482,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
     localStorage.setItem('erp_theme', theme);
     set({ theme });
     get().applyActiveTheme(); // preset colours differ per light/dark
+  },
+
+  setUITheme: (uiTheme) => {
+    document.documentElement.setAttribute('data-ui-theme', uiTheme);
+    localStorage.setItem('qvoke_ui_theme', uiTheme);
+    set({ uiTheme });
   },
 
   setDensity: (density) => {
@@ -433,8 +692,24 @@ export const useERPStore = create<ERPState>((set, get) => ({
         console.error('Failed to fetch feature flags:', e);
       }
 
-      // 8. Fetch companies the user belongs to (multi-tenancy)
+      // 8. Fetch Expenses, Recurring Invoices, Tasks, and Inventory
+      try {
+        await Promise.all([
+          get().fetchExpenses(),
+          get().fetchRecurringInvoices(),
+          get().fetchTasks(),
+          get().fetchInventoryLogs()
+        ]);
+      } catch (e) {
+        console.error('Failed to fetch auxiliary modules:', e);
+      }
+
+      // 9. Fetch companies the user belongs to (multi-tenancy)
       await get().fetchCompanies();
+
+      // 10. Apply UI Theme attribute
+      const storedUITheme = localStorage.getItem('qvoke_ui_theme') || 'modern';
+      document.documentElement.setAttribute('data-ui-theme', storedUITheme);
 
       set({ initialized: true });
     } catch (err) {
@@ -995,6 +1270,205 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }
     } catch (err) {
       console.error(err);
+    }
+  },
+
+  // ── EXPENSES & VENDOR BILLS ────────────────────────────────────────────────
+  fetchExpenses: async (filters = {}) => {
+    const { token } = get();
+    try {
+      const params = new URLSearchParams(filters).toString();
+      const url = params ? `/expenses?${params}` : '/expenses';
+      const res = await apiFetch(url, {}, token);
+      if (res.ok) {
+        set({ expenses: await res.json() });
+      }
+    } catch (err) {
+      console.error('Failed to fetch expenses:', err);
+    }
+  },
+
+  addExpense: async (expense) => {
+    const { token, expenses } = get();
+    try {
+      const res = await apiFetch('/expenses', {
+        method: 'POST',
+        body: JSON.stringify(expense)
+      }, token);
+      if (res.ok) {
+        const saved = await res.json();
+        await get().fetchExpenses();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to add expense:', err);
+      return false;
+    }
+  },
+
+  updateExpense: async (expense) => {
+    const { token } = get();
+    if (!expense.id) return false;
+    try {
+      const res = await apiFetch(`/expenses/${expense.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(expense)
+      }, token);
+      if (res.ok) {
+        await get().fetchExpenses();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to update expense:', err);
+      return false;
+    }
+  },
+
+  deleteExpense: async (id) => {
+    const { token, expenses } = get();
+    try {
+      const res = await apiFetch(`/expenses/${id}`, { method: 'DELETE' }, token);
+      if (res.ok) {
+        set({ expenses: expenses.filter((e) => e.id !== id) });
+      }
+    } catch (err) {
+      console.error('Failed to delete expense:', err);
+    }
+  },
+
+  // ── RECURRING INVOICES & SUBSCRIPTIONS ─────────────────────────────────────
+  fetchRecurringInvoices: async () => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/recurring-invoices', {}, token);
+      if (res.ok) {
+        set({ recurringInvoices: await res.json() });
+      }
+    } catch (err) {
+      console.error('Failed to fetch recurring invoices:', err);
+    }
+  },
+
+  addRecurringInvoice: async (recurring) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/recurring-invoices', {
+        method: 'POST',
+        body: JSON.stringify(recurring)
+      }, token);
+      if (res.ok) {
+        await get().fetchRecurringInvoices();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to add recurring invoice:', err);
+      return false;
+    }
+  },
+
+  updateRecurringInvoice: async (recurring) => {
+    const { token } = get();
+    if (!recurring.id) return false;
+    try {
+      const res = await apiFetch(`/recurring-invoices/${recurring.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(recurring)
+      }, token);
+      if (res.ok) {
+        await get().fetchRecurringInvoices();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to update recurring invoice:', err);
+      return false;
+    }
+  },
+
+  deleteRecurringInvoice: async (id) => {
+    const { token, recurringInvoices } = get();
+    try {
+      const res = await apiFetch(`/recurring-invoices/${id}`, { method: 'DELETE' }, token);
+      if (res.ok) {
+        set({ recurringInvoices: recurringInvoices.filter((r) => r.id !== id) });
+      }
+    } catch (err) {
+      console.error('Failed to delete recurring invoice:', err);
+    }
+  },
+
+  processRecurringInvoice: async (id) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch(`/recurring-invoices/${id}/process`, {
+        method: 'POST'
+      }, token);
+      if (res.ok) {
+        const data = await res.json();
+        // Refresh invoices and recurring list
+        const invRes = await apiFetch('/invoices', {}, token);
+        if (invRes.ok) set({ invoices: await invRes.json() });
+        await get().fetchRecurringInvoices();
+        return { success: true, invoiceId: data.invoiceId, invoiceNumber: data.invoiceNumber };
+      }
+      return { success: false };
+    } catch (err) {
+      console.error('Failed to process recurring invoice:', err);
+      return { success: false };
+    }
+  },
+
+  // ── INVENTORY & STOCK ──────────────────────────────────────────────────────
+  fetchInventoryLogs: async () => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/inventory/logs', {}, token);
+      if (res.ok) {
+        set({ inventoryLogs: await res.json() });
+      }
+    } catch (err) {
+      console.error('Failed to fetch inventory logs:', err);
+    }
+  },
+
+  adjustInventory: async (productId, type, quantity, notes) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch('/inventory/adjust', {
+        method: 'POST',
+        body: JSON.stringify({ productId, type, quantity, notes })
+      }, token);
+      if (res.ok) {
+        // Refresh products and logs
+        const prodRes = await apiFetch('/products', {}, token);
+        if (prodRes.ok) set({ products: await prodRes.json() });
+        await get().fetchInventoryLogs();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to adjust inventory:', err);
+      return false;
+    }
+  },
+
+  // ── PUBLIC CLIENT PORTAL ───────────────────────────────────────────────────
+  generatePortalLink: async (docType, docId) => {
+    const { token } = get();
+    try {
+      const res = await apiFetch(`/portal/generate-link/${docType}/${docId}`, {
+        method: 'POST'
+      }, token);
+      if (res.ok) {
+        return await res.json();
+      }
+      return null;
+    } catch (err) {
+      console.error('Failed to generate portal link:', err);
+      return null;
     }
   }
 }));

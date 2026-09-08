@@ -77,10 +77,10 @@ export const Customers: React.FC = () => {
     setEmail(c.email);
     setPhone(c.phone);
     setVatNumber(c.vatNumber || '');
-    setStreet(c.billingAddress.street);
-    setDistrict(c.billingAddress.district || '');
-    setCity(c.billingAddress.city);
-    setPostalCode(c.billingAddress.postalCode || '');
+    setStreet(c.billingAddress?.street || '');
+    setDistrict(c.billingAddress?.district || '');
+    setCity(c.billingAddress?.city || '');
+    setPostalCode(c.billingAddress?.postalCode || '');
     setFormOpen(true);
   };
 

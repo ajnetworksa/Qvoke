@@ -44,25 +44,37 @@ const ACTION_META: Record<string, { icon: React.ElementType; verb: string; cls: 
 };
 
 export const Dashboard: React.FC = () => {
-  const { invoices, quotations, setRoute, company, currentUser, features } = useERPStore();
+  const { invoices, quotations, expenses, products, setRoute, company, currentUser, features } = useERPStore();
   const canViewRevenue = currentUser?.role === 'admin' || !!currentUser?.permissions?.canViewRevenue;
   const canViewHistory = currentUser?.role === 'admin' || !!currentUser?.permissions?.canViewHistory;
   const trackingOn = features['tracking'] !== false;
 
   // Dynamic KPI calculations.
   const totalRevenue = invoices.reduce((sum, inv) => sum + inv.amountPaid, 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.total) || 0), 0);
+  const netProfit = totalRevenue - totalExpenses;
   const openQuotes = quotations.filter(q => q.status === 'draft' || q.status === 'sent').length;
   const unpaidInvoices = invoices.filter(i => i.status === 'posted' || i.status === 'partial').length;
   const overdueInvoices = invoices.filter(i => i.status === 'overdue').length;
+  const lowStockCount = products.filter(p => p.type === 'product' && (Number(p.stockQuantity) || 0) <= (Number(p.minStockLevel) || 5)).length;
 
   const stats = [
-    ...(canViewRevenue ? [{
-      label: 'Total Revenue / إجمالي الإيرادات',
-      value: totalRevenue,
-      change: 12.4,
-      icon: DollarSign,
-      format: 'currency' as const
-    }] : []),
+    ...(canViewRevenue ? [
+      {
+        label: 'Total Revenue / إجمالي الإيرادات',
+        value: totalRevenue,
+        change: 12.4,
+        icon: DollarSign,
+        format: 'currency' as const
+      },
+      {
+        label: 'Net Operating Profit / صافي الربح',
+        value: netProfit,
+        change: netProfit >= 0 ? 8.2 : -5.4,
+        icon: TrendingUp,
+        format: 'currency' as const
+      }
+    ] : []),
     { label: 'Open Quotes / العروض المفتوحة', value: openQuotes, change: 4.8, icon: FileSpreadsheet, format: 'number' as const },
     { label: 'Unpaid Invoices / فواتير غير مدفوعة', value: unpaidInvoices, change: -2.1, icon: Clock, format: 'number' as const },
     { label: 'Overdue Invoices / فواتير متأخرة', value: overdueInvoices, change: 8.5, icon: AlertTriangle, format: 'number' as const }

@@ -4,14 +4,21 @@ import { PageHeader } from '../components/PageHeader';
 import { DollarSign, FileSpreadsheet, TrendingUp, AlertTriangle, BarChart3, Activity, Users } from 'lucide-react';
 
 export const Reports: React.FC = () => {
-  const { invoices, company, currentUser, features } = useERPStore();
+  const { invoices, expenses, company, currentUser, features } = useERPStore();
   const canViewRevenue = currentUser?.role === 'admin' || !!currentUser?.permissions?.canViewRevenue;
   const usageEnabled = features['usage'] !== false;
 
   // Dynamic Financial aggregates
   const totalSales = invoices.reduce((sum, inv) => sum + inv.total, 0);
+  const totalSalesPreTax = invoices.reduce((sum, inv) => sum + (inv.subtotal || inv.total / 1.15), 0);
   const totalCollected = invoices.reduce((sum, inv) => sum + inv.amountPaid, 0);
   const totalOutstanding = invoices.reduce((sum, inv) => sum + inv.amountDue, 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.total) || 0), 0);
+  const totalExpensesPreTax = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const outputVAT = invoices.reduce((sum, inv) => sum + (inv.taxTotal || 0), 0);
+  const inputVAT = expenses.reduce((sum, e) => sum + (Number(e.taxAmount) || 0), 0);
+  const netVatLiability = Math.max(0, outputVAT - inputVAT);
+  const netProfit = totalCollected - totalExpenses;
 
   // Ageing Balance schedule modeling
   let agingCurrent = 0;

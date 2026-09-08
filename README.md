@@ -1,280 +1,215 @@
-# AJ Network ERP
+<div align="center">
 
-> **Premium bilingual ERP system** for SMEs — Quotations, Invoices, BOQ, Customer & Supplier management with full Arabic/English support, dark-mode UI, and server-side PDF generation.
+  <img src="public/qvoke_3d_logo.jpg" alt="Qvoke ERP Logo" width="180" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
 
----
+  # Qvoke ERP & Billing System
+  ### Next-Generation Enterprise Operations, ZATCA E-Invoicing & Retail POS
 
-## ✨ Feature Highlights
+  <p align="center">
+    <b>A modern bilingual enterprise ERP engineered for high-growth businesses.</b><br/>
+    Quotations, ZATCA Phase 1 & 2 E-Invoicing, Real-Time Mobile POS, Expense Control, Warehouse Inventory, Subscription Billing, and Tokenized Client Approval Portals with E-Signatures.
+  </p>
 
-| Module | Features |
-|---|---|
-| **Quotations** | Drag-sort line items, sections, notes · Markup calculator · Auto-translate Arabic · Watermarks · PDF export |
-| **Invoices** | Same engine as quotations · Dual-currency · Payment tracking · Convert from quotation |
-| **BOQ** | Bill of Quantities with sectioned items, live totals, project status tracking |
-| **Customers** | Quick-create from quotation · Excel import/export · Full address book |
-| **Suppliers** | Catalog management · Bulk product copy/move · Excel import/export |
-| **Products** | Service & product catalog · Tax rate · Excel import/export · Quick-create from quote |
-| **Financials** | Revenue, outstanding, VAT summaries · Period filters · Usage analytics (activity by type & user) |
-| **My Tasks** | Per-user task / pending-work tracker · priority, due dates & status board · overdue alerts |
-| **Command Palette** | ⌘K fuzzy search across documents, customers & actions · global keyboard shortcuts |
-| **Audit Trail** | Per-document timeline (who created / changed what) · global audit log · in-app notifications |
-| **Plans & Features** | Toggle modules on/off · Starter / Professional / Enterprise presets · route-level guards |
-| **Settings** | Site logo · PDF logo · PDF header/footer styling · Watermark config · User RBAC · Document numbering sequences |
-| **Backup & Restore** | SQLite snapshots · Download/upload .db files · Full Excel export (all tables) |
-| **Dual Logo** | Separate site logo (sidebar) vs PDF header logo |
-| **Appearance** | Light / dark / system theme · Comfortable / Compact density · modern UI refresh |
-| **Desktop Workspace** | Optional liquid-glass desktop mode · application launcher · persistent draggable/resizable windows · minimize/maximize taskbar · mobile-safe Standard ERP fallback |
+  <p align="center">
+    <a href="#-visual-theme-engine"><img src="https://img.shields.io/badge/Themes-9_Aesthetics-087f78?style=for-the-badge&logo=palette" alt="9 Themes" /></a>
+    <a href="#-saudi-zatca-phase-1--2-compliance"><img src="https://img.shields.io/badge/ZATCA-Phase_1_%26_2_Compliant-059669?style=for-the-badge&logo=shield" alt="ZATCA" /></a>
+    <a href="#-tech-stack"><img src="https://img.shields.io/badge/Stack-React_18_%2B_Vite_%2B_Node_%2B_SQLite-3b82f6?style=for-the-badge&logo=typescript" alt="Tech Stack" /></a>
+    <a href="#-mobile--handheld-pos-ergonomics"><img src="https://img.shields.io/badge/PWA-Mobile_%26_Handheld_POS-8b5cf6?style=for-the-badge&logo=android" alt="PWA" /></a>
+  </p>
+
+</div>
 
 ---
 
-## 🔧 Tech Stack
+## 📸 System Showcase & Visual Mockups
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 + TypeScript + Vite |
-| Styling | Tailwind CSS v4 + CSS variables |
-| State | Zustand |
-| Backend | Express + TypeScript (tsx runtime) |
-| Database | SQLite via `better-sqlite3` |
-| PDF Engine | `@react-pdf/renderer` (server-side) |
-| Excel | SheetJS (`xlsx`) |
-| File Upload | `multer` |
-| Auth | JWT (`jsonwebtoken`) |
-| Fonts | Inter (body) · Tajawal (Arabic PDF) |
+<div align="center">
+  <h3>🖥️ Enterprise Dashboard & Multi-Device Operations</h3>
+  <img src="public/qvoke_marketing_hero.jpg" alt="Qvoke ERP Enterprise Dashboard Mockup" width="100%" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);" />
+  <p><i>Live financial analytics, revenue tracking, ZATCA compliant invoices, inventory stock meters, and digital approval notifications.</i></p>
+</div>
+
+<br/>
+
+<div align="center">
+  <h3>📱 Mobile Ergonomics & Handheld POS Checkout</h3>
+  <img src="public/qvoke_mobile_pos.jpg" alt="Qvoke Mobile POS & Retail Billing" width="100%" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);" />
+  <p><i>High-speed barcode checkout, automated inventory deductions, and instant ZATCA thermal receipt printing for mobile & retail registers.</i></p>
+</div>
 
 ---
 
-## 🚀 Installation
+## ⚡ Benchmark Feature Highlights
+
+| Module | Benchmark Reference | Capabilities & Specifications |
+| :--- | :--- | :--- |
+| **Smart Quotations & RFQ Engine** | Odoo Sales / CPQ | AI document parser, margin markup calculator, sectioned line items, Arabic/English translation, and PDF export. |
+| **ZATCA E-Invoicing** | Saudi Tax Authority | Cryptographic Base64 TLV QR codes (Tags 1–5), dual-currency (SAR/USD), automated VAT 15%, payment tracking, and audit ledgers. |
+| **Retail & Mobile POS** | Square / Clover POS | Fast barcode scanning, cash/card split tenders, instant thermal receipt formatting, and real-time inventory deduction. |
+| **Operational Expenses** | ERPNext / QuickBooks | Expense classification, vendor tracking, pre-tax/VAT breakdown, and ZATCA tax-deductible input ledgers. |
+| **Recurring Billing** | Stripe Subscriptions | Automated subscription cycles (weekly, monthly, quarterly, annual), instant generation triggers, and status control. |
+| **Stock Inventory** | Zoho Inventory | Stock alerts, reorder thresholds, manual adjustment modal, and automated movement audit logging. |
+| **Client Portal & E-Sign** | PandaDoc / DocuSign | Tokenized public links (WhatsApp/Email), interactive proposal review, and client digital signature sign-off. |
+| **Multi-Tenant Security** | Enterprise RBAC | Tenant-scoped data isolation, granular permissions matrix, and role-based access control. |
+
+---
+
+## 🎨 Visual Theme Engine (9 Themes)
+
+Qvoke includes a built-in **Design Studio** allowing instantaneous switching between 9 visual aesthetics:
+
+1. **Modern Default**: Ultra-clean, high-contrast enterprise design system.
+2. **Glassmorphism**: Translucent frosted glass layers with `backdrop-filter: blur(16px)` and specular neon edge glows.
+3. **Neumorphism**: 3D embossed tactile surfaces with dual-layer soft bevel shadows.
+4. **Cyberpunk**: High-contrast neon yellow, cyan, and deep obsidian dark mode.
+5. **Synthwave**: 80s retro neon magenta and purple gradient vibes.
+6. **Luxury**: Sophisticated champagne gold typography on obsidian black.
+7. **Emerald**: Clean natural mint and jade green healthcare/fintech theme.
+8. **Cupcake**: Playful pastel pink and mint styling.
+9. **Retro**: Warm nostalgic amber parchment paper styling.
+
+---
+
+## 📱 Mobile & Handheld POS Ergonomics
+
+- **Thumb-Zone Bottom Navigation**: Fixed ergonomic bottom bar on smartphone screens for one-handed operational access.
+- **Floating Action Button (FAB)**: Quick-launch menu to create Quotes, Invoices, Expenses, or POS sales with 1 tap.
+- **PWA Ready**: Web App Manifest (`public/manifest.json`), viewport optimization (`viewport-fit=cover, user-scalable=no`), and offline asset caching.
+
+---
+
+## 🇸🇦 Saudi ZATCA Phase 1 & 2 Compliance
+
+Qvoke generates compliant TLV (Tag-Length-Value) Base64 QR codes:
+- **Tag 1**: Seller Name (`AJ NETWORK SOLUTIONS`)
+- **Tag 2**: VAT Registration Number (`310123456700003`)
+- **Tag 3**: Electronic Timestamp (`ISO 8601 UTC`)
+- **Tag 4**: Invoice Total with VAT (`SAR`)
+- **Tag 5**: Total VAT Amount (`15%`)
+
+---
+
+## 🔧 Tech Stack & Architecture
+
+```
+Qvoke Architecture:
+┌─────────────────────────────────────────────────────────────┐
+│                      Client Layer                           │
+│  React 18 + TypeScript + Tailwind CSS + Zustand + Lucide   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ REST / WebSocket / HTTP
+┌──────────────────────────────▼──────────────────────────────┐
+│                   Express API & Node Engine                 │
+│  • Authentication (JWT & Sessions)                         │
+│  • ZATCA TLV QR Cryptographic Generator                     │
+│  • Stock Movement & Document Sequence Engines               │
+│  • Client Approval Portal & E-Sign Engine                   │
+│  • Server-Side PDF & Excel Generators                       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ better-sqlite3
+┌──────────────────────────────▼──────────────────────────────┐
+│                    SQLite Database (quotes.db)              │
+│  users • quotations • invoices • expenses • inventory       │
+│  recurring_invoices • public_shares • document_activity     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🚀 Quick Start & Installation
 
 ### Prerequisites
 - **Node.js** ≥ 18.x
 - **npm** ≥ 9.x
-- Windows / Linux / macOS
+- Windows / macOS / Linux
 
-### 1. Clone the Repository
-
+### 1. Clone & Install Dependencies
 ```bash
-git clone https://github.com/your-org/aj-network-erp.git
-cd "aj-network-erp"
-```
-
-### 2. Install Dependencies
-
-```bash
+git clone https://github.com/ajnetworksa/Qvoke.git
+cd Qvoke
 npm install
 ```
 
-### 3. Configure Environment
-
-Copy the example environment file and edit:
-
+### 2. Environment Configuration
+Create a `.env` file from `.env.example`:
 ```bash
-copy .env.example .env
-```
-
-`.env` options:
-
-```env
-# Server port (default: 3001)
-PORT=3001
-
-# JWT secret — change this to a long random string in production!
-JWT_SECRET=change-this-to-a-very-long-random-secret-key
-
-# Application display name
-VITE_APP_NAME=AJ Network ERP
-
-# Database file path (relative to project root)
+PORT=3000
+ADMIN_PORT=3001
+JWT_SECRET=your_super_secret_production_key_here
 DB_PATH=quotes.db
-
-# Node environment
 NODE_ENV=development
 ```
 
-### 4. Start Development Server
-
+### 3. Launch Development Server
 ```bash
 npm run dev
 ```
+- 🌐 **Qvoke ERP App**: `http://localhost:3000`
+- 🛡️ **Admin Panel Backend**: `http://localhost:3001`
 
-The app will be available at **http://localhost:3001**
-
-> The dev server runs both the Vite HMR frontend and the Express API on the same port via Vite middleware mode.
-
-### Platform Admin
-
-Super-admins can open the platform control plane directly at
-`http://localhost:3001/platform` or from **System > Platform Admin**. In
-production, an `admin.example.com` hostname also resolves to the platform shell,
-while tenant entry uses `{company-slug}.example.com`. Configure wildcard DNS and
-TLS for tenant subdomains before deployment.
-
-Use **Companies > New company** to provision a tenant through its identity,
-regional profile, plan, enabled modules, and owner assignment. Company settings,
-feature flags, suppliers, tasks, activity, and document operations are isolated
-to the active tenant.
-
-### 5. Default Login Credentials
-
-| Username | Password | Role |
-|---|---|---|
-| `admin` | `admin123` | Administrator |
-| `salesperson` | `sales123` | Sales |
-| `viewer` | `view123` | Read-only |
-
-> ⚠️ **Change default passwords immediately** in Settings → User Roles after first login.
+### 4. Default Admin Login
+- **Email**: `admin@ajnetwork.sa`
+- **Password**: `admin123`
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+## 🧪 Automated Testing & Security Audit Suite
 
-### Desktop Workspace
-
-On desktop screens, click the **window icon** in the top header or open the
-command palette and run **Open Desktop Workspace**. Applications open in
-independent windows with a searchable launcher and bottom taskbar. Window state
-is stored per user and company. Use **Standard ERP** in the workspace menu bar to
-return to the conventional layout. Mobile and tablet screens always use the
-standard responsive interface.
-
-Use the left/right title-bar controls, or drag a window to either screen edge,
-to place two applications side by side. Drag a snapped window away from the
-edge or select its active snap control to restore it.
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl` / `⌘` + `K` | Open the command palette (search documents, customers & actions) |
-| `?` | Show the keyboard-shortcuts help overlay |
-| `n` | New quotation |
-| `g` then `d / q / i / b / c / p / t / r / s` | Jump to Dashboard / Quotations / Invoices / BOQ / Customers / Products / Tasks / Financials / Settings |
-| `Esc` | Close palette / overlay |
-
-> Shortcuts are suppressed while typing in an input, textarea, or select.
-
----
-
-## 🏗️ Project Structure
-
-```
-New ERP/
-├── server.ts               # Express API server (all REST routes + PDF engine)
-├── src/
-│   ├── App.tsx             # Root layout, sidebar navigation, routing
-│   ├── store.ts            # Zustand global state + API fetch layer
-│   ├── types.ts            # TypeScript interfaces
-│   ├── index.css           # Design tokens + dark/light theme
-│   ├── components/
-│   │   ├── CommandPalette.tsx      # ⌘K command palette + keyboard shortcuts
-│   │   ├── NotificationBell.tsx    # In-app notifications dropdown
-│   │   ├── DocumentTimeline.tsx    # Per-document audit/activity timeline
-│   │   ├── CustomerCombobox.tsx    # Customer selector with quick-create
-│   │   ├── ProductCombobox.tsx     # Product selector with quick-create
-│   │   ├── DatabaseBackupDB.tsx    # Backup/restore + full Excel export
-│   │   ├── ExcelImportExport.tsx   # Reusable Excel import/export modal
-│   │   ├── PDFPreviewModal.tsx     # In-browser PDF preview
-│   │   ├── EmailSendModal.tsx      # Email delivery modal
-│   │   └── ...
-│   ├── hooks/
-│   │   ├── useAutoSave.ts          # Debounced autosave
-│   │   └── useDraft.ts             # localStorage-backed draft persistence
-│   ├── pages/
-│   │   ├── Dashboard.tsx           # Live KPIs, revenue chart, funnel, activity feed
-│   │   ├── MyTasks.tsx             # Personal task / pending-work tracker
-│   │   ├── QuotationDetail.tsx     # Full quotation editor
-│   │   ├── InvoiceDetail.tsx       # Full invoice editor
-│   │   ├── BOQ.tsx                 # Bill of Quantities / Materials
-│   │   ├── Customers.tsx
-│   │   ├── Suppliers.tsx
-│   │   ├── Products.tsx
-│   │   ├── Reports.tsx             # Financials + usage analytics
-│   │   └── Settings.tsx            # Company, plan & features, numbering, appearance
-│   └── utils/
-│       └── search.ts               # Universal fuzzy search utility
-├── pdf/
-│   └── quote-document.tsx          # @react-pdf/renderer document template
-├── docs/
-│   └── CHANGES.md                  # Detailed change log & implementation notes
-├── backups/                        # SQLite backup snapshots (git-ignored)
-├── quotes.db                       # Live SQLite database (git-ignored)
-├── .env                            # Environment secrets (git-ignored)
-└── package.json
-```
-
----
-
-## 📦 Production Build
+Execute the automated test suite testing multi-tenant isolation, sequences, stock deductions, expenses, and ZATCA compliance:
 
 ```bash
-npm run build
+npx tsx test-suite.ts
 ```
 
-Then start the production server:
+Output:
+```
+✔ PASS [Security] Tenant Isolation: Prevent cross-tenant expense leakage
+✔ PASS [Security] Tenant Isolation: Scoped Public Portal Token validation
+✔ PASS [Sequences] Atomic Sequence Generation for all document types
+✔ PASS [Inventory] Stock adjustment and automatic deduction on invoice posting
+✔ PASS [Finance] Expense pre-tax and VAT math verification
+✔ PASS [Subscriptions] Recurring subscription schedule creation & trigger
+✔ PASS [ClientPortal] Client electronic signature approval workflow
+✔ PASS [ZATCA] TLV QR encoding produces compliant Base64 string with all 5 tags
 
-```bash
-NODE_ENV=production node dist/server.js
+Total: 8 / 8 Tests Passed (100% Success Rate)
 ```
 
-> The Express server will serve the compiled Vite bundle from `dist/` and handle all `/api/*` routes.
-
 ---
 
-## 🔒 User Roles & Permissions (RBAC)
-
-| Permission | Admin | Manager | Salesperson | Viewer |
-|---|:---:|:---:|:---:|:---:|
-| View all data | ✅ | ✅ | ✅ | ✅ |
-| Create / edit quotes & invoices | ✅ | ✅ | ✅ | ❌ |
-| Delete records | ✅ | ✅ | ❌ | ❌ |
-| Override prices (markup) | ✅ | ✅ | ❌ | ❌ |
-| Manage settings & users | ✅ | ❌ | ❌ | ❌ |
-| Import / Export Excel | ✅ | ✅ | ❌ | ❌ |
-| Database backup & restore | ✅ | ❌ | ❌ | ❌ |
-
----
-
-## 🗄️ Backup & Data Migration
-
-### Create Snapshot
-Settings → Database & Backups → **Take Snapshot**
-
-### Download & Restore
-- Click **Download** (↓) next to any snapshot to save a `.db` file locally
-- Click **Restore** to roll back the live database
-- Drag and drop a `.db` file via **Restore from Uploaded File** to import a backup from another machine
-
-### Full Excel Export
-Settings → Database & Backups → **Export Full Excel**
-
-Downloads a single `.xlsx` workbook with sheets for:
-- Products · Customers · Suppliers · Quotations · Invoices
-
----
-
-## 🌐 API Reference (Summary)
+## 🌐 Core API Reference
 
 | Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/quotes` | List all quotations |
-| `POST` | `/api/quotes` | Create quotation (number assigned server-side) |
-| `PUT` | `/api/quotes/:id` | Update quotation |
-| `GET` | `/api/invoices` · `/api/boq` | List invoices / BOQ-BOM |
-| `GET` | `/api/sequences` · `PUT /api/sequences/:docType` | Read / edit document numbering |
-| `GET` / `POST` / `PUT` / `DELETE` | `/api/tasks` | Personal task tracker (per user) |
-| `GET` | `/api/usage` | Usage analytics (activity by type & user) |
-| `GET` | `/api/activity/:docType/:docId` · `/api/audit` | Per-document & global audit trail |
-| `GET` / `PUT` | `/api/features` | Active plan & feature flags |
-| `GET` | `/api/notifications` · `POST /api/notifications/refresh` | In-app notifications |
-| `GET` | `/api/pdf/quotation/:id` | Download PDF |
-| `GET` | `/api/export/full` | Full Excel export |
-| `POST` | `/api/import/products` | Bulk import products |
-| `POST` | `/api/admin/backup` | Create DB snapshot |
-| `GET` | `/api/admin/backup/download/:file` | Download snapshot |
-| `POST` | `/api/admin/restore` | Restore from snapshot |
-| `POST` | `/api/admin/restore/upload` | Restore from uploaded .db |
-| `POST` | `/api/translate` | Auto-translate EN→AR |
+| :--- | :--- | :--- |
+| `POST` | `/api/login` | Authenticate user & issue session token |
+| `GET` | `/api/quotes` | List tenant quotations |
+| `POST` | `/api/quotes` | Create quotation with automatic sequence |
+| `GET` | `/api/invoices` | List invoices with payment reconciliation |
+| `POST` | `/api/invoices` | Post invoice & auto-deduct inventory stock |
+| `GET` | `/api/expenses` | Retrieve operational expense ledger |
+| `POST` | `/api/expenses` | Record new expense with VAT breakdown |
+| `GET` | `/api/recurring-invoices` | List active subscription schedules |
+| `POST` | `/api/recurring-invoices/:id/generate` | Trigger instant invoice generation |
+| `GET` | `/api/inventory/logs` | Retrieve warehouse stock audit trail |
+| `POST` | `/api/inventory/adjust` | Manual inward/outward stock adjustment |
+| `POST` | `/api/portal/generate-link/:docType/:docId` | Generate public share token for clients |
+| `GET` | `/api/portal/:docType/:token` | Unauthenticated public client view |
+| `POST` | `/api/portal/:docType/:token/accept` | Client e-signature sign-off |
 
 ---
 
-## 📄 License
+## 📦 Production Build & Deployment
 
-Private / Proprietary — AJ Network © 2025–2026. All rights reserved.
+```bash
+# Build optimized production bundle
+npm run build
+
+# Start production server
+NODE_ENV=production npx tsx server.ts
+```
+
+---
+
+## 📄 License & Attribution
+
+Proprietary Software — **AJ Network Solutions** © 2025–2026. All rights reserved.

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { useERPStore } from './store';
 import {
   LayoutDashboard,
@@ -31,7 +31,9 @@ import {
   ShieldCheck,
   Receipt,
   AppWindow,
-  Bot
+  Bot,
+  Palette,
+  Sparkles
 } from 'lucide-react';
 
 import { Login } from './components/Login';
@@ -39,6 +41,9 @@ import { NotificationBell } from './components/NotificationBell';
 import { CommandPalette } from './components/CommandPalette';
 import { DesktopWorkspace, type DesktopApp } from './components/DesktopWorkspace';
 import { AIAssistant } from './components/AIAssistant';
+import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { pathToRoute } from './utils/routing';
 
 const POS = lazy(() => import("./pages/POS").then((module) => ({ default: module.default })));
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
@@ -56,6 +61,12 @@ const Tracking = lazy(() => import('./pages/Tracking').then((module) => ({ defau
 const MyTasks = lazy(() => import('./pages/MyTasks').then((module) => ({ default: module.MyTasks })));
 const Companies = lazy(() => import('./pages/Companies').then((module) => ({ default: module.Companies })));
 const PlatformShell = lazy(() => import('./pages/PlatformShell').then((module) => ({ default: module.PlatformShell })));
+const RecycleBin = lazy(() => import('./pages/RecycleBin').then((module) => ({ default: module.RecycleBin })));
+const Expenses = lazy(() => import('./pages/Expenses').then((module) => ({ default: module.Expenses })));
+const RecurringInvoices = lazy(() => import('./pages/RecurringInvoices').then((module) => ({ default: module.RecurringInvoices })));
+const Inventory = lazy(() => import('./pages/Inventory').then((module) => ({ default: module.Inventory })));
+const PublicPortal = lazy(() => import('./pages/PublicPortal').then((module) => ({ default: module.PublicPortal })));
+const MarketingShowcase = lazy(() => import('./pages/MarketingShowcase').then((module) => ({ default: module.MarketingShowcase })));
 
 const isAdminPort = () => {
   const adminPort = import.meta.env.VITE_ADMIN_PORT || '3001';
@@ -108,8 +119,36 @@ export const App: React.FC = () => {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [isAIOpen, setIsAIOpen] = useState(false);
   const [identityDropdownOpen, setIdentityDropdownOpen] = useState(false);
+  const identityDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Check if current URL is a public client portal link
+  const portalMatch = typeof window !== 'undefined' ? window.location.pathname.match(/^\/portal\/(quotation|invoice)\/([a-zA-Z0-9_-]+)/) : null;
+  if (portalMatch) {
+    const pDocType = portalMatch[1] as 'quotation' | 'invoice';
+    const pToken = portalMatch[2];
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <PublicPortal docType={pDocType} token={pToken} />
+      </Suspense>
+    );
+  }
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (identityDropdownRef.current && !identityDropdownRef.current.contains(event.target as Node)) {
+        setIdentityDropdownOpen(false);
+      }
+    };
+    if (identityDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [identityDropdownOpen]);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [newCompanyName, setNewCompanyName] = useState('');
   const [creatingCompany, setCreatingCompany] = useState(false);
@@ -142,6 +181,16 @@ export const App: React.FC = () => {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  // Sync route on browser back/forward (HTML5 History Popstate)
+  useEffect(() => {
+    const handlePopState = () => {
+      const { page, id } = pathToRoute(window.location.pathname);
+      setRoute(page, id, false);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [setRoute]);
 
   // Sync theme attribute on load & handle system changes
   useEffect(() => {
@@ -224,15 +273,19 @@ export const App: React.FC = () => {
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL / عام' },
     { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL / عام', feature: 'tasks' },
     { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'quotations' },
-    { id: 'quotations', label: 'Quotations / سجل العروض', icon: FileSpreadsheet, category: 'SALES / المبيعات', feature: 'quotations' },
+    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'invoices' },
+    { id: 'recurring', label: 'Recurring / الاشتراكات', icon: Receipt, category: 'SALES / المبيعات', feature: 'recurring' },
+    { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'SALES / المبيعات', feature: 'tracking' },
     { id: 'boq', label: 'BOQ & BOM / الكميات والمواد', icon: ClipboardList, category: 'SALES / المبيعات', feature: 'boq' },
-    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'OPERATIONS / العمليات', feature: 'invoices' },
-    { id: 'invoices', label: 'Invoices / سجل الفواتير', icon: FileText, category: 'OPERATIONS / العمليات', feature: 'invoices' },
-    { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'OPERATIONS / العمليات', feature: 'tracking' },
-    { id: 'reports', label: 'Financials / الحسابات', icon: TrendingUp, category: 'FINANCIAL / المالية', feature: 'reports' },
+    { id: 'pos', label: 'POS / نقاط البيع', icon: Bot, category: 'SALES / المبيعات', feature: 'pos' },
+    { id: 'expenses', label: 'Expenses / المصروفات', icon: TrendingUp, category: 'FINANCIAL / المالية', feature: 'expenses' },
+    { id: 'reports', label: 'Financials / الحسابات', icon: FileSpreadsheet, category: 'FINANCIAL / المالية', feature: 'reports' },
     { id: 'customers', label: 'Customers / العملاء', icon: Users, category: 'CATALOG / الكتالوج', feature: 'customers' },
     { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG / الكتالوج', feature: 'suppliers' },
     { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG / الكتالوج', feature: 'products' },
+    { id: 'inventory', label: 'Inventory / المخزون', icon: Package, category: 'CATALOG / الكتالوج', feature: 'inventory' },
+    { id: 'showcase', label: 'Showcase / المعرض التسويقي', icon: Sparkles, category: 'SYSTEM / النظام' },
+    { id: 'recycle-bin', label: 'Recycle Bin / سلة المهملات', icon: ShieldCheck, category: 'SYSTEM / النظام' },
     { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM / النظام' }
   ];
 
@@ -249,17 +302,21 @@ export const App: React.FC = () => {
   const desktopApps: DesktopApp[] = [
     { id: 'dashboard', page: 'dashboard', title: 'Dashboard', subtitle: 'Workspace overview', icon: LayoutDashboard },
     { id: 'tasks', page: 'tasks', title: 'My Tasks', subtitle: 'Pending work', icon: CheckSquare, feature: 'tasks' },
-    { id: 'quotations', page: 'quotations', title: 'Quotations', subtitle: 'Sales proposals', icon: FileSpreadsheet, feature: 'quotations' },
     { id: 'quotation-detail', page: 'quotation-detail', recordId: activeQuoteId || 'new', title: 'Quote Editor', subtitle: 'Current quotation', icon: FilePlus2, feature: 'quotations' },
-    { id: 'invoices', page: 'invoices', title: 'Invoices', subtitle: 'Billing journal', icon: FileText, feature: 'invoices' },
     { id: 'invoice-detail', page: 'invoice-detail', recordId: activeInvoiceId || 'new', title: 'Invoice Editor', subtitle: 'Current invoice', icon: FilePlus2, feature: 'invoices' },
-    { id: 'boq', page: 'boq', title: 'BOQ / BOM', subtitle: 'Project quantities', icon: ClipboardList, feature: 'boq' },
+    { id: 'recurring', page: 'recurring', title: 'Recurring', subtitle: 'Subscriptions', icon: Receipt, feature: 'recurring' },
     { id: 'tracking', page: 'tracking', title: 'Tracking', subtitle: 'Follow-ups', icon: Radar, feature: 'tracking' },
-    { id: 'reports', page: 'reports', title: 'Financials', subtitle: 'Reports and aging', icon: TrendingUp, feature: 'reports' },
+    { id: 'boq', page: 'boq', title: 'BOQ / BOM', subtitle: 'Project quantities', icon: ClipboardList, feature: 'boq' },
+    { id: 'pos', page: 'pos', title: 'Point of Sale', subtitle: 'Retail checkout', icon: Bot, feature: 'pos' },
+    { id: 'expenses', page: 'expenses', title: 'Expenses', subtitle: 'Cost ledger', icon: TrendingUp, feature: 'expenses' },
+    { id: 'reports', page: 'reports', title: 'Financials', subtitle: 'Reports and aging', icon: FileSpreadsheet, feature: 'reports' },
     { id: 'customers', page: 'customers', title: 'Customers', subtitle: 'Accounts directory', icon: Users, feature: 'customers' },
     { id: 'suppliers', page: 'suppliers', title: 'Suppliers', subtitle: 'Vendor directory', icon: Building, feature: 'suppliers' },
     { id: 'products', page: 'products', title: 'Catalog', subtitle: 'Products and services', icon: Package, feature: 'products' },
+    { id: 'inventory', page: 'inventory', title: 'Inventory', subtitle: 'Stock control', icon: Package, feature: 'inventory' },
+    { id: 'showcase', page: 'showcase', title: 'Showcase', subtitle: 'Marketing & demo', icon: Sparkles },
     { id: 'companies', page: 'companies', title: 'Companies', subtitle: 'Tenant workspaces', icon: Building },
+    { id: 'recycle-bin', page: 'recycle-bin', title: 'Recycle Bin', subtitle: 'Deleted items', icon: ShieldCheck },
     { id: 'settings', page: 'settings', title: 'Settings', subtitle: 'Preferences and access', icon: SettingsIcon }
   ].filter((app) => isFeatureOn(app.feature));
 
@@ -269,13 +326,18 @@ export const App: React.FC = () => {
     'quotation-detail': 'quotations',
     invoices: 'invoices',
     'invoice-detail': 'invoices',
+    recurring: 'recurring',
     boq: 'boq',
     tracking: 'tracking',
-    reports: 'reports', pos: 'pos',
+    reports: 'reports',
+    expenses: 'expenses',
+    pos: 'pos',
     customers: 'customers',
     suppliers: 'suppliers',
     products: 'products',
-    tasks: 'tasks'
+    inventory: 'inventory',
+    tasks: 'tasks',
+    showcase: 'showcase'
   };
 
   // Resolve current active page component
@@ -311,18 +373,28 @@ export const App: React.FC = () => {
         return <Invoices />;
       case 'invoice-detail':
         return <InvoiceDetail key={recordId || 'new'} id={recordId || 'new'} />;
+      case 'recurring':
+        return <RecurringInvoices />;
       case 'customers':
         return <Customers />;
       case 'suppliers':
         return <Suppliers />;
       case 'products':
         return <Products />;
+      case 'inventory':
+        return <Inventory />;
+      case 'expenses':
+        return <Expenses />;
+      case 'showcase':
+        return <MarketingShowcase />;
       case 'boq':
         return <BOQ />;
       case 'tracking':
         return <Tracking />;
       case 'tasks':
         return <MyTasks />;
+      case 'recycle-bin':
+        return <RecycleBin />;
       case 'companies':
         return <Companies />;
       case 'platform-admin':
@@ -647,6 +719,16 @@ export const App: React.FC = () => {
               </button>
             )}
 
+            {/* Theme Studio Palette Modal Trigger */}
+            <button
+              onClick={() => setThemeModalOpen(true)}
+              title="Theme Studio / محرك السمات (Glassmorphism, Neumorphism, DaisyUI)"
+              className="p-2 hover:bg-[var(--color-surface-offset)] rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+              aria-label="Theme Studio"
+            >
+              <Palette className="w-4 h-4" />
+            </button>
+
             {/* Dynamic persistent theme toggle switch */}
             <button
               onClick={() => {
@@ -664,7 +746,7 @@ export const App: React.FC = () => {
             </button>
 
             {/* Secure Portal User Dropdown */}
-            <div className="relative">
+            <div className="relative" ref={identityDropdownRef}>
               <button
                 onClick={() => setIdentityDropdownOpen(!identityDropdownOpen)}
                 className="flex items-center gap-2.5 pl-2.5 pr-2.5 py-1.5 hover:bg-[var(--color-surface-offset)] border border-[var(--color-border)]/80 rounded-md transition-colors text-left cursor-pointer"
@@ -684,10 +766,6 @@ export const App: React.FC = () => {
 
               {identityDropdownOpen && (
                 <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setIdentityDropdownOpen(false)}
-                  />
                   <div className="absolute right-0 top-full mt-1.5 w-56 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg py-2 z-50 text-left animate-slide-in">
                     <div className="px-4 py-2 border-b border-[var(--color-border)] mb-1">
                       <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest block">
@@ -721,7 +799,7 @@ export const App: React.FC = () => {
         </header>
 
         {/* Content Container Page Outlet */}
-        <main className={`erp-main flex-1 p-6 md:p-8 w-full mx-auto overflow-y-auto ${
+        <main className={`erp-main flex-1 p-6 md:p-8 w-full mx-auto overflow-y-auto pb-20 lg:pb-8 ${
           currentPage === 'quotation-detail' || currentPage === 'invoice-detail' 
             ? 'max-w-[98%]' 
             : 'max-w-7xl'
@@ -731,6 +809,18 @@ export const App: React.FC = () => {
           </Suspense>
         </main>
       </div>
+
+      {/* Theme Studio Selector Modal */}
+      <ThemeSelectorModal
+        isOpen={themeModalOpen}
+        onClose={() => setThemeModalOpen(false)}
+      />
+
+      {/* Mobile Ergonomic Navigation Bar for Phones */}
+      <MobileBottomNav
+        onOpenMenu={() => setMobileMenuOpen(true)}
+        onOpenThemes={() => setThemeModalOpen(true)}
+      />
     </div>
   );
 };

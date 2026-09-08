@@ -25,13 +25,21 @@ import {
   X,
   PlusSquare,
   AlertTriangle,
-  Globe
+  Globe,
+  Loader2,
+  Share2,
+  Bot,
+  Upload
 } from 'lucide-react';
 import { PDFPreviewModal } from '../components/PDFPreviewModal';
 import { EmailSendModal } from '../components/EmailSendModal';
+import { PublicShareModal } from '../components/PublicShareModal';
 import { DocumentTimeline } from '../components/DocumentTimeline';
 import { getLineNumber } from '../utils/lineNumber';
 import type { LineNumberFormat } from '../utils/lineNumber';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableTableRow } from '../components/SortableTableRow';
 
 interface QuotationDetailProps {
   id: string; // 'new' or a quotation id
@@ -49,7 +57,8 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     convertToInvoice,
     company,
     token,
-    currentUser
+    currentUser,
+    initialized
   } = useERPStore();
 
   const isNew = id === 'new';
@@ -81,6 +90,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'items' | 'terms'>('items');
 
   // Populate data on load
@@ -174,7 +184,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       setDate(new Date(existingQuote.date));
       setValidUntil(new Date(existingQuote.validUntil));
       setStatus(existingQuote.status);
-      setLineItems(JSON.parse(JSON.stringify(existingQuote.lineItems))); // copy
+      setLineItems(existingQuote.lineItems ? JSON.parse(JSON.stringify(existingQuote.lineItems)) : []); // copy
       setNotes(existingQuote.notes || '');
       setTerms(existingQuote.terms || '');
       setCurrency(existingQuote.currency);
@@ -375,7 +385,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     let baseTotal = 0;
     let markupProfit = 0;
 
-    lineItems.forEach((item) => {
+    (lineItems || []).forEach((item) => {
       if (item.type !== 'item') return;
       const rule = getItemRule(item);
       const saleTotal = item.subtotal || 0;
@@ -596,26 +606,24 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     setIsDirty(true);
   };
 
-  // Reordering lines (HTML5 drag & drop helper)
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    e.dataTransfer.setData('text/plain', String(index));
-  };
+  // Reordering lines (dnd-kit)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    const startIndex = parseInt(e.dataTransfer.getData('text/plain'));
-    if (isNaN(startIndex) || startIndex === targetIndex) return;
+    const oldIndex = lineItems.findIndex((item) => item.id === active.id);
+    const newIndex = lineItems.findIndex((item) => item.id === over.id);
 
-    const list = [...lineItems];
-    const [removed] = list.splice(startIndex, 1);
-    list.splice(targetIndex, 0, removed);
-
-    setLineItems(list);
-    setIsDirty(true);
+    if (oldIndex !== -1 && newIndex !== -1) {
+      setLineItems((items) => arrayMove(items, oldIndex, newIndex));
+      setIsDirty(true);
+    }
   };
 
   // Form persistence
@@ -705,6 +713,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   };
 
   const [isTranslating, setIsTranslating] = useState(false);
+  const lastTranslateMap = useRef(new Map<string, string>());
 
   const translateText = async (text: string): Promise<string> => {
     if (!text) return '';
@@ -795,6 +804,52 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     }
   };
 
+  const [isRfqLoading, setIsRfqLoading] = useState(false);
+  const rfqInputRef = useRef<HTMLInputElement>(null);
+
+  const handleRfqUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsRfqLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/rfq/parse', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to parse RFQ document');
+
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        const newItems: LineItem[] = data.items.map((it: any) => ({
+          id: `line-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          type: 'item',
+          description: it.description || 'Imported RFQ Item',
+          quantity: Number(it.quantity) || 1,
+          unit: it.unit || 'pcs',
+          unitPrice: Number(it.unitPrice) || 0,
+          discountPercent: 0,
+          taxRate: 15,
+          total: (Number(it.quantity) || 1) * (Number(it.unitPrice) || 0)
+        }));
+
+        setLineItems(prev => [...prev, ...newItems]);
+        setIsDirty(true);
+        alert(`Successfully imported ${newItems.length} line items from RFQ document!`);
+      } else {
+        alert('No items found in the uploaded RFQ document.');
+      }
+    } catch (err: any) {
+      console.error('RFQ Parse Error:', err);
+      alert(err.message || 'Failed to process RFQ document.');
+    } finally {
+      setIsRfqLoading(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
   const handleDelete = () => {
     deleteQuotation(id);
     draft.clear();
@@ -827,6 +882,35 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
   const customerObj = customers.find((c) => c.id === customerId);
 
+  if (!isNew && !existingQuote && !initialized) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)] mb-3" />
+        <p className="text-sm text-[var(--color-text-muted)] font-medium">Loading quotation details...</p>
+      </div>
+    );
+  }
+
+  if (!isNew && !existingQuote && initialized) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center animate-fade-in">
+        <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+          <AlertTriangle className="w-7 h-7 text-red-500" />
+        </div>
+        <h2 className="text-lg font-bold text-[var(--color-text)] mb-1.5">Quotation Not Found</h2>
+        <p className="text-sm text-[var(--color-text-muted)] max-w-sm mb-5">
+          The requested quotation could not be found or may have been deleted.
+        </p>
+        <button
+          onClick={() => setRoute('tracking')}
+          className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md transition-colors cursor-pointer"
+        >
+          Back to Tracking
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in text-left">
       <PageHeader
@@ -839,6 +923,24 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
         actions={
           <div className="flex gap-2 items-center">
             <AutoSaveIndicator status={autoSaveStatus} onRetry={performSave} />
+
+            <input
+              type="file"
+              ref={rfqInputRef}
+              hidden
+              accept="image/*,application/pdf"
+              onChange={handleRfqUpload}
+            />
+
+            <button
+              onClick={() => rfqInputRef.current?.click()}
+              disabled={isRfqLoading}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold py-2 px-3.5 rounded-md flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+              title="Import and parse items from customer RFQ document/image using Multimodal AI"
+            >
+              {isRfqLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
+              {isRfqLoading ? 'Parsing RFQ...' : 'Import from RFQ / استيراد طلب سعر'}
+            </button>
 
             <button
               onClick={handleAutoTranslateAll}
@@ -892,6 +994,15 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 >
                   <Send className="w-4 h-4 text-[var(--color-text-muted)]" />
                   Email
+                </button>
+
+                <button
+                  onClick={() => setShareModalOpen(true)}
+                  className="bg-[var(--color-surface-offset)] hover:bg-[var(--color-divider)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Share client portal link with e-signatures"
+                >
+                  <Share2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  Share Link
                 </button>
 
                 <div className="relative group">
@@ -1057,9 +1168,13 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                     setIsDirty(true);
                   }}
                   onBlur={async () => {
-                    if (subject && !subjectAr) {
+                    const lastTr = lastTranslateMap.current.get('subject');
+                    if (subject && (!subjectAr || lastTr !== subject)) {
                       const tr = await translateText(subject);
-                      if (tr) setSubjectAr(tr);
+                      if (tr) {
+                        setSubjectAr(tr);
+                        lastTranslateMap.current.set('subject', subject);
+                      }
                     }
                   }}
                   className="w-full premium-input"
@@ -1105,8 +1220,8 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 <div className="flex-1">
                   <div className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Billing Address</div>
                   <div className="text-[var(--color-text-muted)]">
-                    {customerObj.billingAddress.street}, {customerObj.billingAddress.district && `${customerObj.billingAddress.district}, `}
-                    {customerObj.billingAddress.city}, {customerObj.billingAddress.postalCode}
+                    {customerObj.billingAddress?.street || 'N/A'}, {customerObj.billingAddress?.district && `${customerObj.billingAddress.district}, `}
+                    {customerObj.billingAddress?.city || ''} {customerObj.billingAddress?.postalCode || ''}
                   </div>
                   <div className="text-xs font-bold text-[var(--color-primary)] mt-1.5">
                     VAT / الرقم الضريبي: {customerObj.vatNumber || 'Not registered'}
@@ -1144,7 +1259,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
               {canUseMarkup && (
                 <div className="hidden lg:flex w-full mb-0">
                   <div className="flex-1" />
-                  <div className="w-[320px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
+                  <div className="w-[240px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
                     <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
                     <input
                       type="number"
@@ -1160,34 +1275,35 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 {/* Inline Line Items Grid */}
                 <div className="flex-1 premium-card min-w-0 w-full flex flex-col lg:rounded-tr-none">
                   <div ref={tableWrapperRef} className="overflow-x-auto w-full pb-36 min-h-[300px]">
-                    <table className="w-full text-sm text-left border-collapse">
-                      <thead>
-                        <tr ref={headerRef} className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
-                          <th className="py-2.5 px-3 w-8 text-center"></th>
-                          <th className="py-2.5 px-3 w-8 text-center">#</th>
-                          <th className="py-2.5 px-3 min-w-[450px]">Description / الوصف</th>
-                          <th className="py-2.5 px-3 w-16 text-center">Qty</th>
-                          <th className="py-2.5 px-3 w-20 text-center">Unit</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Price</th>
-                          <th className="py-2.5 px-3 w-20 text-center">Disc %</th>
-                          <th className="py-2.5 px-3 w-20 text-center">Tax %</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Subtotal</th>
-                          <th className="py-2.5 px-3 w-10 text-center"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-divider)]">
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={lineItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                        <table className="w-full text-sm text-left border-collapse">
+                          <thead>
+                            <tr ref={headerRef} className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                              <th className="py-2.5 px-3 w-8 text-center"></th>
+                              <th className="py-2.5 px-3 w-8 text-center">#</th>
+                              <th className="py-2.5 px-3 min-w-[450px]">Description / الوصف</th>
+                              <th className="py-2.5 px-3 w-16 text-center">Qty</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Unit</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Price</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Disc %</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Tax %</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Subtotal</th>
+                              <th className="py-2.5 px-3 w-10 text-center"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--color-divider)]">
                         {lineItems.map((item, idx) => (
-                          <tr
+                          <SortableTableRow
                             key={item.id}
-                            ref={(el) => {
-                              if (el) {
+                            id={item.id}
+                            ref={(el: HTMLTableRowElement | null) => {
+                              if (item.type === 'item' && el) {
                                 rowRefs.current.set(item.id, el);
                               } else {
                                 rowRefs.current.delete(item.id);
                               }
                             }}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, idx)}
                             className={`group ${item.type === 'section'
                                 ? 'bg-[var(--color-surface-offset)] font-bold'
                                 : item.type === 'note'
@@ -1195,18 +1311,21 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                                   : 'hover:bg-[var(--color-surface-offset)]/30'
                               }`}
                           >
-                            {/* Drag Handle */}
-                            <td className="py-2 px-1 text-center">
-                              <div
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, idx)}
-                                className="cursor-grab active:cursor-grabbing p-1 inline-flex items-center justify-center hover:bg-[var(--color-surface-offset)] rounded transition-colors"
-                              >
-                                <GripVertical
-                                  className="w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]"
-                                />
-                              </div>
-                            </td>
+                            {(setActivatorNodeRef, listeners, attributes) => (
+                              <>
+                                {/* Drag Handle */}
+                                <td className="py-2 px-1 text-center">
+                                  <div
+                                    ref={setActivatorNodeRef}
+                                    {...listeners}
+                                    {...attributes}
+                                    className="cursor-grab active:cursor-grabbing p-1 inline-flex items-center justify-center hover:bg-[var(--color-surface-offset)] rounded transition-colors touch-none"
+                                  >
+                                    <GripVertical
+                                      className="w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]"
+                                    />
+                                  </div>
+                                </td>
 
                             {/* Row Index — only items get a number */}
                             <td className="py-2 px-1 text-xs text-center font-mono text-[var(--color-text-muted)] select-none">
@@ -1234,10 +1353,13 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                                       const parts = item.description.includes(' / ') ? item.description.split(' / ') : [item.description, ''];
                                       const enPart = parts[0] || '';
                                       let arPart = parts.slice(1).join(' / ') || '';
-                                      if (enPart && !arPart) {
+                                      
+                                      const lastTr = lastTranslateMap.current.get(item.id);
+                                      if (enPart && (!arPart || lastTr !== enPart)) {
                                         const tr = await translateText(enPart);
                                         if (tr) {
                                           handleUpdateLine(item.id, { description: `${enPart} / ${tr}` });
+                                          lastTranslateMap.current.set(item.id, enPart);
                                         }
                                       }
                                     }}
@@ -1365,10 +1487,14 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </td>
-                          </tr>
+                              </>
+                            )}
+                          </SortableTableRow>
                         ))}
-                      </tbody>
-                    </table>
+                          </tbody>
+                        </table>
+                      </SortableContext>
+                    </DndContext>
                   </div>
 
                   {/* Builder Footer Buttons */}
@@ -1399,7 +1525,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
                 {/* Analysis Sidebar — row heights synced with line items table */}
                 {canUseMarkup && (
-                  <div className="w-full lg:w-[280px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
+                  <div className="w-full lg:w-[240px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
                     {/* M.U. % on mobile/tablet (desktop uses bar above) */}
                     <div className="lg:hidden h-9 shrink-0 flex justify-between items-center px-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                       <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
@@ -1722,6 +1848,17 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
           body={`Dear ${customerObj?.contactPerson || 'Customer'},\n\nPlease find attached our quotation ${number} detailing the security systems installation details.\n\nBest regards,\n${company.name}`}
           attachmentName={`${number}.pdf`}
           onClose={() => setEmailModalOpen(false)}
+        />
+      )}
+
+      {shareModalOpen && id && (
+        <PublicShareModal
+          isOpen={shareModalOpen}
+          docType="quotation"
+          docId={id}
+          docNumber={number}
+          customerPhone={customerObj?.phone}
+          onClose={() => setShareModalOpen(false)}
         />
       )}
     </div>

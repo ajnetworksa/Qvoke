@@ -19,6 +19,109 @@ export interface Company {
   pdfTableTextColor?: string;
   /** How line items are numbered in quotes & invoices */
   lineNumberFormat?: 'sequential' | 'sectioned' | 'per-section' | 'none';
+  pdfTemplate?: PDFTemplateConfig;
+}
+
+export interface CustomFieldDefinition {
+  id: string;
+  name: string;
+  key: string;
+  type: 'text' | 'number' | 'select' | 'checkbox' | 'date' | 'textarea';
+  appliesTo: 'all' | 'quotation' | 'invoice';
+  options?: string[];
+  defaultValue?: any;
+  sectionId?: string;
+  sectionName?: string;
+}
+
+export interface PDFSectionField {
+  id: string;
+  key: string;
+  label: string;
+  labelAr?: string;
+  enabled: boolean;
+  isCustom?: boolean;
+  isLocked?: boolean;
+  type?: 'text' | 'number' | 'select' | 'checkbox' | 'date' | 'textarea';
+  order: number;
+}
+
+export type PDFSectionId =
+  | 'header'
+  | 'meta'
+  | 'customer'
+  | 'vehicle'
+  | 'line_items'
+  | 'summary'
+  | 'zatca_qr'
+  | 'payment_terms'
+  | 'bank_details'
+  | 'signatures'
+  | 'custom_notes'
+  | 'footer'
+  | string;
+
+export interface PDFSectionItem {
+  id: PDFSectionId;
+  name: string;
+  nameAr: string;
+  enabled: boolean;
+  width: 'full' | 'half';
+  order: number;
+  isCustom?: boolean;
+  customTitle?: string;
+  customTitleAr?: string;
+  customContent?: string;
+  fields: PDFSectionField[];
+}
+
+export interface PDFTableColumnsConfig {
+  showIndex: boolean;
+  showItemCode: boolean;
+  showDescEn: boolean;
+  showDescAr: boolean;
+  showQty: boolean;
+  showUnit: boolean;
+  showUnitPrice: boolean;
+  showDiscount: boolean;
+  showTax: boolean;
+  showTotal: boolean;
+}
+
+export interface PDFTemplateConfig {
+  preset: 'executive' | 'zatca_official' | 'corporate_blue' | 'luxury_gold' | 'monochrome' | string;
+  name: string;
+  sections: PDFSectionItem[];
+  invoiceSections?: PDFSectionItem[];
+  quoteSections?: PDFSectionItem[];
+  customFields?: CustomFieldDefinition[];
+  headerStyle: 'solid' | 'gradient' | 'minimal' | 'boxed';
+  colors: {
+    primary: string;
+    headerBgStart: string;
+    headerBgEnd: string;
+    headerText: string;
+    tableHeaderBg: string;
+    tableHeaderText: string;
+    zebraRowBg: string;
+    accentBorder: string;
+  };
+  tableColumns: PDFTableColumnsConfig;
+  typography: {
+    fontFamily: 'Tajawal' | 'Outfit' | 'Inter' | 'Geist';
+    bodyFontSize: number;
+    titleFontSize: number;
+  };
+  watermark: {
+    enabled: boolean;
+    text: string;
+    opacity: number;
+    angle: number;
+  };
+  page: {
+    size: 'A4' | 'LETTER';
+    margins: 'compact' | 'normal' | 'spacious';
+  };
 }
 
 export interface SaudiAddress {
@@ -51,6 +154,139 @@ export interface Product {
   categoryId?: string;
   itemCode?: string;
   supplierName?: string;
+  stockQuantity?: number;
+  minStockLevel?: number;
+  trackStock?: boolean;
+}
+
+export interface Expense {
+  id: string;
+  number: string;
+  companyId: string;
+  category: 'rent' | 'utilities' | 'software' | 'supplies' | 'salaries' | 'travel' | 'inventory' | 'marketing' | 'maintenance' | 'other';
+  vendor?: string;
+  description: string;
+  amount: number;
+  taxAmount: number;
+  taxRate: number;
+  total: number;
+  currency: string;
+  date: string;
+  paymentMethod: 'cash' | 'bank_transfer' | 'card' | 'cheque';
+  reference?: string;
+  receiptUrl?: string;
+  status: 'paid' | 'pending' | 'reimbursed';
+  taxDeductible: boolean;
+  notes?: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurringInvoice {
+  id: string;
+  number: string;
+  companyId: string;
+  customerId: string;
+  customerName?: string;
+  customerEmail?: string;
+  profileName: string;
+  frequency: 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+  startDate: string;
+  nextRunDate: string;
+  endDate?: string | null;
+  status: 'active' | 'paused' | 'completed';
+  autoSendEmail: boolean;
+  currency: string;
+  lineItems: LineItem[] | string;
+  notes?: string;
+  terms?: string;
+  total: number;
+  lastGeneratedInvoiceId?: string | null;
+  lastGeneratedAt?: string | null;
+  generationCount: number;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryTransaction {
+  id: string;
+  companyId: string;
+  productId: string;
+  productName?: string;
+  itemCode?: string;
+  unit?: string;
+  type: 'in' | 'out' | 'adjustment' | 'pos_sale' | 'invoice_sale';
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  unitCost?: number;
+  referenceDocType?: string;
+  referenceDocId?: string;
+  notes?: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export interface PublicShare {
+  id: string;
+  token: string;
+  companyId: string;
+  docType: 'quotation' | 'invoice';
+  docId: string;
+  expiresAt?: string;
+  status: 'active' | 'accepted' | 'declined' | 'expired';
+  viewsCount: number;
+  lastViewedAt?: string;
+  acceptedAt?: string;
+  acceptedByName?: string;
+  acceptedSignature?: string;
+  feedbackNote?: string;
+  createdAt: string;
+}
+
+export interface CurrencyRateInfo {
+  base: string;
+  timestamp: string;
+  rates: Record<string, number>;
+}
+
+export interface Permissions {
+  canUseRFQ?: boolean;
+  canUseAI?: boolean;
+  canManageUsers?: boolean;
+  canManageSettings?: boolean;
+  canDeleteData?: boolean;
+  canDatabaseMaintenance?: boolean;
+  canOverridePrice?: boolean;
+  canViewRevenue?: boolean;
+  canViewAllQuotes?: boolean;
+  canViewCreatedBy?: boolean;
+  canViewHistory?: boolean;
+  canChangePassword?: boolean;
+  canConvertInvoice?: boolean;
+  canSaveTemplate?: boolean;
+  canEmailQuote?: boolean;
+  canPrintQuote?: boolean;
+  canViewFeatureAccess?: boolean;
+  canUsePriceSync?: boolean;
+  canUndoQuote?: boolean;
+  canChangeAuthor?: boolean;
+  canShareQuote?: boolean;
+  canEditSharedQuote?: boolean;
+  canUseKanban?: boolean;
+  canUseWatermark?: boolean;
+  canUsePricingControls?: boolean;
+  canUseMarkup?: boolean;
+  canUsePOS?: boolean;
+  canManageExpenses?: boolean;
+  canManageInventory?: boolean;
+  canManageSubscriptions?: boolean;
+  canManagePublicPortals?: boolean;
 }
 
 export interface LineItem {
@@ -165,6 +401,7 @@ export interface AdminCompany {
   locale?: string;
   currency?: string;
   owner?: { name: string; email: string } | null;
+  features?: Record<string, boolean>;
   counts: { users: number; customers: number; quotations: number; invoices: number };
 }
 

@@ -33,6 +33,11 @@ interface Permissions {
   canUseWatermark?: boolean;
   canUsePricingControls?: boolean;
   canUseMarkup?: boolean;
+  canUsePOS?: boolean;
+  canManageExpenses?: boolean;
+  canManageInventory?: boolean;
+  canManageSubscriptions?: boolean;
+  canManagePublicPortals?: boolean;
 }
 
 interface AppUser {
@@ -56,7 +61,7 @@ interface PermissionGroup {
 const ALL_PERMISSIONS: { key: keyof Permissions; label: string; icon: React.ReactNode; description: string }[] = [
   { key: 'canManageUsers', label: 'Manage Users', icon: <Shield size={14} />, description: 'Create, edit, and delete system users and their permissions.' },
   { key: 'canManageSettings', label: 'Manage Settings', icon: <SettingsIcon size={14} />, description: 'Access global system settings, backup, and branding.' },
-  { key: 'canDeleteData', label: 'Delete Records', icon: <Trash2 size={14} />, description: 'Permanently remove quotation and customer records.' },
+  { key: 'canDeleteData', label: 'Delete Records', icon: <Trash2 size={14} />, description: 'Permanently remove quotation, invoice, and customer records.' },
   { key: 'canDatabaseMaintenance', label: 'DB Maintenance', icon: <Database size={14} />, description: 'Perform database cleanup and administrative tasks.' },
   { key: 'canOverridePrice', label: 'Price Analysis', icon: <Bot size={14} />, description: 'View cost base and apply manual price overrides in the analysis sidebar.' },
   { key: 'canViewRevenue', label: 'View Revenue', icon: <Users size={14} />, description: 'View total revenue and profit summaries on the dashboard.' },
@@ -81,6 +86,10 @@ const ALL_PERMISSIONS: { key: keyof Permissions; label: string; icon: React.Reac
   { key: 'canUsePricingControls', label: 'Pricing Controls', icon: <Bot size={14} />, description: 'Access pricing controls like hiding price columns and manual total overrides.' },
   { key: 'canUsePOS', label: 'Use Point of Sale', icon: <Bot size={14} />, description: 'Allows access to the POS retail system checkout.' },
   { key: 'canUseMarkup', label: 'Pricing Markup', icon: <Bookmark size={14} />, description: 'Access and update the quotation default markup percentage and markup sidebar calculations.' },
+  { key: 'canManageExpenses', label: 'Manage Expenses', icon: <FileText size={14} />, description: 'Record and manage company operational expenses and supplier bills.' },
+  { key: 'canManageInventory', label: 'Inventory Control', icon: <Layers size={14} />, description: 'Track stock levels, record manual adjustments, and audit movements.' },
+  { key: 'canManageSubscriptions', label: 'Manage Subscriptions', icon: <History size={14} />, description: 'Create and process recurring billing schedules and subscriptions.' },
+  { key: 'canManagePublicPortals', label: 'Share Public Portals', icon: <Send size={14} />, description: 'Generate public client approval and e-signature links.' },
 ];
 
 const getAuthHeaders = () => {

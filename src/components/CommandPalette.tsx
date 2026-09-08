@@ -82,6 +82,7 @@ export const CommandPalette: React.FC = () => {
       featureOn('quotations') && { id: 'nav-quotes', label: 'Quotations', group: 'Navigate', icon: FileSpreadsheet, run: go('quotations') },
       featureOn('invoices') && { id: 'nav-invoices', label: 'Invoices', group: 'Navigate', icon: FileText, run: go('invoices') },
       featureOn('boq') && { id: 'nav-boq', label: 'BOQ / BOM', group: 'Navigate', icon: ClipboardList, run: go('boq') },
+      featureOn('pos') && { id: 'nav-pos', label: 'Point of Sale', group: 'Navigate', icon: Bot, run: go('pos') },
       featureOn('tracking') && { id: 'nav-tracking', label: 'Tracking & Follow-ups', group: 'Navigate', icon: Radar, run: go('tracking') },
       featureOn('reports') && { id: 'nav-reports', label: 'Financials', group: 'Navigate', icon: TrendingUp, run: go('reports') },
       featureOn('customers') && { id: 'nav-customers', label: 'Customers', group: 'Navigate', icon: Users, run: go('customers') },
@@ -224,11 +225,11 @@ export const CommandPalette: React.FC = () => {
       const now = Date.now();
       const chord = chordRef.current;
       if (chord && chord.key === 'g' && now - chord.at < 1200) {
-        const dest: Record<string, string> = {
-          d: 'dashboard', q: 'quotations', i: 'invoices', b: 'boq',
+        const pageMap: Record<string, string> = {
+          d: 'dashboard', q: 'quotations', i: 'invoices', b: 'boq', o: 'pos',
           c: 'customers', p: 'products', t: 'tasks', r: 'reports', s: 'settings'
         };
-        if (dest[e.key]) { e.preventDefault(); setRoute(dest[e.key]); }
+        if (pageMap[e.key]) { e.preventDefault(); setRoute(pageMap[e.key]); }
         chordRef.current = null;
         return;
       }

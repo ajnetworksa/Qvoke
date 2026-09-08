@@ -1,73 +1,100 @@
-# ── Node ───────────────────────────────────────────────────────────────────────
+# ── Node Dependencies ────────────────────────────────────────────────────────
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# ── Build output ───────────────────────────────────────────────────────────────
+# ── Production Build Output ───────────────────────────────────────────────────
 dist/
 dist-ssr/
+build/
 *.local
 
-# ── Environment / Secrets ──────────────────────────────────────────────────────
+# ── Environment & Secrets (High Security) ─────────────────────────────────────
 .env
 .env.*
-#!.env.example
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+id_rsa
+id_rsa.pub
+*.secret
+credentials.json
+secrets.json
 
-# ── Database (never commit live data) ─────────────────────────────────────────
+# ── Databases & WAL Files (Never Commit Live Business Data) ───────────────────
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
+quotes.db*
+erp.db*
 
-# ── Backup snapshots ───────────────────────────────────────────────────────────
+# ── Automated Backup Snapshots ────────────────────────────────────────────────
 backups/
 *.backup-*
 *.bak
+*.sql.gz
+*.tar.gz
 
-# ── Uploaded media / logos ─────────────────────────────────────────────────────
+# ── Uploaded Client Media & Invoices ──────────────────────────────────────────
 uploads/
 public/uploads/
+storage/
 
-# ── Vite cache ─────────────────────────────────────────────────────────────────
+# ── Build & Compiler Caches ───────────────────────────────────────────────────
 .vite/
 vite.config.ts.timestamp-*
-
-# ── TypeScript build cache ─────────────────────────────────────────────────────
 *.tsbuildinfo
 tsconfig.tsbuildinfo
+.eslintcache
 
-# ── Testing ────────────────────────────────────────────────────────────────────
+# ── Testing & Coverage ────────────────────────────────────────────────────────
 coverage/
 .nyc_output/
+*.lcov
+test-results/
+inspect_db.ts
+migrate_db.ts
+live_api_test.ts
+reset_admin.ts
 
-# ── IDE ────────────────────────────────────────────────────────────────────────
-.vscode/
+# ── IDE & Editor Configuration ────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
 .idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.sublime-project
+*.sublime-workspace
 
-# ── OS files ───────────────────────────────────────────────────────────────────
+# ── Operating System Files ────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
+ehthumbs.db
+[Nn]on[Vv]olatile/
 
-# ── Logs ───────────────────────────────────────────────────────────────────────
+# ── System Logs & Diagnostics ─────────────────────────────────────────────────
 logs/
 *.log
+npm-debug.log*
+yarn-error.log*
+*.out
+*.pid
 
-# ── Claude Code / local tooling ────────────────────────────────────────────────
-.claude/settings.local.json
-.claude/projects/
-.claude/**/memory/
-# launch.json (preview dev-server config) is intentionally tracked
-
-# ── Scratch / temp ─────────────────────────────────────────────────────────────
+# ── Temporary & Scratch Files ─────────────────────────────────────────────────
 scratchpad/
 tmp/
 *.tmp
+temp/

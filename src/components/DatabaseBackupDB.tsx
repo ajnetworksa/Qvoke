@@ -299,6 +299,51 @@ export const DatabaseBackupDB: React.FC = () => {
           </div>
         </div>
 
+        {/* Recycle Bin & Data Retention Policy */}
+        <div className="border border-[var(--color-border)] rounded-xl p-5 bg-[var(--color-surface-offset)]/30 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h4 className="text-xs font-bold text-[var(--color-text)] flex items-center gap-1.5 mb-1">
+                <Trash2 className="w-4 h-4 text-red-400" />
+                Recycle Bin Retention Policy / سياسة الاحتفاظ بسلة المهملات
+              </h4>
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                Control how long soft-deleted quotations and invoices are preserved before automated permanent purge. Pinned items are never purged.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  setActioning('prune');
+                  try {
+                    const res = await fetch('/api/recycle-bin/prune', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                      body: JSON.stringify({ days: 30 })
+                    });
+                    const d = await res.json();
+                    if (res.ok) {
+                      showToast(`Pruned ${d.purgedQuotes || 0} quotes and ${d.purgedInvoices || 0} invoices.`, 'success');
+                    } else {
+                      showToast(d.error || 'Failed to prune', 'error');
+                    }
+                  } catch {
+                    showToast('Network error', 'error');
+                  } finally {
+                    setActioning(null);
+                  }
+                }}
+                disabled={actioning !== null}
+                className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 text-xs font-bold py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {actioning === 'prune' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Purge Expired Now (30d+)
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Warning Banner */}
         <div className="bg-amber-500/8 border border-amber-500/20 p-4 rounded-lg flex gap-3 text-xs leading-relaxed text-amber-500 font-semibold mb-6">
           <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />

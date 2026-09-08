@@ -23,23 +23,26 @@ import {
   Layers,
   Sparkles,
   Hash,
-  Blocks
+  Blocks,
+  X
 } from 'lucide-react';
 import { mockUsers } from '../mockData';
 import { UserRole } from '../types';
 import UsersDB from '../components/UsersDB';
 import DatabaseBackupDB from '../components/DatabaseBackupDB';
-import { THEME_PRESETS } from '../theme';
+import { PDFTemplateStudio } from '../components/PDFTemplateStudio';
+import { THEME_PRESETS, UI_THEMES } from '../theme';
 
 export const Settings: React.FC = () => {
   const {
     company, updateCompany, theme, setTheme,
     themePreset, userAccent, setThemePreset, setUserAccent,
+    uiTheme, setUITheme,
     companies, activeCompanyId, setCompanyTheme, currentUser
   } = useERPStore();
   const activeCompanyMembership = companies.find((c) => c.id === activeCompanyId);
   const canEditCompanyTheme = currentUser?.isSuperAdmin || activeCompanyMembership?.role === 'owner' || activeCompanyMembership?.role === 'admin';
-  const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'users' | 'appearance' | 'maintenance' | 'logs'>('company');
+  const [activeSubTab, setActiveSubTab] = useState<'company' | 'plan' | 'document' | 'pdf-studio' | 'users' | 'appearance' | 'maintenance' | 'logs' | 'integrations'>('company');
 
   // Local Form states (initialized from store)
   const [companyName, setCompanyName] = useState(company.name);
@@ -82,6 +85,7 @@ export const Settings: React.FC = () => {
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [updateOutput, setUpdateOutput] = useState('');
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
+  const [selectedIntegration, setSelectedIntegration] = useState<{name: string, type: 'payment'|'accounting'} | null>(null);
 
   const fetchLogs = async () => {
     setLogsLoading(true);
@@ -385,9 +389,41 @@ export const Settings: React.FC = () => {
         breadcrumbs={[{ label: 'Home' }, { label: 'Settings' }]}
       />
 
+      {/* Mobile / Tablet Horizontal Scrollable Tab Bar */}
+      <div className="flex lg:hidden items-center gap-1.5 p-1.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm overflow-x-auto mb-6 scrollbar-none">
+        {[
+          { id: 'company', label: 'Company', icon: Building2 },
+          { id: 'plan', label: 'Plan & Features', icon: Layers },
+          { id: 'document', label: 'Billing Formats', icon: FileSpreadsheet },
+          { id: 'pdf-studio', label: 'PDF Studio', icon: Sparkles },
+          { id: 'users', label: 'Roles', icon: Users2 },
+          { id: 'appearance', label: 'Themes', icon: Palette },
+          { id: 'maintenance', label: 'Backups', icon: Shield },
+          { id: 'logs', label: 'Logs', icon: Activity },
+          { id: 'integrations', label: 'Integrations', icon: Blocks }
+        ].map((t) => {
+          const Icon = t.icon;
+          const isActive = activeSubTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveSubTab(t.id as any)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                  : 'bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* Left Side-Nav Tabs */}
-        <div className="premium-card p-3 flex flex-col gap-1">
+        {/* Desktop Left Side-Nav Tabs */}
+        <div className="hidden lg:flex premium-card p-3 flex-col gap-1">
           <button
             onClick={() => setActiveSubTab('company')}
             className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-left ${
@@ -419,7 +455,18 @@ export const Settings: React.FC = () => {
             }`}
           >
             <FileSpreadsheet className="w-4 h-4 text-[var(--color-text-muted)]" />
-            Billing Templates / الفواتير
+            Billing Formats / الفواتير
+          </button>
+          <button
+            onClick={() => setActiveSubTab('pdf-studio')}
+            className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-left ${
+              activeSubTab === 'pdf-studio'
+                ? 'bg-[var(--color-primary-highlight)]/30 text-[var(--color-primary)] ring-1 ring-[var(--color-primary)]/40'
+                : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-[var(--color-primary)]" />
+            PDF Template Studio / مصمم القوالب
           </button>
           <button
             onClick={() => setActiveSubTab('users')}
@@ -459,16 +506,15 @@ export const Settings: React.FC = () => {
             className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-left ${
               activeSubTab === 'logs'
                 ? 'bg-[var(--color-primary-highlight)]/30 text-[var(--color-primary)]'
-                : 'hover:bg(--color-surface-offset) text-[var(--color-text-muted)]'
+                : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
             }`}
           >
             <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
             Logs & Updates / السجلات والتحديث
           </button>
-
           <button
             onClick={() => setActiveSubTab('integrations')}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+            className={`w-full flex items-center gap-2.5 px-4 py-2.5 rounded-md text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-left ${
               activeSubTab === 'integrations'
                 ? 'bg-[var(--color-primary-highlight)]/30 text-[var(--color-primary)]'
                 : 'hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
@@ -674,7 +720,7 @@ export const Settings: React.FC = () => {
                         <div className="font-semibold text-sm">Odoo ERP</div>
                         <div className="text-xs text-[var(--color-text-muted)] mt-1">Sync invoices, customers, and ledger</div>
                       </div>
-                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                      <button onClick={() => setSelectedIntegration({name: 'Odoo ERP', type: 'accounting'})} className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
                         Connect
                       </button>
                     </div>
@@ -683,7 +729,7 @@ export const Settings: React.FC = () => {
                         <div className="font-semibold text-sm">Tally</div>
                         <div className="text-xs text-[var(--color-text-muted)] mt-1">Two-way accounting sync</div>
                       </div>
-                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                      <button onClick={() => setSelectedIntegration({name: 'Tally', type: 'accounting'})} className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
                         Connect
                       </button>
                     </div>
@@ -698,16 +744,33 @@ export const Settings: React.FC = () => {
                         <div className="font-semibold text-sm">Moyasar (Mada)</div>
                         <div className="text-xs text-[var(--color-text-muted)] mt-1">Accept local Saudi payments</div>
                       </div>
-                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                      <button onClick={() => setSelectedIntegration({name: 'Moyasar (Mada)', type: 'payment'})} className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
                         Configure
                       </button>
                     </div>
-                    <div className="p-4 border border-[var(--color-border)] rounded-xl flex items-center justify-between">
-                      <div>
-                        <div className="font-semibold text-sm">Tabby / Tamara (BNPL)</div>
-                        <div className="text-xs text-[var(--color-text-muted)] mt-1">Buy Now, Pay Later options</div>
+                    <div className="flex items-center justify-between p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl relative overflow-hidden group hover:border-[var(--color-primary)]/50 transition-colors">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-[#3EFEA1] opacity-60"></div>
+                      <div className="flex items-center gap-3 relative z-10">
+                        <div className="w-10 h-10 bg-white border border-[var(--color-border)] rounded shadow-sm flex items-center justify-center font-black text-[#000] text-lg">tb</div>
+                        <div>
+                          <div className="font-bold text-[13px] text-[var(--color-text)] flex items-center gap-2">Tabby (BNPL) <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[9px] uppercase font-bold tracking-widest">Available</span></div>
+                          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 max-w-[200px] truncate">Split in 4 payments</div>
+                        </div>
                       </div>
-                      <button className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors">
+                      <button onClick={() => setSelectedIntegration({name: 'Tabby', type: 'payment'})} className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
+                        Configure
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl relative overflow-hidden group hover:border-[var(--color-primary)]/50 transition-colors">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-[#FF7D6F] opacity-60"></div>
+                      <div className="flex items-center gap-3 relative z-10">
+                        <div className="w-10 h-10 bg-white border border-[var(--color-border)] rounded shadow-sm flex items-center justify-center font-black text-[#FF7D6F] text-lg">tm</div>
+                        <div>
+                          <div className="font-bold text-[13px] text-[var(--color-text)] flex items-center gap-2">Tamara (BNPL) <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[9px] uppercase font-bold tracking-widest">Available</span></div>
+                          <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 max-w-[200px] truncate">Pay in 3 or 4 installments</div>
+                        </div>
+                      </div>
+                      <button onClick={() => setSelectedIntegration({name: 'Tamara', type: 'payment'})} className="bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold px-3 py-1.5 rounded-lg text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
                         Configure
                       </button>
                     </div>
@@ -851,6 +914,8 @@ export const Settings: React.FC = () => {
             </div>
           )}
 
+          {activeSubTab === 'pdf-studio' && <PDFTemplateStudio />}
+
           {activeSubTab === 'users' && <UsersDB />}
 
           {activeSubTab === 'plan' && <PlanFeaturesPanel />}
@@ -899,9 +964,54 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
 
+              {/* UI Theme Engine Presets */}
+              <div className="text-left text-xs font-semibold text-[var(--color-text-muted)] border-t border-[var(--color-divider)]/30 pt-6">
+                <span className="block uppercase tracking-wider mb-1">Visual Theme Engine / محرك التصميم والسمات</span>
+                <p className="text-[10px] font-normal text-[var(--color-text-faint)] mb-4">
+                  Select your workspace aesthetic style (Modern Enterprise, Obsidian FinTech, Frosted Glass Acrylic, Tactile 3D Neumorphism).
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                  {UI_THEMES.map((themeItem) => {
+                    const isSelected = uiTheme === themeItem.id;
+                    return (
+                      <div
+                        key={themeItem.id}
+                        onClick={() => {
+                          setUITheme(themeItem.id);
+                          document.documentElement.setAttribute('data-ui-theme', themeItem.id);
+                        }}
+                        className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary-highlight)]/25 shadow-sm scale-[1.01]'
+                            : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/50'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1">
+                              {themeItem.swatches.map((c, i) => (
+                                <span key={i} className="w-3 h-3 rounded-full border border-black/10" style={{ backgroundColor: c }} />
+                              ))}
+                            </div>
+                            {isSelected && (
+                              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-[var(--color-primary)]/20 text-[var(--color-primary)]">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-xs font-extrabold text-[var(--color-text)]">{themeItem.name}</h4>
+                          <span className="text-[10px] text-[var(--color-text-muted)] block mb-1" dir="rtl">{themeItem.nameAr}</span>
+                          <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">{themeItem.description}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Interface theme presets (per-user) */}
               <div className="text-left text-xs font-semibold text-[var(--color-text-muted)] border-t border-[var(--color-divider)]/30 pt-6">
-                <span className="block uppercase tracking-wider mb-1">Interface Theme</span>
+                <span className="block uppercase tracking-wider mb-1">Interface Color Accent</span>
                 <p className="text-[10px] font-normal text-[var(--color-text-faint)] mb-3">Your personal accent — applies to your account across light &amp; dark.</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                   {THEME_PRESETS.map((p) => {
@@ -1423,6 +1533,113 @@ export const Settings: React.FC = () => {
                         })
                     )}
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Integration Configuration Modal */}
+          {selectedIntegration && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+                <div className="flex items-center justify-between p-4 border-b border-[var(--color-divider)]/50">
+                  <h3 className="font-bold text-[var(--color-text)]">Configure {selectedIntegration.name}</h3>
+                  <button onClick={() => setSelectedIntegration(null)} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-5 flex flex-col gap-4 text-left">
+                  {selectedIntegration.name === 'Tabby' && (
+                    <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+                      To connect Tabby, you need your Public Key and Secret Key from the Tabby Merchant Portal. <a href="https://docs.tabby.ai" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary)] hover:underline">Read the official documentation</a>.
+                    </div>
+                  )}
+                  {selectedIntegration.name === 'Tamara' && (
+                    <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+                      To connect Tamara, you need your Merchant Token and Notification Token from Tamara Partners. <a href="https://docs.tamara.co" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary)] hover:underline">Read the official documentation</a>.
+                    </div>
+                  )}
+                  {selectedIntegration.name === 'Odoo ERP' && (
+                    <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+                      To connect Odoo, enter your Server URL, Database Name, Username, and API Key (or Password). <a href="https://www.odoo.com/documentation/17.0/developer/reference/external_api.html" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary)] hover:underline">Read the official API documentation</a>.
+                    </div>
+                  )}
+                  {selectedIntegration.name === 'Moyasar (Mada)' && (
+                    <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+                      To connect Moyasar, enter your Publishable Key and Secret Key. <a href="https://docs.moyasar.com" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary)] hover:underline">Read the official documentation</a>.
+                    </div>
+                  )}
+                  
+                  {selectedIntegration.name === 'Tabby' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Public Key</label>
+                        <input type="text" className="w-full premium-input font-mono" placeholder="pk_test_..." />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Secret Key</label>
+                        <input type="password" className="w-full premium-input font-mono" placeholder="sk_test_..." />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedIntegration.name === 'Tamara' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Merchant Token</label>
+                        <input type="text" className="w-full premium-input font-mono" placeholder="e.g. tm_..." />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Notification Token</label>
+                        <input type="password" className="w-full premium-input font-mono" placeholder="Enter Notification Token" />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedIntegration.name === 'Odoo ERP' && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Server URL</label>
+                        <input type="text" className="w-full premium-input" placeholder="https://your-company.odoo.com" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Database Name</label>
+                        <input type="text" className="w-full premium-input" placeholder="your_database" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Username / Email</label>
+                        <input type="text" className="w-full premium-input" placeholder="admin@example.com" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">API Key / Password</label>
+                        <input type="password" className="w-full premium-input" placeholder="Enter API Key" />
+                      </div>
+                    </>
+                  )}
+
+                  {(selectedIntegration.name !== 'Tabby' && selectedIntegration.name !== 'Tamara' && selectedIntegration.name !== 'Odoo ERP') && (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Merchant ID / Public Key</label>
+                        <input type="text" className="w-full premium-input" placeholder="e.g. prod_client_12345" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1.5 uppercase tracking-wider text-[var(--color-text-muted)]">Secret API Key</label>
+                        <input type="password" className="w-full premium-input font-mono" placeholder="sk_live_..." />
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="flex justify-end gap-3 p-4 border-t border-[var(--color-divider)]/50 bg-[var(--color-surface-offset)]/30">
+                  <button onClick={() => setSelectedIntegration(null)} className="px-4 py-2 text-xs font-semibold rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-divider)] transition-colors cursor-pointer">
+                    Cancel
+                  </button>
+                  <button onClick={() => {
+                    alert(`${selectedIntegration.name} configured successfully!`);
+                    setSelectedIntegration(null);
+                  }} className="px-4 py-2 text-xs font-semibold rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer flex items-center gap-2">
+                    <Save className="w-3.5 h-3.5" /> Save Configuration
+                  </button>
                 </div>
               </div>
             </div>

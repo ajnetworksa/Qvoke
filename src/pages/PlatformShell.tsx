@@ -7,7 +7,7 @@ import {
   Link as LinkIcon, FileSpreadsheet, FileText, DollarSign, Server
 } from 'lucide-react';
 
-const PLANS = ['starter', 'professional', 'enterprise'];
+const PLANS = ['basic', 'professional', 'enterprise'];
 const ONBOARDING_FEATURES = [
   { key: 'boq', label: 'BOQ' },
   { key: 'bom', label: 'BOM' },
@@ -17,9 +17,10 @@ const ONBOARDING_FEATURES = [
   { key: 'usage', label: 'Usage analytics' },
   { key: 'kanban', label: 'Kanban pipeline' },
   { key: 'tasks', label: 'Personal tasks' },
+  { key: 'pos', label: 'Point of Sale' },
 ] as const;
 const PLAN_FEATURES: Record<string, string[]> = {
-  starter: ['tasks'],
+  basic: ['tasks'],
   professional: ['boq', 'bom', 'reports', 'suppliers', 'tracking', 'usage', 'tasks'],
   enterprise: ONBOARDING_FEATURES.map((feature) => feature.key),
 };
@@ -68,7 +69,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
   // edit tenant
-  const [edit, setEdit] = useState<AdminCompany | null>(null); const [eName, setEName] = useState(''); const [ePlan, setEPlan] = useState('enterprise');
+  const [edit, setEdit] = useState<AdminCompany | null>(null); const [eName, setEName] = useState(''); const [ePlan, setEPlan] = useState('enterprise'); const [eFeatures, setEFeatures] = useState<Record<string, boolean>>({});
   // notifications
   const [target, setTarget] = useState<'all' | 'company' | 'user'>('all'); const [targetId, setTargetId] = useState('');
   const [nTitle, setNTitle] = useState(''); const [nBody, setNBody] = useState(''); const [sending, setSending] = useState(false); const [sentMsg, setSentMsg] = useState('');
@@ -117,7 +118,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
     if (!window.confirm(`Delete "${c.name}" and ALL its data? This cannot be undone.`)) return;
     setBusyId(c.id); await fetch(`/api/admin/companies/${c.id}`, { method: 'DELETE', headers: authH }); await load(); setBusyId(null);
   };
-  const saveEdit = async () => { if (!edit) return; await patchCompany(edit.id, { name: eName.trim(), activePlan: ePlan }); setEdit(null); };
+  const saveEdit = async () => { if (!edit) return; await patchCompany(edit.id, { name: eName.trim(), activePlan: ePlan, features: eFeatures }); setEdit(null); };
   const enterCompany = async (c: AdminCompany) => {
     await switchCompany(c.id);
     if (!isLocalHost && c.slug) {
@@ -308,7 +309,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
                           <div className="flex items-center gap-1 shrink-0">
                             <button onClick={() => enterCompany(c)} className="px-2.5 py-1.5 rounded-md bg-[var(--color-primary)] text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer hover:bg-[var(--color-primary-hover)]" title="Enter this company's workspace"><ArrowRightLeft className="w-3.5 h-3.5" /> Enter</button>
                             <button onClick={() => patchCompany(c.id, { status: c.status === 'active' ? 'suspended' : 'active' })} disabled={busyId === c.id} className="p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] cursor-pointer disabled:opacity-50" title={c.status === 'active' ? 'Suspend' : 'Activate'}>{c.status === 'active' ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-600" />}</button>
-                            <button onClick={() => { setEdit(c); setEName(c.name); setEPlan(c.activePlan); }} className="p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] cursor-pointer" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => { setEdit(c); setEName(c.name); setEPlan(c.activePlan); setEFeatures(c.features || {}); }} className="p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] cursor-pointer" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
                             {!c.isDefault && <button onClick={() => removeTenant(c)} disabled={busyId === c.id} className="p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-error)]/10 text-[var(--color-text-faint)] hover:text-[var(--color-error)] cursor-pointer disabled:opacity-50" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
                           </div>
                         </div>
@@ -420,7 +421,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
               {onboardingStep === 2 && (
                 <div>
                   <div className="tenant-plan-grid">
-                    {PLANS.map((plan) => <button key={plan} className={draft.activePlan === plan ? 'is-selected' : ''} onClick={() => selectPlan(plan)}><strong>{plan}</strong><small>{plan === 'starter' ? 'Core sales' : plan === 'professional' ? 'Operations suite' : 'All modules'}</small>{draft.activePlan === plan && <Check className="w-4 h-4" />}</button>)}
+                    {PLANS.map((plan) => <button key={plan} className={draft.activePlan === plan ? 'is-selected' : ''} onClick={() => selectPlan(plan)}><strong>{plan}</strong><small>{plan === 'basic' ? 'Core sales' : plan === 'professional' ? 'Operations suite' : 'All modules'}</small>{draft.activePlan === plan && <Check className="w-4 h-4" />}</button>)}
                   </div>
                   <div className="tenant-module-grid">
                     {ONBOARDING_FEATURES.map((feature) => (
@@ -468,7 +469,27 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({ onExit }) => {
               <button onClick={() => setEdit(null)} className="p-1 hover:bg-[var(--color-surface-offset)] rounded cursor-pointer"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
             </div>
             <div className="text-xs font-semibold text-[var(--color-text-muted)]"><label className="block mb-1.5">Name</label><input value={eName} onChange={(e) => setEName(e.target.value)} className="w-full premium-input text-sm text-[var(--color-text)]" /></div>
-            <div className="text-xs font-semibold text-[var(--color-text-muted)]"><label className="block mb-1.5">Plan</label><select value={ePlan} onChange={(e) => setEPlan(e.target.value)} className="w-full premium-input text-sm capitalize">{PLANS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+            <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+              <label className="block mb-1.5">Plan</label>
+              <select value={ePlan} onChange={(e) => {
+                const plan = e.target.value;
+                setEPlan(plan);
+                setEFeatures(Object.fromEntries(ONBOARDING_FEATURES.map((feature) => [feature.key, PLAN_FEATURES[plan]?.includes(feature.key) ?? false])));
+              }} className="w-full premium-input text-sm capitalize">
+                {PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+              <label className="block mb-1.5">Manage Modules</label>
+              <div className="tenant-module-grid">
+                {ONBOARDING_FEATURES.map((feature) => (
+                  <label key={feature.key} className="flex items-center gap-2 mb-1">
+                    <input type="checkbox" checked={!!eFeatures[feature.key]} onChange={(event) => setEFeatures({ ...eFeatures, [feature.key]: event.target.checked })} />
+                    <span className="text-[var(--color-text)]">{feature.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="flex items-center justify-end gap-3 border-t border-[var(--color-divider)]/40 pt-4 text-xs font-semibold">
               <button onClick={() => setEdit(null)} className="px-4 py-2 border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] rounded-md cursor-pointer">Cancel</button>
               <button onClick={saveEdit} disabled={!eName.trim()} className="px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white rounded-md cursor-pointer disabled:opacity-50">Save</button>

@@ -35,7 +35,10 @@ export type PdfSettings = {
   phone?: string | null;
   address?: string | null;
   logoUrl?: string | null;
+  logoSize?: number | null;
+  termsFontSize?: number | null;
   footerImageUrl?: string | null;
+  footerSize?: number | null;
   brandColor: string;
   taxLabel: string;
   pdfPayment?: string | null;
@@ -48,6 +51,13 @@ export type PdfSettings = {
   bankIban?: string | null;
   bankAccountName?: string | null;
   footerText?: string | null;
+  pdfHeaderBgType?: string | null;
+  pdfHeaderBgColorStart?: string | null;
+  pdfHeaderBgColorEnd?: string | null;
+  pdfHeaderTextColor?: string | null;
+  pdfTableBgColor?: string | null;
+  pdfTableTextColor?: string | null;
+  pdfTemplate?: any;
 };
 
 export type PdfQuote = {
@@ -90,9 +100,6 @@ export function lineNetPrice(line: PdfLine): number {
 }
 
 // ── BILINGUAL TRANSLATION HELPERS ──────────────────────────────────────────────
-// NOTE: Do NOT use U+200E (LTR mark) — @react-pdf/renderer renders it as a
-// visible glyph (&) in the Tajawal font. Arabic bidi is handled natively.
-
 export const standardTranslations: Record<string, string> = {
   "Full Payment in ADVANCE": "الدفع الكامل مقدماً",
   "80% Downpayment | Balance before completion.": "80% دفعة مقدمة | الرصيد قبل الإكمال",
@@ -130,15 +137,12 @@ export const standardTranslations: Record<string, string> = {
 
 export function getBilingualParts(en: string | null | undefined, ar: string | null | undefined) {
   if (!en && !ar) return { en: "", ar: "" };
-  // Both sides supplied — use as-is
   if (en && ar) return { en: en.trim(), ar: ar.trim() };
   const value = (en || ar || "").trim();
-  // "|" as bilingual separator (only when ar is absent)
   if (!ar && value.includes("|")) {
     const parts = value.split("|");
     return { en: parts[0].trim(), ar: parts[1]?.trim() ?? "" };
   }
-  // Lookup translation table
   if (!ar && standardTranslations[value]) {
     return { en: value, ar: standardTranslations[value] };
   }
@@ -146,7 +150,6 @@ export function getBilingualParts(en: string | null | undefined, ar: string | nu
 }
 
 export function getBilingualNotes(notes: string | null | undefined, notesAr?: string | null) {
-  // Prefer separately stored Arabic notes
   if (notesAr?.trim()) {
     const enLines = (notes ?? "").split("\n").filter(Boolean);
     const arLines = notesAr.split("\n").filter(Boolean);
@@ -159,15 +162,12 @@ export function getBilingualNotes(notes: string | null | undefined, notesAr?: st
   if (!notes) return [];
   return notes.split("\n").map((line) => {
     const cleanLine = line.trim();
-    // Check if the line itself is a "|" bilingual pair (not the word "work|device")
     const pipeIdx = cleanLine.indexOf("|");
     if (pipeIdx !== -1 && pipeIdx > 10) {
-      // Only treat as bilingual separator when pipe is not within the first 10 chars
       const parts = cleanLine.split("|");
       return { en: parts[0].trim(), ar: parts[1]?.trim() ?? "" };
     }
     if (standardTranslations[cleanLine]) return { en: cleanLine, ar: standardTranslations[cleanLine] };
-    // Fallback: build Arabic from known sub-strings
     let ar = "";
     if (cleanLine.includes("Any additional work") && cleanLine.includes("Change Order"))
       ar += "سيتم اعتبار أي عمل إضافي/جهاز بمثابة أمر تغيير";
@@ -180,18 +180,8 @@ export function getBilingualNotes(notes: string | null | undefined, notesAr?: st
 export type PdfTermRow = { label: string; en: string; ar: string };
 
 export function buildPdfTermRows(
-  quote: {
-    payment?: string | null; paymentAr?: string | null;
-    warranty?: string | null; warrantyAr?: string | null;
-    manpower?: string | null; manpowerAr?: string | null;
-    mobilization?: string | null; mobilizationAr?: string | null;
-    duration?: string | null; durationAr?: string | null;
-  },
-  settings: {
-    pdfPayment?: string | null; pdfWarranty?: string | null;
-    pdfManpower?: string | null; pdfMobilization?: string | null;
-    pdfDuration?: string | null;
-  }
+  quote: PdfQuote,
+  settings: PdfSettings
 ): PdfTermRow[] {
   const rows = [
     { label: "PAYMENT", en: quote.payment ?? settings.pdfPayment, ar: quote.paymentAr },
@@ -200,42 +190,57 @@ export function buildPdfTermRows(
     { label: "MOBILIZATION", en: quote.mobilization ?? settings.pdfMobilization, ar: quote.mobilizationAr },
     { label: "DURATION", en: quote.duration ?? settings.pdfDuration, ar: quote.durationAr },
   ];
-  return rows
+  const mapped = rows
     .filter((r) => r.en || r.ar)
     .map((r) => {
       const parts = getBilingualParts(r.en, r.ar);
       return { label: r.label, en: parts.en, ar: parts.ar };
     });
+
+  const bank = getBilingualParts(quote.bankDetails, quote.bankDetailsAr);
+  if (bank.en || bank.ar) {
+    mapped.push({
+      label: "BANK DETAILS",
+      en: bank.en || "",
+      ar: bank.ar || "",
+    });
+  }
+
+  return mapped;
 }
 
 // ── STYLES ────────────────────────────────────────────────────────────────────
 const LABEL_W = 58;
 
 const COL = {
-  item: 28,
-  qty: 34,
-  unit: 34,
-  unitPrice: 72,
-  netPrice: 76,
+  item: 20,
+  qty: 22,
+  unit: 22,
+  unitPrice: 52,
+  netPrice: 56,
 };
 
 const styles = StyleSheet.create({
-  page: { paddingHorizontal: 12, paddingTop: 85, paddingBottom: 65, fontSize: 9, fontFamily: "Tajawal", color: "#18181b" },
-  headerRow: {
+  page: { paddingHorizontal: 12, paddingTop: 95, paddingBottom: 65, fontSize: 9, fontFamily: "Tajawal", color: "#18181b" },
+  headerContainer: {
     position: "absolute",
     top: 15,
     left: 12,
     right: 12,
+  },
+  headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+  },
+  headerSeparator: {
     borderBottomWidth: 0.5,
     borderBottomColor: "#d4d4d8",
     paddingBottom: 8
   },
   title: { fontSize: 24, fontWeight: "bold", marginBottom: 4, letterSpacing: 0.5 },
   metaRow: { flexDirection: "row", gap: 6, alignItems: "center", marginBottom: 1 },
-  metaLabel: { fontSize: 8.5, fontWeight: "bold", color: "#374151", minWidth: 120 },
-  metaValue: { fontSize: 8.5, fontWeight: "bold", color: "#111827" },
+  metaLabel: { fontSize: 8, fontWeight: "bold", color: "#374151", width: 95 },
+  metaValue: { fontSize: 8, fontWeight: "bold", color: "#111827" },
   customerBox: { borderWidth: 1, borderColor: "#1f2937", marginBottom: 10 },
   customerHeader: { backgroundColor: "#f3f4f6", paddingVertical: 4, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: "#1f2937" },
   customerHeaderText: { fontSize: 10.5, fontWeight: "bold" },
@@ -254,17 +259,19 @@ const styles = StyleSheet.create({
     borderBottomColor: "#18181b"
   },
   th: {
-    color: "#ffffff",
+    color: "#18181b",
     fontSize: 7.5,
     fontWeight: "bold",
-    padding: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 2,
     textAlign: "center"
   },
   thDesc: {
-    color: "#ffffff",
+    color: "#18181b",
     fontSize: 7.5,
     fontWeight: "bold",
-    padding: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 5,
     textAlign: "center"
   },
   tableRow: {
@@ -277,7 +284,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   cellText: {
-    padding: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 2,
     fontSize: 7.5,
     color: "#18181b"
   },
@@ -296,14 +304,38 @@ const styles = StyleSheet.create({
   border: { borderLeftWidth: 0.5, borderLeftColor: "#18181b" },
   borderTop: { borderTopWidth: 0.5, borderTopColor: "#18181b" },
   borderRight: { borderRightWidth: 0.5, borderRightColor: "#18181b" },
-  noteBox: { flex: 1, borderWidth: 0.5, borderColor: "#18181b", padding: 6 },
+  noteBox: { flex: 1, padding: 6 },
   totalsBox: { width: 158, borderWidth: 0.5, borderColor: "#18181b" },
   totalRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingVertical: 3, borderBottomWidth: 0.5, borderColor: "#18181b" },
-  totalPkg: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingVertical: 5, fontWeight: "bold", color: "#ffffff" },
-  termsSection: { marginTop: 5, gap: 3 },
-  termRow: { flexDirection: "row", justifyContent: "space-between" },
-  termLeft: { flexDirection: "row", gap: 3, flex: 1 },
-  bankSection: { marginTop: 5, borderTopWidth: 0.5, borderTopColor: "#d4d4d8", paddingTop: 4 },
+  totalPkg: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingVertical: 5, fontWeight: "bold" },
+  termsSection: { marginTop: 12, width: 390 },
+  termRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 4.5,
+  },
+  termLabel: {
+    fontWeight: "bold",
+    width: 90,
+    color: "#18181b",
+  },
+  termEnContainer: {
+    flex: 1,
+    paddingRight: 15,
+  },
+  termEnText: {
+    color: "#18181b",
+    lineHeight: 1.25,
+  },
+  termArContainer: {
+    flex: 1,
+    alignItems: "flex-end",
+  },
+  termArText: {
+    color: "#18181b",
+    textAlign: "right",
+    lineHeight: 1.25,
+  },
   footerRow: {
     position: "absolute",
     bottom: 15,
@@ -322,86 +354,6 @@ const styles = StyleSheet.create({
     color: "#4b5563"
   }
 });
-
-const watermarkStyles = StyleSheet.create({
-  centerContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: -1,
-  },
-  centerText: {
-    fontSize: 72,
-    fontWeight: "bold",
-    color: "#6b7280",
-    opacity: 0.16,
-    transform: "rotate(-35deg)",
-    fontFamily: "Tajawal",
-  },
-  multiContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "space-around",
-    paddingVertical: 100,
-    zIndex: -1,
-  },
-  multiRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-  },
-  multiText: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "#6b7280",
-    opacity: 0.15,
-    transform: "rotate(-30deg)",
-    fontFamily: "Tajawal",
-  },
-});
-
-function Watermark({ text, type }: { text?: string | null; type?: string | null }) {
-  if (!type || type === "none" || !text) return null;
-
-  if (type === "center") {
-    return (
-      <View fixed style={watermarkStyles.centerContainer} pointerEvents="none">
-        <Text style={watermarkStyles.centerText}>{text.toUpperCase()}</Text>
-      </View>
-    );
-  }
-
-  if (type === "multi") {
-    return (
-      <View fixed style={watermarkStyles.multiContainer} pointerEvents="none">
-        <View style={watermarkStyles.multiRow}>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-        </View>
-        <View style={watermarkStyles.multiRow}>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-        </View>
-        <View style={watermarkStyles.multiRow}>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-          <Text style={watermarkStyles.multiText}>{text.toUpperCase()}</Text>
-        </View>
-      </View>
-    );
-  }
-
-  return null;
-}
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -423,23 +375,19 @@ export function QuotePdfDocument({
 }: {
   quote: PdfQuote;
   settings: PdfSettings;
-  type?: "quotation" | "invoice" | "boq" | "bom";
+  type?: "quotation" | "invoice";
   amountPaid?: number;
   amountDue?: number;
 }) {
   const isInvoice = type === "invoice";
-  const isBoq = type === "boq";
-  const isBom = type === "bom";
 
-  // Ensure brand color is never so dark it appears black in the PDF
   const ensureVisibleColor = (hex: string): string => {
-    const h = hex.replace("#", "");
+    let h = hex.replace("#", "");
+    if (h.length === 8) h = h.substring(0, 6);
     const r = parseInt(h.substring(0, 2), 16);
     const g = parseInt(h.substring(2, 4), 16);
     const b = parseInt(h.substring(4, 6), 16);
-    // Calculate relative luminance (0 = black, 255 = white)
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    // If too dark (< 40), brighten each channel proportionally
     if (luminance < 40) {
       const boost = 60;
       const nr = Math.min(255, r + boost);
@@ -447,16 +395,15 @@ export function QuotePdfDocument({
       const nb = Math.min(255, b + boost);
       return `#${nr.toString(16).padStart(2, "0")}${ng.toString(16).padStart(2, "0")}${nb.toString(16).padStart(2, "0")}`;
     }
-    return hex;
+    return `#${h}`;
   };
 
   const brand = ensureVisibleColor(settings.brandColor || "#039737");
   const headerBgType = settings.pdfHeaderBgType || "solid";
-  const headerBgColorStart = settings.pdfHeaderBgColorStart || brand;
-  const headerBgColorEnd = settings.pdfHeaderBgColorEnd || brand;
-  const headerTextColor = settings.pdfHeaderTextColor || "#ffffff";
-  const tableBgColor = settings.pdfTableBgColor || brand;
-  const tableTextColor = settings.pdfTableTextColor || "#ffffff";
+  const headerBgColorStart = settings.pdfHeaderBgColorStart || "#91f0a9";
+  const headerBgColorEnd = settings.pdfHeaderBgColorEnd || "#91f0a9";
+  const tableBgColor = settings.pdfTableBgColor || "#91f0a9";
+  const tableTextColor = settings.pdfTableTextColor || "#18181b";
 
   const customerAddress = [
     quote.customer.address,
@@ -464,6 +411,7 @@ export function QuotePdfDocument({
   ].filter(Boolean).join(", ");
 
   const termsRows = buildPdfTermRows(quote, settings);
+  const tFontSize = (settings.termsFontSize || 14) * 0.53;
   const noteItems = getBilingualNotes(quote.notes, quote.notesAr);
   const bank = getBilingualParts(quote.bankDetails, quote.bankDetailsAr);
 
@@ -474,50 +422,74 @@ export function QuotePdfDocument({
     <Document>
       <Page size="A4" style={styles.page}>
 
-        {/* ── HEADER ─────────────────────────────────────────────────── */}
-        <View fixed style={styles.headerRow}>
-          <View>
-            <Text style={[styles.title, { color: headerBgColorStart }]} render={({ pageNumber }) => pageNumber > 1 ? "" : (
-              isInvoice ? (quote.printMode === 'novat' ? "INVOICE" : "TAX INVOICE") : isBoq ? "BILL OF QUANTITIES" : isBom ? "BILL OF MATERIALS" : "QUOTATION"
-            )}>
-            </Text>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaLabel}>
-                {isInvoice ? "Invoice ID / رقم الفاتورة:" : isBoq ? "BOQ ID / رقم الكميات:" : isBom ? "BOM ID / رقم المواد:" : "Quote ID / رقم العرض:"}
-              </Text>
-              <Text style={styles.metaValue}>{quote.number}</Text>
+        {/* ── HEADER (FIXED ON ALL PAGES) ──────────────────────────────── */}
+        <View fixed style={styles.headerContainer}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.title}>{isInvoice ? "TAX INVOICE" : "QUOTATION"}</Text>
+              <View style={styles.metaRow}>
+                <Text style={styles.metaLabel}>{isInvoice ? "Invoice ID / رقم الفاتورة:" : "Quote ID / رقم العرض:"}</Text>
+                <Text style={styles.metaValue}>{quote.number}</Text>
+              </View>
+
+              {/* Dynamic Date Row - Only visible on Page 1 */}
+              <View style={styles.metaRow} render={({ pageNumber }) => pageNumber === 1 ? (
+                <>
+                  <Text style={styles.metaLabel}>Date / التاريخ:</Text>
+                  <Text style={styles.metaValue}>{fmtDate(quote.createdAt)}</Text>
+                </>
+              ) : null} />
+
+              {/* Dynamic Valid Until / Due Date Row - Only visible on Page 1 if present */}
+              {quote.validUntil ? (
+                <View style={styles.metaRow} render={({ pageNumber }) => pageNumber === 1 ? (
+                  <>
+                    <Text style={styles.metaLabel}>{isInvoice ? "Due Date / تاريخ الاستحقاق:" : "Valid Until / صالح لغاية:"}</Text>
+                    <Text style={styles.metaValue}>{fmtDate(quote.validUntil)}</Text>
+                  </>
+                ) : null} />
+              ) : null}
+
+              {/* Dynamic Client Name on Page 2+ */}
+              <View render={({ pageNumber }) => pageNumber > 1 ? (
+                <View style={{ marginTop: 6, flexDirection: "row", justifyContent: "space-between", width: 500 }}>
+                  <Text style={{ fontSize: 8.5, fontWeight: "bold", color: "#1f2937", textTransform: "uppercase" }}>
+                    {quote.customer.company}
+                  </Text>
+                  {quote.customer.contactName ? (
+                    <Text style={{ fontSize: 8.5, fontWeight: "bold", color: "#1f2937", textAlign: "right" }}>
+                      {quote.customer.contactName}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null} />
             </View>
 
-            {/* Dynamic Date Row - Only visible on Page 1 */}
-            <View style={styles.metaRow} render={({ pageNumber }) => pageNumber === 1 ? (
-              <View style={{ flexDirection: "row", width: "100%" }}>
-                <Text style={styles.metaLabel}>Date / التاريخ:</Text>
-                <Text style={styles.metaValue}>{fmtDate(quote.createdAt)}</Text>
-              </View>
-            ) : <View style={{ width: 0, height: 0 }} />} />
-
-            {/* Dynamic Valid Until / Due Date Row - Only visible on Page 1 if present */}
-            {quote.validUntil ? (
-              <View style={styles.metaRow} render={({ pageNumber }) => pageNumber === 1 ? (
-                <View style={{ flexDirection: "row", width: "100%" }}>
-                  <Text style={styles.metaLabel}>{isInvoice ? "Due Date / تاريخ الاستحقاق:" : "Valid Until / صالح لغاية:"}</Text>
-                  <Text style={styles.metaValue}>{fmtDate(quote.validUntil)}</Text>
+            <View style={{ alignItems: "flex-end" }}>
+              {settings.logoUrl || "/company_logo.png" ? (
+                <Image src={settings.logoUrl || "/company_logo.png"} style={{ width: (settings.logoSize || 24) * 5.8, height: (settings.logoSize || 24) * 2.2, objectFit: "contain" }} />
+              ) : (
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={{ fontSize: 13, fontWeight: "bold", color: brand, textAlign: "right", letterSpacing: 0.5 }}>
+                    AJ
+                  </Text>
+                  <Text style={{ fontSize: 10, fontWeight: "bold", color: "#111827", textAlign: "right", letterSpacing: 0.5 }}>
+                    NETWORK
+                  </Text>
+                  <Text style={{ fontSize: 10, fontWeight: "bold", color: "#111827", textAlign: "right", letterSpacing: 0.5 }}>
+                    SOLUTIONS
+                  </Text>
                 </View>
-              ) : <View style={{ width: 0, height: 0 }} />} />
-            ) : null}
+              )}
+            </View>
           </View>
-          <View style={{ alignItems: "flex-end" }}>
-            {settings.logoUrl ? (
-              <Image src={settings.logoUrl} style={{ width: 130, height: 50, objectFit: "contain" }} />
-            ) : (
-              <Text style={{ fontSize: 12, fontWeight: "bold", color: brand, textAlign: "right", maxWidth: 150 }}>
-                {settings.companyName}
-              </Text>
-            )}
-          </View>
+
+          <View render={({ pageNumber }) => pageNumber === 1 ? (
+            <View style={{ borderBottomWidth: 0.5, borderBottomColor: "#d4d4d8", marginTop: 8 }} />
+          ) : null} />
         </View>
 
-        {/* ── CUSTOMER INFO ───────────────────────────────────────────── */}
+        {/* ── CUSTOMER INFO (PAGE 1) ─────────────────────────────────── */}
         <View wrap={false} style={styles.customerBox}>
           <View style={styles.customerHeader}>
             <Text style={styles.customerHeaderText}>CUSTOMER INFO</Text>
@@ -564,7 +536,7 @@ export function QuotePdfDocument({
           </View>
         </View>
 
-        {/* ── ITEMS TABLE ─────────────────────────────────────────────── */}
+        {/* ── ITEMS TABLE (TABLE HEADER REPEATS ON EVERY PAGE VIA FIXED) ── */}
         <View style={styles.table}>
           {/* Header */}
           <View fixed style={[styles.tableHeaderRow, { position: "relative", minHeight: 18 }]}>
@@ -581,36 +553,31 @@ export function QuotePdfDocument({
             ) : (
               <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: tableBgColor, zIndex: -1 }} />
             )}
-            <View style={[{ width: COL.item }, styles.border]}>
+            <View style={[{ width: COL.item, justifyContent: "center" }, styles.border]}>
               <Text style={[styles.th, { color: tableTextColor }]}>ITEM</Text>
             </View>
-            <View style={[{ flex: 1 }, styles.border]}>
+            <View style={[{ flex: 1, justifyContent: "center" }, styles.border]}>
               <Text style={[styles.thDesc, { color: tableTextColor }]}>DESCRIPTION</Text>
             </View>
-            <View style={[{ width: COL.qty }, styles.border]}>
+            <View style={[{ width: COL.qty, justifyContent: "center" }, styles.border]}>
               <Text style={[styles.th, { color: tableTextColor }]}>QTY</Text>
             </View>
-            <View style={[{ width: COL.unit }, quote.hidePrices ? cellBorderRight : styles.border]}>
+            <View style={[{ width: COL.unit, justifyContent: "center" }, styles.border]}>
               <Text style={[styles.th, { color: tableTextColor }]}>UNIT</Text>
             </View>
-            {!quote.hidePrices ? (
-              <>
-                <View style={[{ width: COL.unitPrice }, styles.border]}>
-                  <Text style={[styles.th, { color: tableTextColor }]}>UNIT PRICE</Text>
-                </View>
-                <View style={[{ width: COL.netPrice }, ...cellBorderRight]}>
-                  <Text style={[styles.th, { color: tableTextColor }]}>NET PRICE</Text>
-                </View>
-              </>
-            ) : null}
+            <View style={[{ width: COL.unitPrice, justifyContent: "center" }, styles.border]}>
+              <Text style={[styles.th, { color: tableTextColor }]}>UNIT PRICE</Text>
+            </View>
+            <View style={[{ width: COL.netPrice, justifyContent: "center" }, ...cellBorderRight]}>
+              <Text style={[styles.th, { color: tableTextColor }]}>NET PRICE</Text>
+            </View>
           </View>
 
           {/* Rows */}
           {quote.lines.map((line, i) => {
-            // Section rows render as full-width branded headers
             if (line.type === 'section') {
               return (
-                <View key={i} wrap={false} style={[styles.tableRow, { backgroundColor: 'rgba(240, 253, 250, 0.85)' }]}>
+                <View key={i} wrap={false} style={[styles.tableRow, { backgroundColor: '#f0fdfa' }]}>
                   <View style={[{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }, styles.cellContainer, ...cellBorder, ...cellBorderRight]}>
                     <Text style={[styles.cellText, styles.cellLeft, { fontWeight: 'bold', color: brand, fontSize: 8.5 }]}>
                       {line.description}
@@ -625,15 +592,13 @@ export function QuotePdfDocument({
               );
             }
 
-            // Sequential numbering excluding section rows
             let serialNum = 0;
             for (let k = 0; k <= i; k++) {
               if (quote.lines[k]?.type !== 'section') serialNum++;
             }
 
             return (
-              <View key={i} wrap={false} style={[styles.tableRow, { backgroundColor: i % 2 === 1 ? 'rgba(244, 244, 245, 0.8)' : 'transparent' }]}>
-
+              <View key={i} wrap={false} style={[styles.tableRow, { backgroundColor: i % 2 === 1 ? '#f4f4f5' : '#ffffff' }]}>
                 {/* ITEM Column */}
                 <View style={[{ width: COL.item }, styles.cellContainer, ...cellBorder]}>
                   <Text style={[styles.cellText, styles.cellCenter]}>{serialNum}</Text>
@@ -655,44 +620,37 @@ export function QuotePdfDocument({
                 </View>
 
                 {/* UNIT Column */}
-                <View style={[{ width: COL.unit }, styles.cellContainer, ...(quote.hidePrices ? cellBorderRight : cellBorder)]}>
+                <View style={[{ width: COL.unit }, styles.cellContainer, ...cellBorder]}>
                   <Text style={[styles.cellText, styles.cellCenter]}>{line.unit}</Text>
                 </View>
 
-                {!quote.hidePrices ? (
-                  <>
-                    {/* UNIT PRICE Column */}
-                    <View style={[{ width: COL.unitPrice }, styles.cellContainer, ...cellBorder]}>
-                      <Text style={[styles.cellText, styles.cellCenter]}>{fmt(line.unitPrice)}</Text>
-                    </View>
+                {/* UNIT PRICE Column */}
+                <View style={[{ width: COL.unitPrice }, styles.cellContainer, ...cellBorder]}>
+                  <Text style={[styles.cellText, styles.cellCenter]}>{fmt(line.unitPrice)}</Text>
+                </View>
 
-                    {/* NET PRICE Column */}
-                    <View style={[{ width: COL.netPrice }, styles.cellContainer, ...cellBorderRight]}>
-                      <Text style={[styles.cellText, styles.cellCenter, styles.cellBold]}>{fmt(lineNetPrice(line))}</Text>
-                    </View>
-                  </>
-                ) : null}
-
+                {/* NET PRICE Column */}
+                <View style={[{ width: COL.netPrice }, styles.cellContainer, ...cellBorderRight]}>
+                  <Text style={[styles.cellText, styles.cellCenter, styles.cellBold]}>{fmt(lineNetPrice(line))}</Text>
+                </View>
               </View>
             );
           })}
         </View>
 
-        {/* ── NOTE + TOTALS ───────────────────────────────────────────── */}
-        <View style={{ marginTop: 6 }}>
+        {/* ── NOTE + TOTALS (WRAP FALSE) ──────────────────────────────── */}
+        <View wrap={false} style={{ marginTop: 6 }}>
           <View style={{ flexDirection: "row", gap: 10 }}>
             {/* Note box */}
             <View style={styles.noteBox}>
               <View style={{ flexDirection: "row", gap: 4 }}>
                 <Text style={{ fontWeight: "bold", minWidth: 38 }}>NOTE:</Text>
                 <View style={{ flex: 1, flexDirection: "row", gap: 6 }}>
-                  {/* English lines */}
                   <View style={{ flex: 1 }}>
                     {noteItems.map((item, idx) => (
                       <Text key={idx} style={{ fontSize: 7.5, marginBottom: 1 }}>{item.en}</Text>
                     ))}
                   </View>
-                  {/* Arabic lines */}
                   {noteItems.some((n) => n.ar) ? (
                     <View style={{ flex: 1 }}>
                       {noteItems.map((item, idx) => (
@@ -722,9 +680,22 @@ export function QuotePdfDocument({
                   <Text>{quote.currency} {fmt(quote.taxTotal)}</Text>
                 </View>
               )}
-              <View style={[styles.totalPkg, { position: "relative", minHeight: 18, borderBottomWidth: 0, backgroundColor: "#18181b" }]}>
-                <Text style={{ fontWeight: "bold", color: "#ffffff" }}>TOTAL PACKAGE</Text>
-                <Text style={{ color: "#ffffff", fontWeight: "bold" }}>{quote.currency} {fmt(quote.manualTotal !== undefined && quote.manualTotal !== null ? quote.manualTotal : quote.total)}</Text>
+              <View style={[styles.totalPkg, { position: "relative", minHeight: 18, borderBottomWidth: 0 }]}>
+                {headerBgType === "gradient" ? (
+                  <Svg style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: -1 }}>
+                    <Defs>
+                      <LinearGradient id="totalsGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <Stop offset="0%" stopColor={headerBgColorStart} />
+                        <Stop offset="100%" stopColor={headerBgColorEnd} />
+                      </LinearGradient>
+                    </Defs>
+                    <Rect x="0" y="0" width="100%" height="100%" fill="url(#totalsGrad)" />
+                  </Svg>
+                ) : (
+                  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: tableBgColor, zIndex: -1 }} />
+                )}
+                <Text style={{ color: tableTextColor, fontWeight: "bold" }}>TOTAL PACKAGE</Text>
+                <Text style={{ color: tableTextColor, fontWeight: "bold" }}>{quote.currency} {fmt(quote.manualTotal !== undefined && quote.manualTotal !== null ? quote.manualTotal : quote.total)}</Text>
               </View>
               {(isInvoice && amountPaid > 0) ? (
                 <>
@@ -743,53 +714,37 @@ export function QuotePdfDocument({
 
           {/* ── TERMS ───────────────────────────────────────────────── */}
           {termsRows.length > 0 ? (
-            <View wrap={false} style={styles.termsSection}>
+            <View style={styles.termsSection}>
               {termsRows.map((row) => (
                 <View key={row.label} style={styles.termRow}>
-                  <View style={styles.termLeft}>
-                    <Text style={{ fontWeight: "bold" }}>{row.label}:</Text>
-                    <Text style={{ flex: 1 }}>{row.en}</Text>
+                  <Text style={[styles.termLabel, { fontSize: tFontSize }]}>{row.label}:</Text>
+                  <View style={styles.termEnContainer}>
+                    <Text style={[styles.termEnText, { fontSize: tFontSize }]}>{row.en}</Text>
                   </View>
                   {row.ar ? (
-                    <Text style={{ flex: 1, textAlign: "right" }}>{row.ar}</Text>
+                    <View style={styles.termArContainer}>
+                      <Text style={[styles.termArText, { fontSize: tFontSize }]}>{row.ar}</Text>
+                    </View>
                   ) : null}
                 </View>
               ))}
             </View>
           ) : null}
-
-          {/* ── BANK DETAILS ─────────────────────────────────────────── */}
-          {(bank.en || bank.ar) ? (
-            <View style={styles.bankSection}>
-              <Text style={{ fontWeight: "bold", marginBottom: 2 }}>BANK DETAILS</Text>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ flex: 1 }}>{bank.en || ""}</Text>
-                {bank.ar ? <Text style={{ flex: 1, textAlign: "right" }}>{bank.ar}</Text> : null}
-              </View>
-            </View>
-          ) : null}
         </View>
 
-        {/* ── DYNAMIC FOOTER ───────────────────────────────────────── */}
-        <View fixed style={styles.footerRow}>
-          <Text style={styles.footerText}>
-            {settings.companyName || "Qvoke"} | Tel: +966 920002087 | info@ajnetworksa.com
-          </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            {quote.zatcaQrCodeImage ? (
-              <Image src={quote.zatcaQrCodeImage} style={{ width: 40, height: 40, objectFit: "contain" }} />
-            ) : null}
-            <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
-          </View>
-        </View>
-
-        {settings.footerImageUrl ? (
+        {/* ── DYNAMIC FIXED FOOTER (COPIED TO ALL PAGES) ───────────────── */}
+        {settings.footerImageUrl || "/company_footer.png" ? (
           <View fixed style={{ position: "absolute", bottom: 25, left: 0, right: 0, alignItems: "center" }}>
-            <Image src={settings.footerImageUrl} style={{ width: "100%", height: 30, objectFit: "contain" }} />
+            <Image src={settings.footerImageUrl || "/company_footer.png"} style={{ width: "100%", height: settings.footerSize || 30, objectFit: "contain" }} />
           </View>
         ) : null}
 
-        <Watermark text={quote.watermarkText} type={quote.watermarkType} />
+        <View fixed style={styles.footerRow}>
+          <Text style={styles.footerText}>
+            {settings.companyName || "AJ Network Solutions"} | Tel: +966 920002087 | info@ajnetworksa.com
+          </Text>
+          <Text style={styles.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+        </View>
 
       </Page>
     </Document>

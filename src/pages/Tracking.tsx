@@ -15,8 +15,11 @@ import {
   FileCheck2,
   Ban,
   StickyNote,
-  Pencil
+  Pencil,
+  FileText,
+  FileSpreadsheet
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
 
 type DocType = 'quotation' | 'invoice';
 type FollowFilter = 'all' | 'has' | 'due' | 'overdue' | 'none';
@@ -132,6 +135,296 @@ export const Tracking: React.FC = () => {
     if (editTarget.bulk) setSelected([]);
   };
 
+  const handleDownloadSelectedPdfs = async () => {
+    if (selected.length === 0) return;
+    const isOk = confirm(`Are you sure you want to download ${selected.length} PDF files? This may take a moment.`);
+    if (!isOk) return;
+
+    for (const id of selected) {
+      try {
+        const item = docs.find((d) => d.id === id);
+        if (!item) continue;
+        
+        const res = await fetch('/api/pdf/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${useERPStore.getState().token}`
+          },
+          body: JSON.stringify({ documentData: item, type: docType })
+        });
+
+        if (!res.ok) continue;
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${item.number}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        // Small delay to prevent browser from blocking multiple downloads
+        await new Promise(r => setTimeout(r, 600));
+      } catch (e) {
+        console.error(`Failed to download PDF for ${id}:`, e);
+      }
+    }
+  };
+
+  const handleDownloadSelectedExcels = async () => {
+    if (selected.length === 0) return;
+    const isOk = confirm(`Are you sure you want to download ${selected.length} Excel files? This may take a moment.`);
+    if (!isOk) return;
+
+    for (const id of selected) {
+      try {
+        const item = docs.find((d) => d.id === id);
+        if (!item) continue;
+        const custName = getCustomerName(item.customerId);
+        
+        const quoteInfo = [
+          [],
+          [(docType === 'quotation' ? 'QUOTATION' : 'INVOICE')],
+          ['Document #:', item.number],
+          ['Date:', new Date(item.date).toLocaleDateString()],
+          ['Customer:', custName],
+          ['Subject:', (item as any).subject || ''],
+          []
+        ];
+
+        let baseTotal = 0;
+        const itemsData = [
+          ['ITEM', 'DESCRIPTION', 'QTY', 'UNIT', 'UNIT PRICE', 'DISCOUNT %', 'NET PRICE'],
+          ...item.lineItems.filter(li => li.type !== 'note').map((li, index) => {
+            const netPrice = li.quantity * li.unitPrice * (1 - (li.discountPercent || 0) / 100);
+            baseTotal += netPrice;
+            return [
+              index + 1,
+              li.description,
+              li.quantity,
+              li.unit,
+              li.unitPrice,
+              li.discountPercent || 0,
+              netPrice
+            ];
+          }),
+          ['', '', '', '', 'SUBTOTAL', item.subtotal],
+          ['', '', '', '', 'DISCOUNT', item.discountTotal || 0],
+          ['', '', '', '', 'VAT', item.taxTotal || 0],
+          ['', '', '', '', 'TOTAL PACKAGE', item.total],
+          [''],
+          ['TERMS & NOTES', item.notes || '']
+        ];
+
+        const workbook = new ExcelJS.Workbook();
+        const ws = workbook.addWorksheet('Document');
+
+        ws.columns = [
+          { key: 'A', width: 6 },
+          { key: 'B', width: 45 },
+          { key: 'C', width: 10 },
+          { key: 'D', width: 10 },
+          { key: 'E', width: 15 },
+          { key: 'F', width: 12 },
+          { key: 'G', width: 15 },
+        ];
+
+        const allData = [...quoteInfo, ...itemsData];
+        allData.forEach(rowData => ws.addRow(rowData));
+
+        ws.mergeCells('A2:D2');
+        ws.getCell('A2').font = { size: 16, bold: true, color: { argb: 'FF1E3A8A' } };
+
+        const startRow = 8;
+        const headerRow = ws.getRow(startRow);
+        for (let c = 1; c <= 7; c++) {
+          headerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
+          headerRow.getCell(c).font = { name: 'Arial', size: 10, color: { argb: 'FFFFFFFF' }, bold: true };
+          headerRow.getCell(c).border = { top: { style: 'medium' }, bottom: { style: 'medium' }, left: { style: 'thin' }, right: { style: 'thin' } };
+          headerRow.getCell(c).alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${custName.replace(/[^a-zA-Z0-9_\-.\s]/g, '').trim()}-${item.number}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        await new Promise(r => setTimeout(r, 600));
+      } catch (e) {
+        console.error(`Failed to download Excel for ${id}:`, e);
+      }
+    }
+  };
+
+  const handleDownloadMergedExcel = async () => {
+    if (selected.length === 0) return;
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+
+      // 1. Summary Index Sheet
+      const indexWs = workbook.addWorksheet('Summary Index');
+      indexWs.columns = [
+        { key: 'A', width: 6 },
+        { key: 'B', width: 18 },
+        { key: 'C', width: 14 },
+        { key: 'D', width: 30 },
+        { key: 'E', width: 14 },
+        { key: 'F', width: 35 },
+        { key: 'G', width: 14 },
+        { key: 'H', width: 14 },
+        { key: 'I', width: 14 },
+        { key: 'J', width: 16 },
+      ];
+
+      indexWs.addRow([]);
+      indexWs.addRow(['', 'MERGED DOCUMENT REPORT']);
+      indexWs.mergeCells('B2:J2');
+      indexWs.getCell('B2').font = { size: 16, bold: true, color: { argb: 'FF1E3A8A' } };
+
+      indexWs.addRow([]);
+
+      const headerRow = indexWs.addRow(['#', 'DOCUMENT #', 'TYPE', 'CUSTOMER', 'DATE', 'SUBJECT', 'STATUS', 'SUBTOTAL', 'VAT', 'TOTAL']);
+      for (let c = 1; c <= 10; c++) {
+        const cell = headerRow.getCell(c);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        cell.font = { name: 'Arial', size: 10, color: { argb: 'FFFFFFFF' }, bold: true };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+
+      let masterSubtotal = 0;
+      let masterVat = 0;
+      let masterTotal = 0;
+
+      selected.forEach((id, idx) => {
+        const item = docs.find((d) => d.id === id);
+        if (!item) return;
+        const custName = getCustomerName(item.customerId);
+        masterSubtotal += item.subtotal || 0;
+        masterVat += item.taxTotal || 0;
+        masterTotal += item.total || 0;
+
+        const row = indexWs.addRow([
+          idx + 1,
+          item.number,
+          docType.toUpperCase(),
+          custName,
+          new Date(item.date).toLocaleDateString(),
+          (item as any).subject || '',
+          item.status.toUpperCase(),
+          item.subtotal || 0,
+          item.taxTotal || 0,
+          item.total || 0
+        ]);
+
+        const bgColor = idx % 2 === 0 ? 'FFF8FAFC' : 'FFFFFFFF';
+        for (let c = 1; c <= 10; c++) {
+          row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+          row.getCell(c).border = { left: { style: 'thin' }, right: { style: 'thin' }, bottom: { style: 'thin' }, top: { style: 'thin' } };
+        }
+      });
+
+      // Add Master Totals Row
+      const totalRow = indexWs.addRow(['', 'TOTALS', '', '', '', '', '', masterSubtotal, masterVat, masterTotal]);
+      for (let c = 1; c <= 10; c++) {
+        const cell = totalRow.getCell(c);
+        cell.font = { bold: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        cell.border = { top: { style: 'medium' }, bottom: { style: 'double' } };
+      }
+
+      // 2. Individual Worksheets for each document
+      selected.forEach((id) => {
+        const item = docs.find((d) => d.id === id);
+        if (!item) return;
+        const custName = getCustomerName(item.customerId);
+        const sheetName = item.number.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 31);
+        const ws = workbook.addWorksheet(sheetName);
+
+        ws.columns = [
+          { key: 'A', width: 6 },
+          { key: 'B', width: 45 },
+          { key: 'C', width: 10 },
+          { key: 'D', width: 10 },
+          { key: 'E', width: 15 },
+          { key: 'F', width: 12 },
+          { key: 'G', width: 15 },
+        ];
+
+        const quoteInfo = [
+          [],
+          [(docType === 'quotation' ? 'QUOTATION' : 'INVOICE')],
+          ['Document #:', item.number],
+          ['Date:', new Date(item.date).toLocaleDateString()],
+          ['Customer:', custName],
+          ['Subject:', (item as any).subject || ''],
+          []
+        ];
+
+        const itemsData = [
+          ['ITEM', 'DESCRIPTION', 'QTY', 'UNIT', 'UNIT PRICE', 'DISCOUNT %', 'NET PRICE'],
+          ...item.lineItems.filter(li => li.type !== 'note').map((li, index) => {
+            const netPrice = li.quantity * li.unitPrice * (1 - (li.discountPercent || 0) / 100);
+            return [
+              index + 1,
+              li.description,
+              li.quantity,
+              li.unit,
+              li.unitPrice,
+              li.discountPercent || 0,
+              netPrice
+            ];
+          }),
+          ['', '', '', '', 'SUBTOTAL', item.subtotal],
+          ['', '', '', '', 'DISCOUNT', item.discountTotal || 0],
+          ['', '', '', '', 'VAT', item.taxTotal || 0],
+          ['', '', '', '', 'TOTAL PACKAGE', item.total],
+          [''],
+          ['TERMS & NOTES', item.notes || '']
+        ];
+
+        [...quoteInfo, ...itemsData].forEach(rowData => ws.addRow(rowData));
+
+        ws.mergeCells('A2:D2');
+        ws.getCell('A2').font = { size: 16, bold: true, color: { argb: 'FF1E3A8A' } };
+
+        const startRow = 8;
+        const hRow = ws.getRow(startRow);
+        for (let c = 1; c <= 7; c++) {
+          hRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
+          hRow.getCell(c).font = { name: 'Arial', size: 10, color: { argb: 'FFFFFFFF' }, bold: true };
+          hRow.getCell(c).border = { top: { style: 'medium' }, bottom: { style: 'medium' }, left: { style: 'thin' }, right: { style: 'thin' } };
+          hRow.getCell(c).alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Merged_${docType === 'quotation' ? 'Quotations' : 'Invoices'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to export merged Excel:', e);
+      alert('Failed to generate merged Excel file.');
+    }
+  };
+
   const fmt = (d: Date | string) => new Date(d).toLocaleDateString('en-US', { year: '2-digit', month: 'short', day: 'numeric' });
   const allSelected = filtered.length > 0 && selected.length === filtered.length;
 
@@ -168,7 +461,7 @@ export const Tracking: React.FC = () => {
       <div className="premium-card p-4 mb-6 flex flex-col gap-3">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
-            <Search className="absolute left-3 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
             <input
               type="text"
               placeholder="Search number, customer, subject, follow-up note…"
@@ -229,18 +522,45 @@ export const Tracking: React.FC = () => {
                 <button
                   key={a.status}
                   onClick={() => applyBulkStatus(a.status)}
-                  className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
+                  className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
                 >
-                  <Icon className={`w-3.5 h-3.5 ${a.cls}`} /> {a.label}
+                  <Icon className={`w-3.5 h-3.5 ${a.cls}`} /> <span className="whitespace-nowrap">{a.label}</span>
                 </button>
               );
             })}
             <button
               onClick={openBulkEdit}
-              className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
+              className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
             >
-              <CalendarClock className="w-3.5 h-3.5 text-[var(--color-primary)]" /> Set Follow-up
+              <CalendarClock className="w-3.5 h-3.5 text-[var(--color-primary)]" /> <span className="whitespace-nowrap">Set Follow-up</span>
             </button>
+            <div className="w-px h-6 bg-[var(--color-divider)] mx-1" />
+            <button
+              onClick={handleDownloadSelectedPdfs}
+              className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5 text-red-500" /> <span className="whitespace-nowrap">Export PDFs</span>
+            </button>
+            <button
+              onClick={handleDownloadSelectedExcels}
+              className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-green-600" /> <span className="whitespace-nowrap">Export Excels</span>
+            </button>
+            <button
+              onClick={handleDownloadMergedExcel}
+              className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" /> <span className="whitespace-nowrap">Merge Excel</span>
+            </button>
+            {editTarget?.bulk && (
+              <button
+                onClick={() => handleBulkDelete()}
+                className="bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer ml-auto"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> <span className="whitespace-nowrap">Delete Selected</span>
+              </button>
+            )}
           </div>
         </div>
       )}

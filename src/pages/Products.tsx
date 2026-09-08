@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useERPStore } from '../store';
+import { translateText } from '../utils/translate';
 import { Product } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { matchSearchQuery } from '../utils/search';
@@ -26,6 +27,8 @@ export const Products: React.FC = () => {
   const [categoryId, setCategoryId] = useState('general');
   const [itemCode, setItemCode] = useState('');
   const [supplierName, setSupplierName] = useState('');
+  
+  const lastEnPart = useRef<string>('');
 
   const filtered = products.filter(p =>
     matchSearchQuery(search, [p.name, p.description, p.unit, p.categoryId, p.id, p.unitPrice, p.itemCode, p.supplierName])
@@ -56,6 +59,7 @@ export const Products: React.FC = () => {
     setCategoryId(p.categoryId || 'general');
     setItemCode(p.itemCode || '');
     setSupplierName(p.supplierName || '');
+    lastEnPart.current = p.description?.split(' / ')[0] || '';
     setFormOpen(true);
   };
 
@@ -254,8 +258,21 @@ export const Products: React.FC = () => {
                   rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full premium-input text-xs"
-                  placeholder="Bilingual details (AR/EN) printed in lines..."
+                  onBlur={async () => {
+                    const parts = description.split(' / ');
+                    const enPart = parts[0]?.trim();
+                    const arPart = parts.length > 1 ? parts[1].trim() : '';
+
+                    if (enPart && (!arPart || enPart !== lastEnPart.current)) {
+                      lastEnPart.current = enPart;
+                      const translation = await translateText(enPart, 'ar');
+                      if (translation) {
+                        setDescription(`${enPart} / ${translation}`);
+                      }
+                    }
+                  }}
+                  className="w-full premium-input text-sm text-[var(--color-text)] resize-none"
+                  placeholder="e.g. 2MP ColorVu Mini Bullet Camera"
                 />
               </div>
 

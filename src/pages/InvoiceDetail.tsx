@@ -28,13 +28,19 @@ import {
   Calendar,
   CreditCard,
   Building,
-  Globe
+  Globe,
+  Loader2,
+  Share2
 } from 'lucide-react';
 import { PDFPreviewModal } from '../components/PDFPreviewModal';
 import { EmailSendModal } from '../components/EmailSendModal';
+import { PublicShareModal } from '../components/PublicShareModal';
 import { DocumentTimeline } from '../components/DocumentTimeline';
 import QRCode from 'qrcode';
 import { generateZatcaQRBase64 } from '../utils/zatca';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableTableRow } from '../components/SortableTableRow';
 
 interface InvoiceDetailProps {
   id: string; // 'new' or a invoice id
@@ -53,7 +59,8 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     recordPayment,
     company,
     token,
-    currentUser
+    currentUser,
+    initialized
   } = useERPStore();
 
   const isNew = id === 'new';
@@ -88,6 +95,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'items' | 'payments' | 'terms'>('items');
 
@@ -191,7 +199,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       setDueDate(new Date(existingInv.dueDate));
       setStatus(existingInv.status);
       setPaymentTerms(existingInv.paymentTerms);
-      setLineItems(JSON.parse(JSON.stringify(existingInv.lineItems)));
+      setLineItems(existingInv.lineItems ? JSON.parse(JSON.stringify(existingInv.lineItems)) : []);
       setNotes(existingInv.notes || '');
       setTerms(existingInv.terms || '');
       setCurrency(existingInv.currency);
@@ -399,7 +407,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     let baseTotal = 0;
     let markupProfit = 0;
 
-    lineItems.forEach((item) => {
+    (lineItems || []).forEach((item) => {
       if (item.type !== 'item') return;
       const rule = getItemRule(item);
       const saleTotal = item.subtotal || 0;
@@ -587,9 +595,29 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     });
   };
 
-  const handleDeleteLine = (lineId: string) => {
-    setLineItems(lineItems.filter((i) => i.id !== lineId));
+  const removeItem = (lineId: string) => {
+    setLineItems(lineItems.filter((item) => item.id !== lineId));
     setIsDirty(true);
+  };
+
+  // Reordering lines (dnd-kit)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = lineItems.findIndex((item) => item.id === active.id);
+    const newIndex = lineItems.findIndex((item) => item.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      setLineItems((items) => arrayMove(items, oldIndex, newIndex));
+      setIsDirty(true);
+    }
   };
 
   const handleSave = async () => {
@@ -644,6 +672,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   };
 
   const [isTranslating, setIsTranslating] = useState(false);
+  const lastTranslateMap = useRef(new Map<string, string>());
 
   const translateText = async (text: string): Promise<string> => {
     if (!text) return '';
@@ -759,6 +788,35 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
   const custObj = customers.find((c) => c.id === customerId);
 
+  if (!isNew && !existingInv && !initialized) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)] mb-3" />
+        <p className="text-sm text-[var(--color-text-muted)] font-medium">Loading invoice details...</p>
+      </div>
+    );
+  }
+
+  if (!isNew && !existingInv && initialized) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center animate-fade-in">
+        <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+          <AlertTriangle className="w-7 h-7 text-red-500" />
+        </div>
+        <h2 className="text-lg font-bold text-[var(--color-text)] mb-1.5">Invoice Not Found</h2>
+        <p className="text-sm text-[var(--color-text-muted)] max-w-sm mb-5">
+          The requested invoice could not be found or may have been deleted.
+        </p>
+        <button
+          onClick={() => setRoute('tracking')}
+          className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md transition-colors cursor-pointer"
+        >
+          Back to Tracking
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in text-left">
       <PageHeader
@@ -820,6 +878,15 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                   className="bg-[var(--color-surface-offset)] hover:bg-[var(--color-divider)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
                   Print PDF / طباعة
+                </button>
+
+                <button
+                  onClick={() => setShareModalOpen(true)}
+                  className="bg-[var(--color-surface-offset)] hover:bg-[var(--color-divider)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-semibold py-2 px-4 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Share client portal link with e-signatures"
+                >
+                  <Share2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  Share Link
                 </button>
 
                 <div className="relative group">
@@ -1123,7 +1190,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                 <div className="flex-1">
                   <div className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Billed To</div>
                   <div className="text-[var(--color-text-muted)]">
-                    {custObj.billingAddress.street}, {custObj.billingAddress.city}
+                    {custObj.billingAddress?.street || 'N/A'}, {custObj.billingAddress?.city || ''}
                   </div>
                   <div className="text-xs font-bold text-[var(--color-primary)] mt-1.5">
                     VAT / الرقم الضريبي: {custObj.vatNumber || 'Not registered'}
@@ -1177,7 +1244,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
               {canUseMarkup && (
                 <div className="hidden lg:flex w-full mb-0">
                   <div className="flex-1" />
-                  <div className="w-[320px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
+                  <div className="w-[240px] shrink-0 h-9 flex justify-between items-center px-3 premium-card rounded-b-none border-b-0 bg-[var(--color-surface)]">
                     <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
                     <input
                       type="number"
@@ -1193,27 +1260,30 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                 {/* Inline Line Items Grid */}
                 <div className="flex-1 premium-card min-w-0 w-full flex flex-col lg:rounded-tr-none">
                   <div ref={tableWrapperRef} className="overflow-x-auto w-full pb-36 min-h-[300px]">
-                    <table className="w-full text-sm text-left border-collapse">
-                      <thead>
-                        <tr ref={headerRef} className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
-                      <th className="py-2.5 px-3 w-8 text-center"></th>
-                      <th className="py-2.5 px-3 w-8 text-center">#</th>
-                      <th className="py-2.5 px-3 min-w-[650px] w-[700px]">Description / الوصف</th>
-                      <th className="py-2.5 px-3 w-16 text-center">Qty</th>
-                      <th className="py-2.5 px-3 w-20 text-center">Unit</th>
-                      <th className="py-2.5 px-3 w-28 text-right">Price</th>
-                      <th className="py-2.5 px-3 w-20 text-center">Disc %</th>
-                      <th className="py-2.5 px-3 w-20 text-center">Tax %</th>
-                      <th className="py-2.5 px-3 w-28 text-right">Subtotal</th>
-                      <th className="py-2.5 px-3 w-10 text-center"></th>
-                    </tr>
-                  </thead>
-                      <tbody className="divide-y divide-[var(--color-divider)]">
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={lineItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                        <table className="w-full text-sm text-left border-collapse">
+                          <thead>
+                            <tr ref={headerRef} className="bg-[var(--color-surface-offset)] border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                              <th className="py-2.5 px-3 w-8 text-center"></th>
+                              <th className="py-2.5 px-3 w-8 text-center">#</th>
+                              <th className="py-2.5 px-3 min-w-[650px] w-[700px]">Description / الوصف</th>
+                              <th className="py-2.5 px-3 w-16 text-center">Qty</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Unit</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Price</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Disc %</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Tax %</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Subtotal</th>
+                              <th className="py-2.5 px-3 w-10 text-center"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--color-divider)]">
                         {lineItems.map((item, idx) => (
-                          <tr
+                          <SortableTableRow
                             key={item.id}
-                            ref={(el) => {
-                              if (el) {
+                            id={item.id}
+                            ref={(el: HTMLTableRowElement | null) => {
+                              if (item.type === 'item' && el) {
                                 rowRefs.current.set(item.id, el);
                               } else {
                                 rowRefs.current.delete(item.id);
@@ -1221,9 +1291,18 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                             }}
                             className={item.type !== 'item' ? 'bg-[var(--color-surface-offset)] font-bold' : ''}
                           >
-                        <td className="py-2 px-1 text-center">
-                          <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] inline" />
-                        </td>
+                            {(setActivatorNodeRef, listeners, attributes) => (
+                              <>
+                                <td className="py-2 px-1 text-center">
+                                  <div
+                                    ref={setActivatorNodeRef}
+                                    {...listeners}
+                                    {...attributes}
+                                    className="cursor-grab active:cursor-grabbing p-1 inline-flex items-center justify-center hover:bg-[var(--color-surface-offset)] rounded transition-colors touch-none"
+                                  >
+                                    <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] inline" />
+                                  </div>
+                                </td>
                         <td className="py-2 px-1 text-xs text-center font-mono text-[var(--color-text-muted)]">
                           {idx + 1}
                         </td>
@@ -1242,10 +1321,13 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                                   const parts = item.description.includes(' / ') ? item.description.split(' / ') : [item.description, ''];
                                   const enPart = parts[0] || '';
                                   let arPart = parts.slice(1).join(' / ') || '';
-                                  if (enPart && !arPart) {
+                                  
+                                  const lastTr = lastTranslateMap.current.get(item.id);
+                                  if (enPart && (!arPart || lastTr !== enPart)) {
                                     const tr = await translateText(enPart);
                                     if (tr) {
                                       handleUpdateLine(item.id, { description: `${enPart} / ${tr}` });
+                                      lastTranslateMap.current.set(item.id, enPart);
                                     }
                                   }
                                 }}
@@ -1379,10 +1461,14 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </>
+                      )}
+                    </SortableTableRow>
+                  ))}
+                          </tbody>
+                        </table>
+                      </SortableContext>
+                    </DndContext>
               </div>
               <div className="flex flex-wrap gap-2 px-4 py-3 bg-[var(--color-surface-offset)] border-t border-[var(--color-border)] justify-start">
                 <button
@@ -1411,7 +1497,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
 
                 {/* Analysis Sidebar — row heights synced with line items table */}
                 {canUseMarkup && (
-                  <div className="w-full lg:w-[280px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
+                  <div className="w-full lg:w-[240px] shrink-0 premium-card flex flex-col bg-[var(--color-surface-offset)] overflow-hidden lg:rounded-tl-none">
                     {/* M.U. % on mobile/tablet (desktop uses bar above) */}
                     <div className="lg:hidden h-9 shrink-0 flex justify-between items-center px-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                       <span className="font-bold text-xs text-[var(--color-text)] uppercase tracking-wider">M.U. %</span>
@@ -1820,6 +1906,17 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
             </div>
           </form>
         </div>
+      )}
+
+      {shareModalOpen && id && (
+        <PublicShareModal
+          isOpen={shareModalOpen}
+          docType="invoice"
+          docId={id}
+          docNumber={number}
+          customerPhone={customerObj?.phone}
+          onClose={() => setShareModalOpen(false)}
+        />
       )}
     </div>
   );
