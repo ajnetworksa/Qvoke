@@ -382,7 +382,11 @@ addColumnIfNotExists('products', 'minStockLevel', 'REAL DEFAULT 5');
 addColumnIfNotExists('products', 'trackStock', 'INTEGER DEFAULT 1');
 
 // Seed default numbering sequences
+const sequencesArePerCompany = (): boolean =>
+  (db.prepare("PRAGMA table_info(sequences)").all() as any[]).some((c) => c.name === 'companyId');
+
 const seedSequences = () => {
+  if (sequencesArePerCompany()) return; // migrated: rows are created lazily per company
   const defaults: { docType: string; prefix: string }[] = [
     { docType: 'quotation', prefix: 'QT' },
     { docType: 'invoice', prefix: 'INV' },
@@ -408,6 +412,7 @@ seedSequences();
 // series instead of starting a parallel one. Guarded by a settings flag; after this runs,
 // the sequence config is owned by the user (editable via Settings) and never auto-changed.
 const reconcileSequences = () => {
+  if (sequencesArePerCompany()) return;
   const flag = db.prepare("SELECT value FROM settings WHERE key = 'sequencesReconciled'").get() as { value: string } | undefined;
   if (flag?.value === 'true') return;
 
@@ -459,9 +464,27 @@ reconcileSequences();
 // Atomically reserve and format the next number for a document type.
 // Retry-safe: if the generated number already exists in the target table
 // (e.g. due to manual edits or a race condition), it increments and retries.
-function getNextDocumentNumber(docType: string): string {
+const DEFAULT_SEQUENCE_PREFIX: Record<string, string> = {
+  quotation: 'QT', invoice: 'INV', boq: 'BOQ', bom: 'BOM', expense: 'EXP', recurring: 'REC', po: 'PO'
+};
+
+function ensureCompanySequence(docType: string, companyId: string): void {
+  const have = db.prepare('SELECT 1 FROM sequences WHERE docType = ? AND companyId = ?').get(docType, companyId);
+  if (have) return;
+  // New company: inherit prefix/format from an existing config, but start counting from 0.
+  const tpl = db.prepare('SELECT prefix, padding, resetPeriod FROM sequences WHERE docType = ? LIMIT 1').get(docType) as any;
+  db.prepare(`INSERT OR IGNORE INTO sequences (companyId, docType, prefix, lastNumber, padding, resetPeriod, lastYear)
+              VALUES (?, ?, ?, 0, ?, ?, ?)`)
+    .run(companyId, docType, tpl?.prefix || DEFAULT_SEQUENCE_PREFIX[docType] || docType.toUpperCase(),
+      tpl?.padding ?? 4, tpl?.resetPeriod || 'yearly', new Date().getFullYear());
+}
+
+function getNextDocumentNumber(docType: string, companyId: string): string {
   const MAX_RETRIES = 1000;
-  const seq = db.prepare('SELECT * FROM sequences WHERE docType = ?').get(docType) as
+  if (!DEFAULT_SEQUENCE_PREFIX[docType]) throw new Error(`Unknown document type for numbering: ${docType}`);
+  if (!companyId) throw new Error('companyId is required for numbering');
+  ensureCompanySequence(docType, companyId);
+  const seq = db.prepare('SELECT * FROM sequences WHERE docType = ? AND companyId = ?').get(docType, companyId) as
     | { docType: string; prefix: string; lastNumber: number; padding: number; resetPeriod: string; lastYear: number | null }
     | undefined;
   if (!seq) {
@@ -486,7 +509,7 @@ function getNextDocumentNumber(docType: string): string {
 
     // Check if this number is already taken (e.g. manually imported or race)
     if (table) {
-      const clash = db.prepare(`SELECT 1 FROM ${table} WHERE number = ?`).get(candidate);
+      const clash = db.prepare(`SELECT 1 FROM ${table} WHERE number = ? AND companyId = ?`).get(candidate, companyId);
       if (clash) {
         nextNumber++;
         continue; // try the next number
@@ -495,8 +518,8 @@ function getNextDocumentNumber(docType: string): string {
 
     // Reserve the number
     db.prepare(`
-      UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
-    `).run(nextNumber, currentYear, docType);
+      UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ? AND companyId = ?
+    `).run(nextNumber, currentYear, docType, companyId);
     return candidate;
   }
 
@@ -1539,7 +1562,7 @@ app.delete('/api/products/:id', requireAuth, requirePermission('canDeleteData'),
 // ── DOCUMENT NUMBERING ────────────────────────────────────────────────────────
 app.get('/api/sequences/next/:docType', requireAuth, (req, res) => {
   try {
-    const number = getNextDocumentNumber(req.params.docType);
+    const number = getNextDocumentNumber(req.params.docType, (req as any).companyId);
     res.json({ number });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -1547,7 +1570,9 @@ app.get('/api/sequences/next/:docType', requireAuth, (req, res) => {
 });
 
 app.get('/api/sequences', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM sequences').all();
+  const companyId = (req as any).companyId;
+  for (const dt of Object.keys(DEFAULT_SEQUENCE_PREFIX)) ensureCompanySequence(dt, companyId);
+  const rows = db.prepare('SELECT * FROM sequences WHERE companyId = ?').all(companyId);
   res.json(rows);
 });
 
@@ -1555,8 +1580,8 @@ app.put('/api/sequences/:docType', requireAuth, requirePermission('canManageSett
   const { prefix, padding, resetPeriod } = req.body;
   try {
     db.prepare(`
-      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ? WHERE docType = ?
-    `).run(prefix, padding, resetPeriod, req.params.docType);
+      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ? WHERE docType = ? AND companyId = ?
+    `).run(prefix, padding, resetPeriod, req.params.docType, (req as any).companyId);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1630,7 +1655,7 @@ app.post('/api/quotes', requireAuth, (req, res) => {
     let qId = id || `qt-${Date.now()}`;
     const existing = db.prepare('SELECT 1 FROM quotations WHERE id = ?').get(qId);
     if (existing) qId = `qt-${crypto.randomUUID()}`;
-    const number = getNextDocumentNumber('quotation');
+    const number = getNextDocumentNumber('quotation', (req as any).companyId);
     db.prepare(`
       INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1773,7 +1798,7 @@ app.post('/api/invoices', requireAuth, (req, res) => {
     let invId = id || `inv-${Date.now()}`;
     const existing = db.prepare('SELECT 1 FROM invoices WHERE id = ?').get(invId);
     if (existing) invId = `inv-${crypto.randomUUID()}`;
-    const number = getNextDocumentNumber('invoice');
+    const number = getNextDocumentNumber('invoice', (req as any).companyId);
     db.prepare(`
       INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2268,7 +2293,7 @@ app.post('/api/expenses', requireAuth, (req, res) => {
 
   try {
     const id = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const number = getNextDocumentNumber('expense');
+    const number = getNextDocumentNumber('expense', (req as any).companyId);
     const amt = Number(amount) || 0;
     const rate = taxRate !== undefined ? Number(taxRate) : 15;
     const taxAmt = Math.round((amt * (rate / 100)) * 100) / 100;
@@ -2395,7 +2420,7 @@ app.post('/api/recurring-invoices', requireAuth, (req, res) => {
 
   try {
     const id = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const number = getNextDocumentNumber('recurring');
+    const number = getNextDocumentNumber('recurring', (req as any).companyId);
     const timestamp = new Date().toISOString();
 
     db.prepare(`
@@ -2490,7 +2515,7 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
 
   try {
     const invoiceId = `inv-${Date.now()}`;
-    const invoiceNumber = getNextDocumentNumber('invoice');
+    const invoiceNumber = getNextDocumentNumber('invoice', (req as any).companyId);
     const today = new Date().toISOString().slice(0, 10);
     const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const timestamp = new Date().toISOString();
@@ -3336,7 +3361,7 @@ app.post('/api/boq', requireAuth, (req, res) => {
   try {
     const boqId = id || `boq-${Date.now()}`;
     const docType = type === 'bom' ? 'bom' : 'boq';
-    const number = getNextDocumentNumber(docType);
+    const number = getNextDocumentNumber(docType, (req as any).companyId);
     db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, createdByName, updatedBy, updatedByName, type, companyId)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       boqId, number, title, titleAr || '', customerId || null, projectRef || '',
@@ -4460,6 +4485,81 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   console.error(err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
+
+// ── MIGRATION: per-company document numbering ────────────────────────────────
+// Numbers were globally UNIQUE and sequences were global, so companies shared one counter.
+// This rebuilds the document tables with UNIQUE(companyId, number) and gives every company its own
+// sequence rows. A consistent file backup is written first; all changes run in one transaction
+// (rolled back automatically on any error) and a settings flag prevents a second run.
+(function migratePerCompanyNumbering() {
+  const done = db.prepare("SELECT value FROM settings WHERE key = 'numberingPerCompany'").get() as any;
+  if (done?.value === 'true' && sequencesArePerCompany()) return;
+
+  const backupDir = path.resolve('backups');
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  const backupFile = path.join(backupDir, `pre_numbering_migration_${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+  db.prepare('VACUUM INTO ?').run(backupFile); // synchronous, consistent copy
+  console.log(`🗄️  Pre-migration backup written to ${backupFile}`);
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      const defaultCompany = (db.prepare('SELECT id FROM companies ORDER BY rowid LIMIT 1').get() as any)?.id;
+      for (const table of ['quotations', 'invoices', 'boq', 'expenses', 'recurring_invoices']) {
+        const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?").get(table) as any;
+        if (!row) continue;
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+        if (cols.some((c) => c.name === 'companyId') && defaultCompany) {
+          // Legacy rows without a tenant belong to the first company.
+          db.prepare(`UPDATE ${table} SET companyId = ? WHERE companyId IS NULL OR companyId = ''`).run(defaultCompany);
+        }
+        const ddl: string = row.sql;
+        if (!/number\s+TEXT\s+UNIQUE\s+NOT\s+NULL/i.test(ddl)) continue; // already rebuilt
+        const rebuilt = ddl
+          .replace(/number\s+TEXT\s+UNIQUE\s+NOT\s+NULL/i, 'number TEXT NOT NULL')
+          .replace(new RegExp(`CREATE TABLE\\s+"?${table}"?`, 'i'), `CREATE TABLE ${table}__new`);
+        const extras = db
+          .prepare("SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index','trigger') AND sql IS NOT NULL")
+          .all(table) as any[];
+        db.exec(rebuilt);
+        db.exec(`INSERT INTO ${table}__new SELECT * FROM ${table}`);
+        const before = (db.prepare(`SELECT COUNT(*) c FROM ${table}`).get() as any).c;
+        const after = (db.prepare(`SELECT COUNT(*) c FROM ${table}__new`).get() as any).c;
+        if (before !== after) throw new Error(`Row count mismatch while rebuilding ${table}: ${before} vs ${after}`);
+        db.exec(`DROP TABLE ${table}`);
+        db.exec(`ALTER TABLE ${table}__new RENAME TO ${table}`);
+        for (const e of extras) db.exec(e.sql);
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_company_number ON ${table}(companyId, number)`);
+      }
+
+      if (!sequencesArePerCompany()) {
+        db.exec(`CREATE TABLE sequences__new (
+          companyId TEXT NOT NULL,
+          docType TEXT NOT NULL,
+          prefix TEXT NOT NULL,
+          lastNumber INTEGER NOT NULL DEFAULT 0,
+          padding INTEGER NOT NULL DEFAULT 4,
+          resetPeriod TEXT NOT NULL DEFAULT 'yearly',
+          lastYear INTEGER,
+          PRIMARY KEY (companyId, docType)
+        )`);
+        const companies = db.prepare('SELECT id FROM companies').all() as any[];
+        const old = db.prepare('SELECT * FROM sequences').all() as any[];
+        const ins = db.prepare(
+          'INSERT INTO sequences__new (companyId, docType, prefix, lastNumber, padding, resetPeriod, lastYear) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        // Every company starts from the old global counter, so no existing number can ever be reissued.
+        for (const c of companies) for (const r of old) ins.run(c.id, r.docType, r.prefix, r.lastNumber, r.padding, r.resetPeriod, r.lastYear);
+        db.exec('DROP TABLE sequences');
+        db.exec('ALTER TABLE sequences__new RENAME TO sequences');
+      }
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('numberingPerCompany', 'true')").run();
+    })();
+    console.log('🔢 Per-company document numbering migration complete');
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+})();
 
 // ── SERVER STARTUP & VITE INTEGRATION ─────────────────────────────────────────
 async function startServer() {

@@ -22,6 +22,8 @@
 - Server recomputes subtotal/discount/tax/total (and amountDue) from line items on quote/invoice create & update; client totals are no longer trusted (manual-total documents excepted).
 - Kanban: added the missing Expired column, null-safe totals, column totals, responsive grid, keyboard open, and an error alert when a drag-drop status change fails.
 
+- Per-company document numbering: `UNIQUE(companyId, number)` on quotations/invoices/BOQ/expenses/recurring, and a `sequences` table keyed by (companyId, docType). One-time, transactional, idempotent migration with an automatic `VACUUM INTO` backup and row-count checks. Verified on a legacy DB copy with two companies.
+
 **Synced from Dynamic Quotation**
 - Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
 - Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.

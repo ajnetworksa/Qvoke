@@ -195,7 +195,7 @@ Settings → Maintenance can create, download, delete and restore database backu
 
 ## Known limitations
 
-- Document numbers are unique across the whole installation and the sequence counters are shared by all companies (per-company numbering needs a schema migration that has not been applied yet).
+- Document numbers are unique per company, and each company has its own counters. On first start after upgrading, a one-time migration (with an automatic backup in `backups/`) gives every existing company a copy of the old counter; new companies start from 0 with the same prefix format.
 - Quote terms are a single free-text field per document, with company-wide defaults in Settings → Document.
 - The offline PWA shell is not implemented: `manifest.json` makes the app installable, but there is no service worker.
 - Only the ZATCA Phase 1 QR is produced (see above).
