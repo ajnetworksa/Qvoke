@@ -1578,6 +1578,41 @@ app.get('/api/quotes', requireAuth, (req, res) => {
   res.json(parsed);
 });
 
+// SECURITY/INTEGRITY: never trust client-supplied money fields. Recompute totals from the line items
+// (same rules as the client's calculateTotals) unless a manual total override is in play.
+const roundMoney = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+function recomputeTotals(body: any): void {
+  if (!body || !Array.isArray(body.lineItems)) return;
+  if (body.manualTotal !== undefined && body.manualTotal !== null && body.manualTotal !== '') return;
+  let subtotal = 0, discountTotal = 0, taxTotal = 0;
+  for (const item of body.lineItems) {
+    if (!item || item.type !== 'item') continue;
+    const qty = Math.max(0, Number(item.quantity) || 0);
+    const price = Math.max(0, Number(item.unitPrice) || 0);
+    const disc = Math.min(100, Math.max(0, Number(item.discountPercent) || 0));
+    const tax = Math.max(0, Number(item.taxPercent) || 0);
+    const base = qty * price;
+    const discountAmount = base * (disc / 100);
+    const line = base - discountAmount;
+    item.subtotal = roundMoney(line);
+    subtotal += base;
+    discountTotal += discountAmount;
+    taxTotal += line * (tax / 100);
+  }
+  body.subtotal = roundMoney(subtotal);
+  body.discountTotal = roundMoney(discountTotal);
+  body.taxTotal = roundMoney(taxTotal);
+  body.total = roundMoney(roundMoney(subtotal - discountTotal) + roundMoney(taxTotal));
+  if (body.amountPaid !== undefined) body.amountDue = roundMoney(body.total - (Number(body.amountPaid) || 0));
+}
+app.use((req, _res, next) => {
+  if ((req.method === 'POST' && /^\/api\/(quotes|invoices)\/?$/.test(req.path)) ||
+      (req.method === 'PUT' && /^\/api\/(quotes|invoices)\/[^/]+\/?$/.test(req.path))) {
+    recomputeTotals(req.body);
+  }
+  next();
+});
+
 app.post('/api/quotes', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);

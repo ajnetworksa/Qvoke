@@ -18,6 +18,10 @@
 - DB restore: no path traversal, integrity/schema check, stale WAL/SHM removed.
 - `/api/settings/:key` global fallback hides credential-like keys; `/api/logs` scoped to the company; clearing logs is super-admin only.
 
+**Follow-up pass**
+- Server recomputes subtotal/discount/tax/total (and amountDue) from line items on quote/invoice create & update; client totals are no longer trusted (manual-total documents excepted).
+- Kanban: added the missing Expired column, null-safe totals, column totals, responsive grid, keyboard open, and an error alert when a drag-drop status change fails.
+
 **Synced from Dynamic Quotation**
 - Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
 - Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.

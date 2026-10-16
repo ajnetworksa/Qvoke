@@ -110,6 +110,8 @@ export const Quotations: React.FC = () => {
         ...quote,
         status: targetStatus,
         updatedAt: new Date()
+      }).then((ok) => {
+        if (ok === false) alert('Could not change the status. Please try again.');
       });
     }
   };
@@ -118,6 +120,7 @@ export const Quotations: React.FC = () => {
     { label: 'Draft / مسودة', status: 'draft' },
     { label: 'Sent / مرسل', status: 'sent' },
     { label: 'Confirmed / مؤكد', status: 'confirmed' },
+    { label: 'Expired / منتهي', status: 'expired' },
     { label: 'Cancelled / ملغي', status: 'cancelled' }
   ];
 
@@ -239,7 +242,7 @@ export const Quotations: React.FC = () => {
         />
       ) : kanbanView ? (
         /* Kanban Board */
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
           {columns.map((col) => {
             const colQuotes = filteredQuotations.filter((q) => q.status === col.status);
             return (
@@ -256,6 +259,9 @@ export const Quotations: React.FC = () => {
                   <span className="bg-surface border border-border/40 text-[var(--color-text-muted)] text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
                     {colQuotes.length}
                   </span>
+                  <span className="text-[10px] font-mono text-[var(--color-text-muted)] ml-auto mr-2">
+                    {colQuotes.reduce((a, q) => a + (Number(q.total) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </span>
                 </div>
 
                 <div className="flex flex-col gap-3 overflow-y-auto max-h-[500px]">
@@ -265,6 +271,9 @@ export const Quotations: React.FC = () => {
                       draggable
                       onDragStart={(e) => handleDragStart(e, q.id)}
                       onClick={() => setRoute('quotation-detail', q.id)}
+                      tabIndex={0}
+                      role="button"
+                      onKeyDown={(e) => { if (e.key === 'Enter') setRoute('quotation-detail', q.id); }}
                       className="bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-primary)]/40 hover:shadow-sm rounded-lg p-4 cursor-grab active:cursor-grabbing text-left transition-all duration-[var(--transition-interactive)] animate-fade-in group"
                     >
                       <div className="flex justify-between items-start mb-2">
@@ -283,7 +292,7 @@ export const Quotations: React.FC = () => {
                           {new Date(q.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </span>
                         <span className="text-xs font-bold text-[var(--color-text)]">
-                          {q.total.toLocaleString()} {q.currency}
+                          {(Number(q.total) || 0).toLocaleString()} {q.currency}
                         </span>
                       </div>
                     </div>
@@ -367,7 +376,7 @@ export const Quotations: React.FC = () => {
                         })}
                       </td>
                       <td className="py-3.5 px-4 font-bold text-right text-[var(--color-text)]">
-                        {q.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                        {(Number(q.total) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
                         <span className="text-[10px] text-[var(--color-text-muted)] font-normal">{q.currency}</span>
                       </td>
                       <td className="py-3.5 px-4 text-center">

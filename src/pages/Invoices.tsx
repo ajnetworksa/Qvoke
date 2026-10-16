@@ -37,7 +37,9 @@ export const Invoices: React.FC = () => {
     const invId = e.dataTransfer.getData('text/plain');
     const inv = invoices.find((i) => i.id === invId);
     if (inv && inv.status !== target) {
-      updateInvoice({ ...inv, status: target, updatedAt: new Date() });
+      updateInvoice({ ...inv, status: target, updatedAt: new Date() }).then((ok) => {
+        if (ok === false) alert('Could not change the status. Please try again.');
+      });
     }
   };
 
@@ -263,7 +265,7 @@ export const Invoices: React.FC = () => {
                           {new Date(inv.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </span>
                         <span className="text-xs font-bold text-[var(--color-text)]">
-                          {inv.total.toLocaleString()} {inv.currency}
+                          {(Number(inv.total) || 0).toLocaleString()} {inv.currency}
                         </span>
                       </div>
                     </div>
@@ -352,7 +354,7 @@ export const Invoices: React.FC = () => {
                         })}
                       </td>
                       <td className="py-3.5 px-4 font-bold text-right text-[var(--color-text)]">
-                        {inv.total.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] text-[var(--color-text-muted)]">{inv.currency}</span>
+                        {(Number(inv.total) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] text-[var(--color-text-muted)]">{inv.currency}</span>
                       </td>
                       <td className="py-3.5 px-4 font-bold text-right text-[var(--color-success)]">
                         {inv.amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-[10px] text-[var(--color-text-muted)]">{inv.currency}</span>
