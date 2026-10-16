@@ -20,6 +20,14 @@ export interface Company {
   /** How line items are numbered in quotes & invoices */
   lineNumberFormat?: 'sequential' | 'sectioned' | 'per-section' | 'none';
   pdfTemplate?: PDFTemplateConfig;
+  footerImageUrl?: string;
+  pdfWarranty?: string;
+  pdfManpower?: string;
+  pdfMobilization?: string;
+  pdfDuration?: string;
+  bankName?: string;
+  bankAccount?: string;
+  bankIban?: string;
 }
 
 export interface CustomFieldDefinition {

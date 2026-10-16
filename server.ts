@@ -460,7 +460,7 @@ reconcileSequences();
 // Retry-safe: if the generated number already exists in the target table
 // (e.g. due to manual edits or a race condition), it increments and retries.
 function getNextDocumentNumber(docType: string): string {
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 1000;
   const seq = db.prepare('SELECT * FROM sequences WHERE docType = ?').get(docType) as
     | { docType: string; prefix: string; lastNumber: number; padding: number; resetPeriod: string; lastYear: number | null }
     | undefined;
@@ -500,14 +500,8 @@ function getNextDocumentNumber(docType: string): string {
     return candidate;
   }
 
-  // Fallback after all retries (extremely unlikely)
-  db.prepare(`
-    UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
-  `).run(nextNumber, currentYear, docType);
-  const padded = String(nextNumber).padStart(seq.padding, '0');
-  return seq.resetPeriod === 'yearly'
-    ? `${seq.prefix}-${currentYear}-${padded}`
-    : `${seq.prefix}-${padded}`;
+  // Never hand out a number that may already exist (would create duplicate documents).
+  throw new Error(`Could not allocate a free ${docType} number after ${MAX_RETRIES} attempts`);
 }
 
 // ── DOCUMENT ACTIVITY / AUDIT TRAIL ───────────────────────────────────────────
@@ -1643,7 +1637,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
   if (!canOverride) {
-    const existing = db.prepare('SELECT manualTotal, lineItems FROM quotations WHERE id = ?').get(req.params.id);
+    const existing = db.prepare('SELECT manualTotal, lineItems FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId);
     if (!verifyPriceOverrides(req.body, existing)) {
       return res.status(403).json({ error: 'Forbidden: price overrides are not permitted for your user role.' });
     }
@@ -1655,6 +1649,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
   } = req.body;
   try {
     const before = db.prepare('SELECT * FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+    if (!before) return res.status(404).json({ error: 'Document not found' });
     db.prepare(`
       UPDATE quotations
       SET number = ?, customerId = ?, date = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedInvoiceId = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
@@ -1825,7 +1820,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
   if (!canOverride) {
-    const existing = db.prepare('SELECT manualTotal, lineItems FROM invoices WHERE id = ?').get(req.params.id);
+    const existing = db.prepare('SELECT manualTotal, lineItems FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId);
     if (!verifyPriceOverrides(req.body, existing)) {
       return res.status(403).json({ error: 'Forbidden: price overrides are not permitted for your user role.' });
     }
@@ -1837,6 +1832,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
   } = req.body;
   try {
     const before = db.prepare('SELECT * FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+    if (!before) return res.status(404).json({ error: 'Document not found' });
     db.prepare(`
       UPDATE invoices
       SET number = ?, customerId = ?, date = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedQuoteId = ?, payments = ?, amountPaid = ?, amountDue = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
@@ -2063,6 +2059,8 @@ app.get('/api/settings/:key', requireAuth, (req, res) => {
   if (tenantSettings[req.params.key] !== undefined) {
     return res.json({ value: tenantSettings[req.params.key] });
   }
+  // Global (non-tenant) fallback: never expose credential-like keys to ordinary users.
+  if (/smtp|secret|password|token|api_?key|credential/i.test(req.params.key)) return res.json({ value: null });
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(req.params.key) as { value: string } | undefined;
   res.json({ value: row?.value || null });
 });
@@ -2092,13 +2090,18 @@ app.get('/api/logs', requireAuth, requirePermission('canManageSettings'), (req, 
     const limit = parseInt(req.query.limit as string) || 200;
     const offset = parseInt(req.query.offset as string) || 0;
     
+    // Logs are platform-wide: company admins only see entries from users of their own company.
+    const isSuper = (req as any).user?.isSuperAdmin === 1 || (req as any).user?.isSuperAdmin === true;
+    const scope = isSuper ? '' : 'WHERE user_id IN (SELECT userId FROM user_companies WHERE companyId = ?)';
+    const scopeArgs = isSuper ? [] : [(req as any).companyId];
+
     const rows = db.prepare(`
-      SELECT * FROM system_logs 
+      SELECT * FROM system_logs ${scope}
       ORDER BY timestamp DESC 
       LIMIT ? OFFSET ?
-    `).all(limit, offset) as any[];
+    `).all(...scopeArgs, limit, offset) as any[];
 
-    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM system_logs`).get() as { count: number };
+    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM system_logs ${scope}`).get(...scopeArgs) as { count: number };
     
     res.json({
       logs: rows,
@@ -2111,6 +2114,10 @@ app.get('/api/logs', requireAuth, requirePermission('canManageSettings'), (req, 
 
 app.post('/api/logs/clear', requireAuth, requirePermission('canManageSettings'), (req, res) => {
   try {
+    const u = (req as any).user;
+    if (!(u?.isSuperAdmin === 1 || u?.isSuperAdmin === true)) {
+      return res.status(403).json({ error: 'Only platform administrators can clear the global system log.' });
+    }
     db.prepare('DELETE FROM system_logs').run();
     logSystemEvent('info', 'System logs cleared', null, (req as any).user?.id, (req as any).user?.username);
     res.json({ success: true });
@@ -2788,9 +2795,17 @@ app.get('/api/currency/rates', (req, res) => {
 
 // ── Translation API ───────────────────────────────────────────────────────────
 // Proxies to Google Translate with chunking + retry for reliability.
-app.post('/api/translate', async (req, res) => {
-  const text = (req.body.text || req.body.q || '').trim();
+app.post('/api/translate', requireAuth, async (req, res) => {
+  const rawText = req.body.text || req.body.q || '';
+  if (typeof rawText !== 'string') return res.status(400).json({ error: 'text must be a string' });
+  const text = rawText.trim();
   if (!text) return res.json({ translation: '', translatedText: '' });
+  // SECURITY: cap input size (this endpoint can fall back to a paid API key).
+  if (text.length > 20000) return res.status(413).json({ error: 'Text too long (max 20000 characters).' });
+  // Default source is English: sl=auto misdetects names/IBANs as other languages and drops numbers.
+  const langCode = (v: any, fallback: string) => (typeof v === 'string' && /^[a-zA-Z-]{2,8}$/.test(v) ? v : fallback);
+  const sl = langCode(req.body.sl ?? req.body.source, 'en');
+  const tl = langCode(req.body.tl ?? req.body.target, 'ar');
 
   // Split on sentence boundaries so each chunk stays under 400 chars
   const splitIntoChunks = (str: string, maxLen = 400): string[] => {
@@ -2813,9 +2828,10 @@ app.post('/api/translate', async (req, res) => {
   const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
   const translateChunk = async (chunk: string, attempt = 0): Promise<string> => {
+    if (!chunk || !chunk.trim()) return '';
     // Strategy 1: Google Chrome Translate API (clients5 - fast & reliable)
     try {
-      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=ar&q=${encodeURIComponent(chunk)}`;
+      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&q=${encodeURIComponent(chunk)}`;
       const response = await fetch(url, {
         headers: { 'User-Agent': BROWSER_UA },
         signal: AbortSignal.timeout(8000),
@@ -2833,7 +2849,7 @@ app.post('/api/translate', async (req, res) => {
 
     // Strategy 2: Google Translate GTX Endpoint with browser UA
     try {
-      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ar&dt=t&q=${encodeURIComponent(chunk)}`;
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(chunk)}`;
       const response = await fetch(url, {
         headers: { 'User-Agent': BROWSER_UA },
         signal: AbortSignal.timeout(8000),
@@ -2892,10 +2908,30 @@ app.post('/api/translate', async (req, res) => {
     throw new Error('Translation failed across all translation backends.');
   };
 
+  // Guarantee account numbers / IBANs are never lost in translation, and use the concise IBAN label.
+  const preserveNumbers = (src: string, trans: string): string => {
+    const numRe = /\b(\d{4,}|[A-Z]{2}\d{10,})\b/g;
+    const cleaned = trans.replace(/رقم الحساب المصرفي الدولي\s*:/g, 'الآيبان:');
+    const srcLines = src.split('\n');
+    const transLines = cleaned.split('\n');
+    const addMissing = (from: string, to: string) => {
+      let out = to;
+      for (const num of from.match(numRe) || []) if (!out.includes(num)) out += ' ' + num;
+      return out;
+    };
+    if (srcLines.length === transLines.length) return transLines.map((t, i) => addMissing(srcLines[i], t)).join('\n');
+    return addMissing(src, cleaned);
+  };
+
   try {
-    const chunks = splitIntoChunks(text);
-    const translated = await Promise.all(chunks.map(c => translateChunk(c)));
-    const finalTranslation = translated.join(' ').trim();
+    // Translate line-by-line so multi-line fields (bank details, terms) keep their structure.
+    const lines = text.split('\n');
+    const translatedLines = await Promise.all(lines.map(async (line) => {
+      if (!line.trim()) return '';
+      const parts = await Promise.all(splitIntoChunks(line.trim()).map(c => translateChunk(c)));
+      return parts.join(' ').trim();
+    }));
+    const finalTranslation = preserveNumbers(text, translatedLines.join('\n')).trim();
     res.json({ translation: finalTranslation, translatedText: finalTranslation });
   } catch (error: any) {
     console.error('Translation error:', error);
@@ -2964,20 +3000,33 @@ app.post('/api/admin/backup', requireAuth, requirePermission('canDatabaseMainten
   }
 });
 
+// Validate a candidate DB file before it replaces the live one, then swap it in (drops stale WAL/SHM).
+function validateAndSwapDatabase(candidatePath: string): void {
+  const probe = new Database(candidatePath, { readonly: true, fileMustExist: true });
+  try {
+    const ok = probe.pragma('integrity_check', { simple: true });
+    const hasCore = probe.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotations'").get();
+    if (ok !== 'ok' || !hasCore) throw new Error('File is not a valid Qvoke database');
+  } finally {
+    probe.close();
+  }
+  db.close();
+  for (const ext of ['-wal', '-shm']) { try { fs.unlinkSync('quotes.db' + ext); } catch {} }
+  fs.copyFileSync(candidatePath, 'quotes.db');
+}
+
 app.post('/api/admin/restore', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { filename } = req.body;
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
   try {
-    const backupPath = path.resolve('backups', filename);
+    const backupPath = path.resolve('backups', path.basename(String(filename))); // no path traversal
     if (!fs.existsSync(backupPath)) {
       return res.status(404).json({ error: 'Backup file not found' });
     }
 
-    // Safe SQLite overwrite and hot process restart
-    db.close();
-    fs.copyFileSync(backupPath, 'quotes.db');
+    validateAndSwapDatabase(backupPath);
     res.json({ success: true, message: 'Database restored! System restarting...' });
 
     setTimeout(() => {
@@ -3038,8 +3087,7 @@ app.post('/api/admin/restore/upload', requireAuth, requirePermission('canDatabas
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const uploadedPath = req.file.path;
-    db.close();
-    fs.copyFileSync(uploadedPath, 'quotes.db');
+    validateAndSwapDatabase(uploadedPath);
     res.json({ success: true, message: 'Database restored from upload! Restarting...' });
     setTimeout(() => process.exit(0), 800);
   } catch (error: any) {
@@ -4221,6 +4269,20 @@ app.post('/api/rfq/parse', requireAuth, memoryUpload.single('file'), async (req,
   }
 });
 
+// SECURITY: model-written SQL must be a single read-only SELECT over business tables only
+// (never users/sessions/logs/settings), and every table reference must be pinned to the caller's companyId.
+const AI_SQL_TABLES = new Set(['customers', 'products', 'quotations', 'invoices', 'suppliers', 'expenses', 'recurring_invoices', 'inventory_transactions', 'boq']);
+function isSafeAiSql(rawSql: string, companyId: string): boolean {
+  const sql = rawSql.trim().replace(/;\s*$/, '');
+  if (!/^select\b/i.test(sql)) return false;
+  if (/;|--|\/\*|\b(or|union|pragma|attach|load_extension|insert|update|delete|drop|alter|create|replace|vacuum)\b/i.test(sql)) return false;
+  const refs = [...sql.matchAll(/\b(?:from|join)\s+["`\[]?([a-zA-Z_][a-zA-Z0-9_]*)/gi)].map((m) => m[1].toLowerCase());
+  if (refs.length === 0 || refs.some((t) => !AI_SQL_TABLES.has(t))) return false;
+  const escaped = companyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pins = sql.match(new RegExp(`companyId\\s*=\\s*'${escaped}'`, 'gi')) || [];
+  return pins.length >= refs.length;
+}
+
 // ── AI ASSISTANT ENDPOINT ──────────────────────────────────────────────────
 app.post('/api/ai/chat', requireAuth, requireFeature('aiAssistant'), requirePermission('canUseAI'), async (req, res) => {
   try {
@@ -4263,8 +4325,10 @@ Schema:\n\n${schemaStr}`
         if (sql.endsWith('```')) sql = sql.substring(0, sql.length - 3);
         sql = sql.trim();
 
-        if (sql.toUpperCase().startsWith('SELECT')) {
-          const results = db.prepare(sql).all();
+        if (isSafeAiSql(sql, String(companyId))) {
+          const stmt = db.prepare(sql);
+          if (!stmt.reader) throw new Error('Not a read-only query');
+          const results = (stmt.all() as any[]).slice(0, 200);
           const explainCompletion = await openai.chat.completions.create({
             model: isRouter ? 'openai/gpt-4o-mini' : isGemini ? 'gemini-2.0-flash' : 'gpt-4o-mini',
             messages: [
@@ -4339,7 +4403,7 @@ Data: ${JSON.stringify(results).substring(0, 1000)}`
     return res.json({ sql: localSql, query: localSql, results: [overview], data: [overview], explanation, answer: explanation });
   } catch (error: any) {
     console.error('AI Chat error:', error);
-    res.status(500).json({ error: 'AI processing failed: ' + (error.message || 'Unknown error') });
+    res.status(500).json({ error: 'AI processing failed' });
   }
 });
 

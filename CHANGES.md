@@ -1,3 +1,27 @@
+# Audit & Dynamic-Quotation sync (latest)
+
+**Bugs fixed**
+- InvoiceDetail crashed on render/actions: missing `getLineNumber` import, `handleDeleteLine`, `customerObj`.
+- POS: missing `Loader2` import; ZATCA QR called with an object instead of positional args (wrong QR).
+- QuotationDetail: `convertToInvoice` is async but wasn't awaited (routed to a Promise).
+- Tracking: "Delete Selected" referenced a missing handler/icon and was gated on the wrong state; selection now follows filters.
+- Store: bulk updates (e.g. follow-ups) overwrote each other via stale `set()` snapshots.
+- SortableTableRow: drag styling was overridden by `{...props}` className.
+- PDF/default terms hardcoded AJ's bank account, phone and email for every tenant; now read from company profile.
+- Raw `fetch('/api/…')` calls skipped `X-Company-Id` (wrong tenant after switching company); global interceptor added.
+- Doc numbering never falls back to a possibly duplicate number; PUT on quotes/invoices is tenant-scoped and 404s when missing.
+- `npm run build` was failing (strict unused-var errors, missing vite types); fixed.
+
+**Security**
+- `/api/translate` now requires login, has a size cap.
+- AI chat SQL guarded (single SELECT, business tables only, pinned to companyId); error text no longer echoed.
+- DB restore: no path traversal, integrity/schema check, stale WAL/SHM removed.
+- `/api/settings/:key` global fallback hides credential-like keys; `/api/logs` scoped to the company; clearing logs is super-admin only.
+
+**Synced from Dynamic Quotation**
+- Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
+- Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.
+
 # Qvoke ERP Updates - Batch C
 
 ## Short Summary

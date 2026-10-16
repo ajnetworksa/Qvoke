@@ -907,7 +907,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(quotation)
       }, token);
       if (res.ok) {
-        set({ quotations: quotations.map((q) => (q.id === quotation.id ? quotation : q)) });
+        set((s) => ({ quotations: s.quotations.map((q) => (q.id === quotation.id ? quotation : q)) }));
         return true;
       }
       return false;
@@ -923,7 +923,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
       const res = await apiFetch(`/quotes/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
         if (get().activeQuoteId === id) { localStorage.removeItem('erp_active_quote'); set({ activeQuoteId: null }); }
-        set({ quotations: quotations.filter((q) => q.id !== id) });
+        set((s) => ({ quotations: s.quotations.filter((q) => q.id !== id) }));
       }
     } catch (err) {
       console.error(err);
@@ -941,7 +941,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(updated)
       }, token);
       if (res.ok) {
-        set({ quotations: quotations.map((q) => (q.id === id ? updated : q)) });
+        set((s) => ({ quotations: s.quotations.map((q) => (q.id === id ? updated : q)) }));
       }
     } catch (err) {
       console.error(err);
@@ -1042,7 +1042,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(invoice)
       }, token);
       if (res.ok) {
-        set({ invoices: invoices.map((i) => (i.id === invoice.id ? invoice : i)) });
+        set((s) => ({ invoices: s.invoices.map((i) => (i.id === invoice.id ? invoice : i)) }));
         return true;
       }
       return false;
@@ -1058,7 +1058,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
       const res = await apiFetch(`/invoices/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
         if (get().activeInvoiceId === id) { localStorage.removeItem('erp_active_invoice'); set({ activeInvoiceId: null }); }
-        set({ invoices: invoices.filter((i) => i.id !== id) });
+        set((s) => ({ invoices: s.invoices.filter((i) => i.id !== id) }));
       }
     } catch (err) {
       console.error(err);
@@ -1076,7 +1076,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(updated)
       }, token);
       if (res.ok) {
-        set({ invoices: invoices.map((i) => (i.id === id ? updated : i)) });
+        set((s) => ({ invoices: s.invoices.map((i) => (i.id === id ? updated : i)) }));
       }
     } catch (err) {
       console.error(err);
@@ -1114,7 +1114,7 @@ export const useERPStore = create<ERPState>((set, get) => ({
         body: JSON.stringify(updatedInvoice)
       }, token);
       if (res.ok) {
-        set({ invoices: invoices.map((i) => (i.id === invoiceId ? updatedInvoice : i)) });
+        set((s) => ({ invoices: s.invoices.map((i) => (i.id === invoiceId ? updatedInvoice : i)) }));
       }
     } catch (err) {
       console.error(err);
@@ -1206,9 +1206,9 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         if (docType === 'quotation') {
-          set({ quotations: quotations.map((q) => (q.id === id ? { ...q, followUpDate, followUpNote } : q)) });
+          set((s) => ({ quotations: s.quotations.map((q) => (q.id === id ? { ...q, followUpDate, followUpNote } : q)) }));
         } else {
-          set({ invoices: invoices.map((i) => (i.id === id ? { ...i, followUpDate, followUpNote } : i)) });
+          set((s) => ({ invoices: s.invoices.map((i) => (i.id === id ? { ...i, followUpDate, followUpNote } : i)) }));
         }
       }
     } catch (err) {

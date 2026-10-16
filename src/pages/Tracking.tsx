@@ -17,7 +17,8 @@ import {
   StickyNote,
   Pencil,
   FileText,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Trash2
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 
@@ -43,7 +44,8 @@ const INVOICE_BULK: { label: string; status: Invoice['status']; icon: React.Elem
 export const Tracking: React.FC = () => {
   const {
     quotations, invoices, customers, setRoute,
-    updateQuotation, updateInvoice, setFollowUp
+    updateQuotation, updateInvoice, setFollowUp,
+    deleteQuotation, deleteInvoice
   } = useERPStore();
 
   const [docType, setDocType] = useState<DocType>('quotation');
@@ -100,6 +102,15 @@ export const Tracking: React.FC = () => {
     [docs]
   );
 
+  // Drop selections that the current filters hide, so bulk actions never touch invisible rows.
+  React.useEffect(() => {
+    setSelected((s) => {
+      const visible = new Set(filtered.map((d) => d.id));
+      const next = s.filter((id) => visible.has(id));
+      return next.length === s.length ? s : next;
+    });
+  }, [filtered]);
+
   const switchType = (t: DocType) => { setDocType(t); setSelected([]); setStatusFilter('all'); };
 
   const toggleAll = (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -117,6 +128,14 @@ export const Tracking: React.FC = () => {
         if (inv) updateInvoice({ ...inv, status: status as Invoice['status'], updatedAt: new Date() });
       }
     });
+    setSelected([]);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.length === 0) return;
+    if (!confirm(`Delete ${selected.length} selected ${docType === 'quotation' ? 'quotation' : 'invoice'}(s)? This cannot be undone.`)) return;
+    const remove = docType === 'quotation' ? deleteQuotation : deleteInvoice;
+    await Promise.all(selected.map((id) => remove(id)));
     setSelected([]);
   };
 
@@ -553,7 +572,7 @@ export const Tracking: React.FC = () => {
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" /> <span className="whitespace-nowrap">Merge Excel</span>
             </button>
-            {editTarget?.bulk && (
+            {(
               <button
                 onClick={() => handleBulkDelete()}
                 className="bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer ml-auto"
