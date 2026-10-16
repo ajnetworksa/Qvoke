@@ -1,215 +1,211 @@
 <div align="center">
 
-  <img src="public/qvoke_3d_logo.jpg" alt="Qvoke ERP Logo" width="180" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
+  <img src="public/qvoke_3d_logo.jpg" alt="Qvoke ERP logo" width="160" />
 
-  # Qvoke ERP & Billing System
-  ### Next-Generation Enterprise Operations, ZATCA E-Invoicing & Retail POS
+  # Qvoke ERP & Billing
 
-  <p align="center">
-    <b>A modern bilingual enterprise ERP engineered for high-growth businesses.</b><br/>
-    Quotations, ZATCA Phase 1 & 2 E-Invoicing, Real-Time Mobile POS, Expense Control, Warehouse Inventory, Subscription Billing, and Tokenized Client Approval Portals with E-Signatures.
-  </p>
+  **A bilingual (English / Arabic), multi-company ERP for quotations, invoicing, POS and light inventory.**
 
-  <p align="center">
-    <a href="#-visual-theme-engine"><img src="https://img.shields.io/badge/Themes-9_Aesthetics-087f78?style=for-the-badge&logo=palette" alt="9 Themes" /></a>
-    <a href="#-saudi-zatca-phase-1--2-compliance"><img src="https://img.shields.io/badge/ZATCA-Phase_1_%26_2_Compliant-059669?style=for-the-badge&logo=shield" alt="ZATCA" /></a>
-    <a href="#-tech-stack"><img src="https://img.shields.io/badge/Stack-React_18_%2B_Vite_%2B_Node_%2B_SQLite-3b82f6?style=for-the-badge&logo=typescript" alt="Tech Stack" /></a>
-    <a href="#-mobile--handheld-pos-ergonomics"><img src="https://img.shields.io/badge/PWA-Mobile_%26_Handheld_POS-8b5cf6?style=for-the-badge&logo=android" alt="PWA" /></a>
-  </p>
+  ![Stack](https://img.shields.io/badge/React_18-Vite-3b82f6?style=flat-square&logo=react)
+  ![Backend](https://img.shields.io/badge/Express-SQLite-087f78?style=flat-square&logo=node.js)
+  ![ZATCA](https://img.shields.io/badge/ZATCA-Phase_1_QR-059669?style=flat-square)
 
 </div>
 
 ---
 
-## 📸 System Showcase & Visual Mockups
+## Contents
+
+1. [What it does](#what-it-does)
+2. [Screenshots](#screenshots)
+3. [Quick start](#quick-start)
+4. [Configuration](#configuration)
+5. [Scripts](#scripts)
+6. [Architecture](#architecture)
+7. [Multi-company model and permissions](#multi-company-model-and-permissions)
+8. [API overview](#api-overview)
+9. [ZATCA e-invoicing: what is and isn't implemented](#zatca-e-invoicing-what-is-and-isnt-implemented)
+10. [Testing](#testing)
+11. [Production deployment](#production-deployment)
+12. [Backups and restore](#backups-and-restore)
+13. [Known limitations](#known-limitations)
+14. [Further documentation](#further-documentation)
+15. [License](#license)
+
+---
+
+## What it does
+
+| Area | Capabilities |
+| :--- | :--- |
+| **Quotations** | Sectioned line items, markup (M.U. %) analysis, discounts, manual-total override (permission gated), AR/EN subject and notes, one-click translation, PDF and Excel export, quote → invoice conversion, version snapshots with restore, list and Kanban views. |
+| **Invoices** | Same editor as quotations plus payments, partial/paid/overdue states, ZATCA QR code, watermark, public share link. |
+| **Tracking** | Follow-up dates and notes per document, overdue indicators, bulk status changes, bulk follow-up, CSV export, bulk PDF/Excel/merged-Excel export. |
+| **BOQ / BOM** | Project quantity documents with their own numbering and PDF output. |
+| **POS** | Barcode/search checkout, cash/card tender, stock deduction, receipt with ZATCA QR. |
+| **Expenses** | Vendor bills with category, VAT breakdown and status. |
+| **Recurring billing** | Weekly / monthly / quarterly / annual schedules that generate invoices on demand. |
+| **Inventory** | Stock levels, manual adjustments, movement audit log. |
+| **Client portal** | Tokenised public links; clients can review, accept (with signature) or decline a quotation/invoice. |
+| **Catalog & contacts** | Customers, suppliers, products with Excel import/export. |
+| **Admin** | Users and permission groups, per-company feature flags / plans, document numbering rules, default notes & terms, PDF template studio, system logs, database backup/restore, recycle bin with retention. |
+| **AI (optional)** | RFQ document parsing and a natural-language data assistant when an OpenRouter / Gemini / OpenAI key is configured. |
+| **UI** | 4 UI themes (Modern, Obsidian, Glassmorphism, Neumorphism) × 6 accent colours, light/dark mode, bilingual English/Arabic labels, mobile bottom navigation, command palette, keyboard-accessible dialogs. |
+
+## Screenshots
 
 <div align="center">
-  <h3>🖥️ Enterprise Dashboard & Multi-Device Operations</h3>
-  <img src="public/qvoke_marketing_hero.jpg" alt="Qvoke ERP Enterprise Dashboard Mockup" width="100%" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);" />
-  <p><i>Live financial analytics, revenue tracking, ZATCA compliant invoices, inventory stock meters, and digital approval notifications.</i></p>
+  <img src="public/qvoke_marketing_hero.jpg" alt="Dashboard" width="90%" />
+  <br/><br/>
+  <img src="public/qvoke_mobile_pos.jpg" alt="Mobile POS" width="90%" />
 </div>
 
-<br/>
+## Quick start
 
-<div align="center">
-  <h3>📱 Mobile Ergonomics & Handheld POS Checkout</h3>
-  <img src="public/qvoke_mobile_pos.jpg" alt="Qvoke Mobile POS & Retail Billing" width="100%" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);" />
-  <p><i>High-speed barcode checkout, automated inventory deductions, and instant ZATCA thermal receipt printing for mobile & retail registers.</i></p>
-</div>
+**Requirements:** Node.js 18+ (20+ recommended), npm 9+. A C/C++ toolchain may be needed the first time `better-sqlite3` and `bcrypt` compile.
 
----
-
-## ⚡ Benchmark Feature Highlights
-
-| Module | Benchmark Reference | Capabilities & Specifications |
-| :--- | :--- | :--- |
-| **Smart Quotations & RFQ Engine** | Odoo Sales / CPQ | AI document parser, margin markup calculator, sectioned line items, Arabic/English translation, and PDF export. |
-| **ZATCA E-Invoicing** | Saudi Tax Authority | Cryptographic Base64 TLV QR codes (Tags 1–5), dual-currency (SAR/USD), automated VAT 15%, payment tracking, and audit ledgers. |
-| **Retail & Mobile POS** | Square / Clover POS | Fast barcode scanning, cash/card split tenders, instant thermal receipt formatting, and real-time inventory deduction. |
-| **Operational Expenses** | ERPNext / QuickBooks | Expense classification, vendor tracking, pre-tax/VAT breakdown, and ZATCA tax-deductible input ledgers. |
-| **Recurring Billing** | Stripe Subscriptions | Automated subscription cycles (weekly, monthly, quarterly, annual), instant generation triggers, and status control. |
-| **Stock Inventory** | Zoho Inventory | Stock alerts, reorder thresholds, manual adjustment modal, and automated movement audit logging. |
-| **Client Portal & E-Sign** | PandaDoc / DocuSign | Tokenized public links (WhatsApp/Email), interactive proposal review, and client digital signature sign-off. |
-| **Multi-Tenant Security** | Enterprise RBAC | Tenant-scoped data isolation, granular permissions matrix, and role-based access control. |
-
----
-
-## 🎨 Visual Theme Engine (9 Themes)
-
-Qvoke includes a built-in **Design Studio** allowing instantaneous switching between 9 visual aesthetics:
-
-1. **Modern Default**: Ultra-clean, high-contrast enterprise design system.
-2. **Glassmorphism**: Translucent frosted glass layers with `backdrop-filter: blur(16px)` and specular neon edge glows.
-3. **Neumorphism**: 3D embossed tactile surfaces with dual-layer soft bevel shadows.
-4. **Cyberpunk**: High-contrast neon yellow, cyan, and deep obsidian dark mode.
-5. **Synthwave**: 80s retro neon magenta and purple gradient vibes.
-6. **Luxury**: Sophisticated champagne gold typography on obsidian black.
-7. **Emerald**: Clean natural mint and jade green healthcare/fintech theme.
-8. **Cupcake**: Playful pastel pink and mint styling.
-9. **Retro**: Warm nostalgic amber parchment paper styling.
-
----
-
-## 📱 Mobile & Handheld POS Ergonomics
-
-- **Thumb-Zone Bottom Navigation**: Fixed ergonomic bottom bar on smartphone screens for one-handed operational access.
-- **Floating Action Button (FAB)**: Quick-launch menu to create Quotes, Invoices, Expenses, or POS sales with 1 tap.
-- **PWA Ready**: Web App Manifest (`public/manifest.json`), viewport optimization (`viewport-fit=cover, user-scalable=no`), and offline asset caching.
-
----
-
-## 🇸🇦 Saudi ZATCA Phase 1 & 2 Compliance
-
-Qvoke generates compliant TLV (Tag-Length-Value) Base64 QR codes:
-- **Tag 1**: Seller Name (`AJ NETWORK SOLUTIONS`)
-- **Tag 2**: VAT Registration Number (`310123456700003`)
-- **Tag 3**: Electronic Timestamp (`ISO 8601 UTC`)
-- **Tag 4**: Invoice Total with VAT (`SAR`)
-- **Tag 5**: Total VAT Amount (`15%`)
-
----
-
-## 🔧 Tech Stack & Architecture
-
-```
-Qvoke Architecture:
-┌─────────────────────────────────────────────────────────────┐
-│                      Client Layer                           │
-│  React 18 + TypeScript + Tailwind CSS + Zustand + Lucide   │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ REST / WebSocket / HTTP
-┌──────────────────────────────▼──────────────────────────────┐
-│                   Express API & Node Engine                 │
-│  • Authentication (JWT & Sessions)                         │
-│  • ZATCA TLV QR Cryptographic Generator                     │
-│  • Stock Movement & Document Sequence Engines               │
-│  • Client Approval Portal & E-Sign Engine                   │
-│  • Server-Side PDF & Excel Generators                       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ better-sqlite3
-┌──────────────────────────────▼──────────────────────────────┐
-│                    SQLite Database (quotes.db)              │
-│  users • quotations • invoices • expenses • inventory       │
-│  recurring_invoices • public_shares • document_activity     │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🚀 Quick Start & Installation
-
-### Prerequisites
-- **Node.js** ≥ 18.x
-- **npm** ≥ 9.x
-- Windows / macOS / Linux
-
-### 1. Clone & Install Dependencies
 ```bash
 git clone https://github.com/ajnetworksa/Qvoke.git
 cd Qvoke
 npm install
-```
-
-### 2. Environment Configuration
-Create a `.env` file from `.env.example`:
-```bash
-PORT=3000
-ADMIN_PORT=3001
-JWT_SECRET=your_super_secret_production_key_here
-DB_PATH=quotes.db
-NODE_ENV=development
-```
-
-### 3. Launch Development Server
-```bash
+cp .env.example .env      # then edit as needed
 npm run dev
 ```
-- 🌐 **Qvoke ERP App**: `http://localhost:3000`
-- 🛡️ **Admin Panel Backend**: `http://localhost:3001`
 
-### 4. Default Admin Login
-- **Email**: `admin@ajnetwork.sa`
-- **Password**: `admin123`
+- App: <http://localhost:3000>
+- Admin backend port: <http://localhost:3001> (same server, separate listener)
 
----
+On first start the database (`quotes.db`) is created and seeded with a default company and an administrator:
 
-## 🧪 Automated Testing & Security Audit Suite
+| Username | Password |
+| :--- | :--- |
+| `admin` (or `admin@ajnetwork.sa`) | `admin123` |
 
-Execute the automated test suite testing multi-tenant isolation, sequences, stock deductions, expenses, and ZATCA compliance:
+> **Change this password immediately** (Settings → Users), and never expose a deployment that still uses it.
 
-```bash
-npx tsx test-suite.ts
-```
+## Configuration
 
-Output:
-```
-✔ PASS [Security] Tenant Isolation: Prevent cross-tenant expense leakage
-✔ PASS [Security] Tenant Isolation: Scoped Public Portal Token validation
-✔ PASS [Sequences] Atomic Sequence Generation for all document types
-✔ PASS [Inventory] Stock adjustment and automatic deduction on invoice posting
-✔ PASS [Finance] Expense pre-tax and VAT math verification
-✔ PASS [Subscriptions] Recurring subscription schedule creation & trigger
-✔ PASS [ClientPortal] Client electronic signature approval workflow
-✔ PASS [ZATCA] TLV QR encoding produces compliant Base64 string with all 5 tags
+Environment variables (see `.env.example`):
 
-Total: 8 / 8 Tests Passed (100% Success Rate)
-```
-
----
-
-## 🌐 Core API Reference
-
-| Method | Endpoint | Description |
+| Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `POST` | `/api/login` | Authenticate user & issue session token |
-| `GET` | `/api/quotes` | List tenant quotations |
-| `POST` | `/api/quotes` | Create quotation with automatic sequence |
-| `GET` | `/api/invoices` | List invoices with payment reconciliation |
-| `POST` | `/api/invoices` | Post invoice & auto-deduct inventory stock |
-| `GET` | `/api/expenses` | Retrieve operational expense ledger |
-| `POST` | `/api/expenses` | Record new expense with VAT breakdown |
-| `GET` | `/api/recurring-invoices` | List active subscription schedules |
-| `POST` | `/api/recurring-invoices/:id/generate` | Trigger instant invoice generation |
-| `GET` | `/api/inventory/logs` | Retrieve warehouse stock audit trail |
-| `POST` | `/api/inventory/adjust` | Manual inward/outward stock adjustment |
-| `POST` | `/api/portal/generate-link/:docType/:docId` | Generate public share token for clients |
-| `GET` | `/api/portal/:docType/:token` | Unauthenticated public client view |
-| `POST` | `/api/portal/:docType/:token/accept` | Client e-signature sign-off |
+| `PORT` | `3000` | Main web/API port. |
+| `ADMIN_PORT` | `3001` | Secondary listener for the platform admin panel. |
+| `NODE_ENV` | `development` | `production` serves the built `dist/` instead of the Vite dev middleware. |
+| `DB_PATH` | `quotes.db` | SQLite file location. |
+| `BCRYPT_ROUNDS` | `12` | Password hashing cost. |
+| `SESSION_EXPIRY_DAYS` | `30` | Login session lifetime. |
+| `OPENROUTER_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` | – | Enables RFQ parsing, the AI assistant and AI translation fallback. One is enough. |
+| `VITE_APP_NAME`, `VITE_BRAND_COLOR` | `Qvoke`, `#01696f` | Branding defaults. |
 
----
+Company-level settings (logo, VAT number, bank details, numbering, default terms, PDF layout) are edited in the app under **Settings** and stored per company.
 
-## 📦 Production Build & Deployment
+## Scripts
+
+| Command | What it does |
+| :--- | :--- |
+| `npm run dev` | Starts the Express server with Vite in middleware mode (hot reload). |
+| `npm run build` | Type-checks (`tsc`) and builds the client to `dist/`. |
+| `npm run preview` | Serves the built client with Vite's preview server (no API). |
+| `npm test` | Runs `test-suite.ts` against the database in `DB_PATH` (start the server once first so the schema exists). |
+
+## Architecture
+
+```
+React 18 + TypeScript + Tailwind 4 + Zustand        (src/)
+        │  fetch /api/*   (Bearer session token + X-Company-Id)
+Express 4  ── helmet, rate limiting, multer, zod      (server.ts)
+        │  better-sqlite3 (WAL)
+SQLite  quotes.db  — users, sessions, companies, quotations, invoices,
+                     boq, expenses, recurring_invoices, inventory_transactions,
+                     public_shares, document_activity, document_snapshots, sequences, …
+```
+
+- `src/store.ts` – Zustand store, API client and shared money maths (`calculateTotals`).
+- `src/pages/` – screens (quotation/invoice editors, tracking, POS, reports, settings, …).
+- `src/components/` – shared UI (dialogs, comboboxes, PDF preview, template studio, …).
+- `src/pdf/` – `@react-pdf/renderer` document used for server and client PDFs.
+- `server.ts` – schema + lightweight migrations, auth, tenant resolution, all REST routes.
+
+The server **recomputes document totals from line items** on every quote/invoice save; client-sent totals are not trusted (documents with a manual total are the exception).
+
+## Multi-company model and permissions
+
+- Every business row carries a `companyId`; all queries are scoped to the active company, taken from the `X-Company-Id` header (validated against the user's memberships) or the subdomain.
+- Roles: `admin` plus permission groups with fine-grained flags (e.g. `canDeleteData`, `canOverridePrice`, `canManageSettings`, `canDatabaseMaintenance`, `canUseAI`, `canUseKanban`).
+- Features can be switched per company (plans / feature flags) – disabled features disappear from navigation and are rejected by the API.
+- Platform super-admins can manage companies and see platform-wide logs; company admins only see their own.
+
+## API overview
+
+All routes are under `/api`, JSON in/out, and require `Authorization: Bearer <token>` unless noted.
+
+| Group | Routes |
+| :--- | :--- |
+| Auth | `POST /login` (public), `POST /logout`, `GET /me` |
+| Quotations | `GET/POST /quotes`, `PUT/DELETE /quotes/:id`, `PUT /quotes/:id/followup` |
+| Invoices | `GET/POST /invoices`, `PUT/DELETE /invoices/:id`, `PUT /invoices/:id/followup` |
+| BOQ / BOM | `GET/POST /boq`, `GET/PUT/DELETE /boq/:id` |
+| Expenses | `GET/POST /expenses`, `PUT/DELETE /expenses/:id`, `GET /expenses/summary` |
+| Recurring | `GET/POST /recurring-invoices`, `PUT/DELETE /recurring-invoices/:id`, `POST /recurring-invoices/:id/process` |
+| Inventory | `GET /inventory/logs`, `POST /inventory/adjust` |
+| Catalog | `/customers`, `/suppliers`, `/products` (CRUD), `/import/*`, `/export/*` |
+| Numbering | `GET /sequences`, `PUT /sequences/:docType`, `GET /sequences/next/:docType` |
+| History | `GET /activity/:docType/:docId`, `GET /snapshots/…`, `POST /restore/:docType/:docId/:snapshotId` |
+| Recycle bin | `GET /recycle-bin`, `POST /recycle-bin/:id/restore`, `DELETE /recycle-bin/:id`, `PATCH /recycle-bin/:id/retain` |
+| Client portal | `POST /portal/generate-link/:docType/:docId`; **public:** `GET /portal/:docType/:token`, `POST …/accept`, `POST …/decline` |
+| PDF | `GET /pdf/quotation/:id`, `/pdf/invoice/:id`, `/pdf/boq/:id`, `POST /pdf/generate` |
+| Settings | `GET/POST /settings/company`, `GET /settings/:key`, `POST /settings`, `GET/PUT /features` |
+| Admin | `/users`, `/permission-groups`, `/companies`, `/admin/*` (backup, restore, optimize, overview), `/logs` |
+| AI / utilities | `POST /translate`, `POST /rfq/parse`, `POST /ai/chat`, `GET /currency/rates` |
+
+## ZATCA e-invoicing: what is and isn't implemented
+
+Implemented (**Phase 1**): invoices and POS receipts carry the standard TLV Base64 QR code with the five required tags – seller name, VAT registration number, timestamp, invoice total with VAT, and VAT amount (`src/utils/zatca.ts`).
+
+**Not implemented (Phase 2 / Fatoora integration):** cryptographic stamping/signing, UBL XML generation, CSID onboarding, and clearance/reporting API calls. Do not rely on this software alone for Phase 2 compliance.
+
+Make sure the company profile has the correct legal name and 15-digit VAT number, because they are encoded in the QR.
+
+## Testing
 
 ```bash
-# Build optimized production bundle
-npm run build
+npm run dev          # once, so quotes.db / DB_PATH gets its schema (stop with Ctrl+C)
+npm test             # or: DB_PATH=/path/to/quotes.db npx tsx test-suite.ts
+```
 
-# Start production server
+The suite exercises tenant isolation, numbering, stock deduction, expense maths, recurring schedules, the portal signature flow and ZATCA TLV encoding directly against SQLite. It does not cover the UI; type-check and build with `npm run build`.
+
+## Production deployment
+
+```bash
+npm ci
+npm run build
 NODE_ENV=production npx tsx server.ts
 ```
 
----
+- Put a TLS-terminating reverse proxy (nginx, Caddy, …) in front; the app does not terminate HTTPS itself.
+- Persist `quotes.db` (plus its `-wal`/`-shm` files) and the `backups/` directory on a volume.
+- Change the seeded admin password and set an AI key only if you want AI features.
+- Run behind a process manager (systemd, pm2, Docker) so the "restart after restore" behaviour brings the server back.
 
-## 📄 License & Attribution
+## Backups and restore
 
-Proprietary Software — **AJ Network Solutions** © 2025–2026. All rights reserved.
+Settings → Maintenance can create, download, delete and restore database backups (requires `canDatabaseMaintenance`). Restores validate the file (SQLite integrity check and expected tables) before replacing the live database, then restart the process. Always keep an off-server copy of `backups/`.
+
+## Known limitations
+
+- Document numbers are unique across the whole installation and the sequence counters are shared by all companies (per-company numbering needs a schema migration that has not been applied yet).
+- Quote terms are a single free-text field per document, with company-wide defaults in Settings → Document.
+- The offline PWA shell is not implemented: `manifest.json` makes the app installable, but there is no service worker.
+- Only the ZATCA Phase 1 QR is produced (see above).
+
+## Further documentation
+
+- [`CHANGES.md`](CHANGES.md) – change log (latest audit and fixes first).
+- [`CODEBASE_NETWORK.md`](CODEBASE_NETWORK.md) – map of layers, components, store actions, routes and tables.
+- [`SESSION_SUMMARY.md`](SESSION_SUMMARY.md) – previous working notes.
+
+## License
+
+Proprietary software – **AJ Network Solutions** © 2025–2026. All rights reserved.

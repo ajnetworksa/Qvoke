@@ -139,6 +139,32 @@ export const Tracking: React.FC = () => {
     setSelected([]);
   };
 
+  // CSV export of the filtered rows (or the selection): UTF-8 BOM for Arabic in Excel,
+  // every cell quoted, and formula-leading characters neutralised (CSV injection).
+  const handleExportCsv = () => {
+    const rows = (selected.length ? filtered.filter((d) => selected.includes(d.id)) : filtered) as (Quotation | Invoice)[];
+    if (rows.length === 0) return;
+    const cell = (v: unknown) => {
+      let t = v === null || v === undefined ? '' : String(v);
+      if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+      return '"' + t.replace(/"/g, '""') + '"';
+    };
+    const header = ['Number', 'Customer', 'Status', 'Date', 'Total', 'Currency', 'Follow-up date', 'Follow-up note'];
+    const lines = rows.map((d) => [
+      d.number, getCustomerName(d.customerId), d.status,
+      d.date ? new Date(d.date).toISOString().slice(0, 10) : '',
+      (Number(d.total) || 0).toFixed(2), d.currency,
+      d.followUpDate ? String(d.followUpDate).slice(0, 10) : '', d.followUpNote || ''
+    ].map(cell).join(','));
+    const csv = '\ufeff' + [header.map(cell).join(','), ...lines].join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tracking-${docType}s-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const openEdit = (d: Quotation | Invoice) => {
     setEditTarget({ id: d.id });
     setFuDate(d.followUpDate ? String(d.followUpDate).slice(0, 10) : '');
@@ -453,11 +479,21 @@ export const Tracking: React.FC = () => {
         title="Tracking & Follow-ups / المتابعة"
         breadcrumbs={[{ label: 'Home' }, { label: 'Tracking' }]}
         actions={
-          overdueCount > 0 ? (
-            <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/20 px-3 py-1.5 rounded-full">
-              <Bell className="w-3.5 h-3.5" /> {overdueCount} follow-up{overdueCount > 1 ? 's' : ''} overdue
-            </span>
-          ) : null
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={filtered.length === 0}
+              className="flex items-center gap-1.5 text-xs font-semibold border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text)] px-3 py-1.5 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            {overdueCount > 0 ? (
+              <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/20 px-3 py-1.5 rounded-full">
+                <Bell className="w-3.5 h-3.5" /> {overdueCount} follow-up{overdueCount > 1 ? 's' : ''} overdue
+              </span>
+            ) : null}
+          </div>
         }
       />
 
