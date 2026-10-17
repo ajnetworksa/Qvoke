@@ -31,6 +31,15 @@
 - Numbering settings: next-number preview now matches the real format (`QT-2026-0004`), document types are labelled and ordered.
 - Invoice Kanban uses a responsive grid; amounts use 2 decimals; Tracking date filters fit on phones.
 
+**PDF Template Studio is now fully operational**
+- Root cause: the Studio saved a rich template, but the PDF renderer ignored almost all of it (and the in-app "preview" was a separate HTML replica that did not match the real PDF).
+- New `src/pdf/template.ts` (defaults, 5 presets, normaliser) shared by the Studio, in-app preview and server renderer; `quote-document.tsx` rewritten to be template-driven: header styles (gradient/solid/boxed/minimal), all colours, ordered/enabled sections with half-width pairing, per-field toggles, configurable table columns (code, discount, VAT %), custom sections, custom fields, signatures, bank details, ZATCA QR, watermark (template + per-document), page size and margins, font and sizes.
+- Studio rewritten: live preview renders the real PDF with sample data; separate quotation/invoice layouts; presets; reorder/show/hide; custom sections & fields; export/import JSON; reset; save with error reporting.
+- Custom fields are now captured in the quotation/invoice editors, stored per document (`customFieldValues`) and printed in their section.
+- In-app PDF preview now shows the actual PDF (what Download produces) and prints it; the unused HTML replica (with a hooks-order bug) was removed.
+- Tajawal (Arabic + Latin) is bundled in `public/fonts` (OFL) instead of loading from a CDN, so PDFs render offline; Arabic always uses Tajawal even when a Latin font is chosen. Non-embeddable options (Outfit/Inter/Geist) were replaced by Helvetica/Times/Courier.
+- Removed another company's hard-coded defaults (AJ logo/footer images and sample terms) from the PDF mapper.
+
 **Synced from Dynamic Quotation**
 - Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
 - Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.

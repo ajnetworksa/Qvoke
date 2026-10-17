@@ -48,6 +48,7 @@
 | **Inventory** | Stock levels, manual adjustments, movement audit log. |
 | **Client portal** | Tokenised public links; clients can review, accept (with signature) or decline a quotation/invoice. |
 | **Catalog & contacts** | Customers, suppliers, products with Excel import/export. |
+| **PDF templates** | Template Studio with live real-PDF preview: presets, header styles, colours, fonts, page size/margins, section order/visibility/width, per-field toggles, table columns, custom sections and custom fields (captured in the editors), watermark, separate quotation/invoice layouts, JSON import/export. |
 | **Admin** | Users and permission groups, per-company feature flags / plans, document numbering rules, default notes & terms, PDF template studio, system logs, database backup/restore, recycle bin with retention. |
 | **AI (optional)** | RFQ document parsing and a natural-language data assistant when an OpenRouter / Gemini / OpenAI key is configured. |
 | **UI** | 4 UI themes (Modern, Obsidian, Glassmorphism, Neumorphism) × 6 accent colours, light/dark mode, bilingual English/Arabic labels, mobile bottom navigation, command palette, keyboard-accessible dialogs. |

@@ -6,214 +6,9 @@ import {
 } from './types';
 import { resolveAccent, applyAccent, DEFAULT_PRESET } from './theme';
 import { pathToRoute, routeToPath } from './utils/routing';
+import { DEFAULT_PDF_TEMPLATE } from './pdf/template';
 
-export const DEFAULT_PDF_TEMPLATE: PDFTemplateConfig = {
-  preset: 'executive',
-  name: 'Executive Modern (النموذج التنفيذي الحديث)',
-  headerStyle: 'gradient',
-  sections: [
-    {
-      id: 'header',
-      name: 'Header & Brand Info',
-      nameAr: 'الهيدر ومعلومات المنشأة',
-      enabled: true,
-      width: 'full',
-      order: 1,
-      fields: [
-        { id: 'h_logo', key: 'logo', label: 'Logo', labelAr: 'الشعار', enabled: true, isLocked: true, order: 1 },
-        { id: 'h_name', key: 'companyName', label: 'Company Name', labelAr: 'اسم المؤسسة', enabled: true, isLocked: true, order: 2 },
-        { id: 'h_addr', key: 'address', label: 'Address', labelAr: 'العنوان', enabled: true, order: 3 },
-        { id: 'h_phone', key: 'phone', label: 'Phone', labelAr: 'رقم الهاتف', enabled: true, order: 4 },
-        { id: 'h_email', key: 'email', label: 'Email', labelAr: 'البريد الإلكتروني', enabled: true, order: 5 },
-        { id: 'h_org', key: 'orgNumber', label: 'Organization Number (CR/VAT)', labelAr: 'السجل التجاري والضريبي', enabled: true, order: 6 }
-      ]
-    },
-    {
-      id: 'customer',
-      name: 'Customer Details',
-      nameAr: 'بيانات العميل',
-      enabled: true,
-      width: 'half',
-      order: 2,
-      fields: [
-        { id: 'c_name', key: 'customerName', label: 'Customer Name', labelAr: 'اسم العميل', enabled: true, isLocked: true, order: 1 },
-        { id: 'c_comp', key: 'customerCompany', label: 'Customer Company', labelAr: 'اسم الشركة', enabled: true, order: 2 },
-        { id: 'c_addr', key: 'customerAddress', label: 'Customer Address', labelAr: 'عنوان العميل', enabled: true, order: 3 },
-        { id: 'c_email', key: 'customerEmail', label: 'Customer Email', labelAr: 'البريد الإلكتروني للعميل', enabled: true, order: 4 },
-        { id: 'c_phone', key: 'customerPhone', label: 'Customer Phone', labelAr: 'هاتف العميل', enabled: true, order: 5 },
-        { id: 'c_tax', key: 'customerTaxId', label: 'Customer Tax ID (VAT)', labelAr: 'الرقم الضريبي للعميل', enabled: true, order: 6 }
-      ]
-    },
-    {
-      id: 'vehicle',
-      name: 'Project / Service Specs',
-      nameAr: 'مواصفات المشروع / الخدمة',
-      enabled: true,
-      width: 'half',
-      order: 3,
-      fields: [
-        { id: 'v_ref', key: 'poNumber', label: 'Purchase Order #', labelAr: 'رقم أمر الشراء', enabled: true, order: 1 },
-        { id: 'v_model', key: 'projectRef', label: 'Project / Vehicle Reference', labelAr: 'مرجع المشروع أو المركبة', enabled: true, order: 2 },
-        { id: 'v_plate', key: 'siteLocation', label: 'Site / Bay Location', labelAr: 'موقع العمل أو الورشة', enabled: true, order: 3 },
-        { id: 'v_contact', key: 'siteContact', label: 'Site Contact Person', labelAr: 'المسؤول الميداني', enabled: true, order: 4 }
-      ]
-    },
-    {
-      id: 'line_items',
-      name: 'Work & Parts Line Items',
-      nameAr: 'جدول الأعمال والمواد والبنود',
-      enabled: true,
-      width: 'full',
-      order: 4,
-      fields: [
-        { id: 'li_desc', key: 'description', label: 'Item Description', labelAr: 'وصف البند', enabled: true, isLocked: true, order: 1 },
-        { id: 'li_qty', key: 'quantity', label: 'Quantity & Units', labelAr: 'الكمية والوحدة', enabled: true, isLocked: true, order: 2 },
-        { id: 'li_price', key: 'unitPrice', label: 'Unit Price', labelAr: 'سعر الوحدة', enabled: true, order: 3 },
-        { id: 'li_tax', key: 'taxRate', label: 'VAT 15%', labelAr: 'ضريبة القيمة المضافة', enabled: true, order: 4 },
-        { id: 'li_total', key: 'total', label: 'Line Total', labelAr: 'المجموع', enabled: true, isLocked: true, order: 5 }
-      ]
-    },
-    {
-      id: 'summary',
-      name: 'Financial Summary & Totals',
-      nameAr: 'الملخص المالي والإجماليات',
-      enabled: true,
-      width: 'half',
-      order: 5,
-      fields: [
-        { id: 's_sub', key: 'subtotal', label: 'Subtotal Amount', labelAr: 'المجموع الفرعي', enabled: true, isLocked: true, order: 1 },
-        { id: 's_disc', key: 'discount', label: 'Total Discount', labelAr: 'إجمالي الخصم', enabled: true, order: 2 },
-        { id: 's_tax', key: 'taxTotal', label: 'VAT (15%)', labelAr: 'إجمالي الضريبة', enabled: true, isLocked: true, order: 3 },
-        { id: 's_total', key: 'grandTotal', label: 'Grand Total', labelAr: 'الإجمالي النهائي', enabled: true, isLocked: true, order: 4 },
-        { id: 's_due', key: 'balanceDue', label: 'Balance Due', labelAr: 'المبلغ المستحق', enabled: true, order: 5 }
-      ]
-    },
-    {
-      id: 'zatca_qr',
-      name: 'ZATCA Compliance & Bank QR',
-      nameAr: 'رمز هيئة الزكاة والحساب البنكي',
-      enabled: true,
-      width: 'half',
-      order: 6,
-      fields: [
-        { id: 'z_qr', key: 'zatcaQr', label: 'ZATCA TLV Base64 QR', labelAr: 'رمز هيئة الزكاة والضريبة', enabled: true, isLocked: true, order: 1 },
-        { id: 'z_bank', key: 'bankName', label: 'Bank Name & IBAN', labelAr: 'اسم البنك ورقم الآيبان', enabled: true, order: 2 }
-      ]
-    },
-    {
-      id: 'payment_terms',
-      name: 'Terms & Conditions',
-      nameAr: 'الشروط والأحكام والضمان',
-      enabled: true,
-      width: 'full',
-      order: 7,
-      fields: [
-        { id: 't_pay', key: 'paymentTerms', label: 'Payment Terms Clause', labelAr: 'بند شروط الدفع', enabled: true, order: 1 },
-        { id: 't_war', key: 'warrantyTerms', label: 'Warranty & Maintenance Clause', labelAr: 'بند الضمان والصيانة', enabled: true, order: 2 }
-      ]
-    },
-    {
-      id: 'signatures',
-      name: 'Authorized Signatures',
-      nameAr: 'قسم التواقيع والاعتماد',
-      enabled: true,
-      width: 'full',
-      order: 8,
-      fields: [
-        { id: 'sig_comp', key: 'companySignature', label: 'Company Signatory & Seal', labelAr: 'توقيع وختم المنشأة', enabled: true, order: 1 },
-        { id: 'sig_client', key: 'clientSignature', label: 'Client Acceptance & Signature', labelAr: 'توقيع وقبول العميل', enabled: true, order: 2 }
-      ]
-    },
-    {
-      id: 'footer',
-      name: 'Page Footer',
-      nameAr: 'تذييل الصفحة',
-      enabled: true,
-      width: 'full',
-      order: 9,
-      fields: [
-        { id: 'f_contact', key: 'footerContact', label: 'Company Contact & Website', labelAr: 'معلومات التواصل والموقع', enabled: true, order: 1 },
-        { id: 'f_page', key: 'pageNumbers', label: 'Page Numbers (Page X of Y)', labelAr: 'ترقيم الصفحات', enabled: true, order: 2 }
-      ]
-    }
-  ],
-  customFields: [
-    {
-      id: 'cf_1',
-      name: 'Purchase order number',
-      key: 'purchase_order',
-      type: 'text',
-      appliesTo: 'all',
-      sectionId: 'vehicle',
-      sectionName: 'Project / Service Specs'
-    },
-    {
-      id: 'cf_2',
-      name: 'Site contact',
-      key: 'site_contact',
-      type: 'text',
-      appliesTo: 'quotation',
-      sectionId: 'vehicle',
-      sectionName: 'Project / Service Specs'
-    },
-    {
-      id: 'cf_3',
-      name: 'Workshop bay',
-      key: 'bay',
-      type: 'select',
-      appliesTo: 'invoice',
-      options: ['Bay 1 (Mechanical)', 'Bay 2 (Electrical)', 'Bay 3 (Diagnostics)', 'On-Site Riyadh Client Site'],
-      sectionId: 'vehicle',
-      sectionName: 'Project / Service Specs'
-    },
-    {
-      id: 'cf_4',
-      name: 'Courtesy vehicle issued',
-      key: 'courtesy_vehicle',
-      type: 'checkbox',
-      appliesTo: 'invoice',
-      sectionId: 'vehicle',
-      sectionName: 'Project / Service Specs'
-    }
-  ],
-  colors: {
-    primary: '#01696f',
-    headerBgStart: '#01696f',
-    headerBgEnd: '#0d9488',
-    headerText: '#ffffff',
-    tableHeaderBg: '#01696f',
-    tableHeaderText: '#ffffff',
-    zebraRowBg: '#f8fafc',
-    accentBorder: '#01696f'
-  },
-  tableColumns: {
-    showIndex: true,
-    showItemCode: true,
-    showDescEn: true,
-    showDescAr: true,
-    showQty: true,
-    showUnit: true,
-    showUnitPrice: true,
-    showDiscount: true,
-    showTax: true,
-    showTotal: true
-  },
-  typography: {
-    fontFamily: 'Tajawal',
-    bodyFontSize: 9,
-    titleFontSize: 22
-  },
-  watermark: {
-    enabled: true,
-    text: 'PAID',
-    opacity: 0.08,
-    angle: 45
-  },
-  page: {
-    size: 'A4',
-    margins: 'normal'
-  }
-};
+export { DEFAULT_PDF_TEMPLATE };
 
 // Is the effective mode dark, given the user's theme setting?
 const isDarkMode = (theme: 'light' | 'dark' | 'system') =>
@@ -271,7 +66,7 @@ interface ERPState {
   initializeStore: () => Promise<void>;
 
   // Company Profile
-  updateCompany: (company: Partial<Company>) => Promise<void>;
+  updateCompany: (company: Partial<Company>) => Promise<boolean>;
   
   // Customers CRUD
   addCustomer: (customer: Customer) => Promise<void>;
@@ -728,9 +523,12 @@ export const useERPStore = create<ERPState>((set, get) => ({
       }, token);
       if (res.ok) {
         set({ company: newCompany });
+        return true;
       }
+      return false;
     } catch (err) {
       console.error(err);
+      return false;
     }
   },
 
@@ -979,7 +777,8 @@ export const useERPStore = create<ERPState>((set, get) => ({
       updatedAt: new Date(),
       salespersonId: quote.salespersonId,
       watermarkText: quote.watermarkText,
-      watermarkType: quote.watermarkType
+      watermarkType: quote.watermarkType,
+      customFieldValues: quote.customFieldValues ? { ...quote.customFieldValues } : undefined
     };
 
     try {

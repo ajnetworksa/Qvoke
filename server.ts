@@ -14,7 +14,8 @@ import path from 'path';
 import fs from 'fs';
 import { renderToBuffer } from '@react-pdf/renderer';
 import React from 'react';
-import { QuotePdfDocument } from './src/pdf/quote-document.tsx';
+import { QuotePdfDocument, registerPdfFonts } from './src/pdf/quote-document.tsx';
+registerPdfFonts(path.resolve('public/fonts'));
 import { exec } from 'child_process';
 import OpenAI from 'openai';
 import QRCode from 'qrcode';
@@ -757,6 +758,8 @@ addColumnIfNotExists('invoices', 'watermarkText', "TEXT DEFAULT 'PAID'");
 addColumnIfNotExists('invoices', 'watermarkType', "TEXT DEFAULT 'none'");
 addColumnIfNotExists('quotations', 'hidePrices', "INTEGER DEFAULT 0");
 addColumnIfNotExists('quotations', 'manualTotal', "REAL");
+addColumnIfNotExists('quotations', 'customFieldValues', 'TEXT');
+addColumnIfNotExists('invoices', 'customFieldValues', 'TEXT');
 addColumnIfNotExists('invoices', 'hidePrices', "INTEGER DEFAULT 0");
 addColumnIfNotExists('invoices', 'manualTotal', "REAL");
 addColumnIfNotExists('boq', 'type', "TEXT DEFAULT 'boq'");
@@ -1598,10 +1601,21 @@ app.get('/api/quotes', requireAuth, (req, res) => {
     createdAt: new Date(q.createdAt),
     updatedAt: new Date(q.updatedAt),
     hidePrices: q.hidePrices === 1,
+    customFieldValues: (() => { try { return q.customFieldValues ? JSON.parse(q.customFieldValues) : {}; } catch { return {}; } })(),
     manualTotal: q.manualTotal !== null && q.manualTotal !== undefined ? q.manualTotal : undefined
   }));
   res.json(parsed);
 });
+
+// Persist template custom-field values (JSON object of string values) for a quotation/invoice.
+function saveCustomFieldValues(table: 'quotations' | 'invoices', id: string, companyId: string, raw: any) {
+  if (raw === undefined) return;
+  const clean: Record<string, string> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) if (/^[a-zA-Z0-9_\-]{1,64}$/.test(k)) clean[k] = String(v ?? '').slice(0, 500);
+  }
+  db.prepare(`UPDATE ${table} SET customFieldValues = ? WHERE id = ? AND companyId = ?`).run(JSON.stringify(clean), id, companyId);
+}
 
 // SECURITY/INTEGRITY: never trust client-supplied money fields. Recompute totals from the line items
 // (same rules as the client's calculateTotals) unless a manual total override is in play.
@@ -1687,6 +1701,7 @@ app.post('/api/quotes', requireAuth, (req, res) => {
       (req as any).companyId
     );
     logDocumentActivity('quotation', qId, number, 'created', user, (req as any).companyId);
+    saveCustomFieldValues('quotations', qId, (req as any).companyId, req.body.customFieldValues);
     res.json({ id: qId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1751,6 +1766,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
       try { if (typeof snapshotData.lineItems === 'string') snapshotData.lineItems = JSON.parse(snapshotData.lineItems); } catch(e){}
       logDocumentActivity('quotation', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes, snapshotData);
     }
+    saveCustomFieldValues('quotations', req.params.id, (req as any).companyId, req.body.customFieldValues);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1778,6 +1794,7 @@ app.get('/api/invoices', requireAuth, (req, res) => {
     createdAt: new Date(i.createdAt),
     updatedAt: new Date(i.updatedAt),
     hidePrices: i.hidePrices === 1,
+    customFieldValues: (() => { try { return i.customFieldValues ? JSON.parse(i.customFieldValues) : {}; } catch { return {}; } })(),
     manualTotal: i.manualTotal !== null && i.manualTotal !== undefined ? i.manualTotal : undefined
   }));
   res.json(parsed);
@@ -1870,6 +1887,7 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       }
     }
 
+    saveCustomFieldValues('invoices', invId, (req as any).companyId, req.body.customFieldValues);
     res.json({ id: invId, number });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1939,6 +1957,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
       try { if (typeof snapshotData.payments === 'string') snapshotData.payments = JSON.parse(snapshotData.payments); } catch(e){}
       logDocumentActivity('invoice', req.params.id, number, statusChanged ? 'status_changed' : 'updated', user, (req as any).companyId, changes, snapshotData);
     }
+    saveCustomFieldValues('invoices', req.params.id, (req as any).companyId, req.body.customFieldValues);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -4059,6 +4078,7 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
     address: (() => { try { const a = JSON.parse(custRow.billingAddress); return [a.street, a.district].filter(Boolean).join(', '); } catch { return null; } })(),
     city: (() => { try { const a = JSON.parse(custRow.billingAddress); return a.city || null; } catch { return null; } })(),
     country: (() => { try { const a = JSON.parse(custRow.billingAddress); return a.country || null; } catch { return null; } })(),
+    vatNumber: custRow.vatNumber || null,
   } : { company: 'Unknown' };
 
   const companyRecord = db.prepare('SELECT name, settings FROM companies WHERE id = ?').get(companyId) as { name: string; settings?: string | null } | undefined;
@@ -4083,8 +4103,18 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
     logoUrl: tenantSettings.logo || logoRow?.value || comp.logo || null,
     footerImageUrl: tenantSettings.footerImage || footerRow?.value || null,
     brandColor: comp.brandColor || '#01696f',
-    taxLabel: 'VAT 15%',
+    taxLabel: `VAT ${Number.isFinite(Number(comp.defaultTax)) && comp.defaultTax !== '' && comp.defaultTax != null ? Number(comp.defaultTax) : 15}%`,
     vatNumber: comp.vatNumber || null,
+    crNumber: comp.crNumber || null,
+    bankName: comp.bankName || null,
+    bankAccount: comp.bankAccount || null,
+    bankIban: comp.bankIban || null,
+    pdfPayment: comp.pdfPayment || null,
+    pdfWarranty: comp.pdfWarranty || null,
+    pdfManpower: comp.pdfManpower || null,
+    pdfMobilization: comp.pdfMobilization || null,
+    pdfDuration: comp.pdfDuration || null,
+    pdfTemplate: comp.pdfTemplate || null,
     pdfHeaderBgType: comp.pdfHeaderBgType || 'solid',
     pdfHeaderBgColorStart: comp.pdfHeaderBgColorStart || comp.brandColor || '#01696f',
     pdfHeaderBgColorEnd: comp.pdfHeaderBgColorEnd || comp.brandColor || '#01696f',
@@ -4112,6 +4142,9 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
   } else {
     lineItems = typeof docData.lineItems === 'string' ? JSON.parse(docData.lineItems) : (docData.lineItems || []);
   }
+  const itemCodeById = new Map<string, string>(
+    (db.prepare('SELECT id, itemCode FROM products WHERE companyId = ?').all(companyId) as any[]).map((p) => [p.id, p.itemCode])
+  );
   const lines = lineItems
     .filter((i: any) => i.type !== 'note')
     .map((i: any) => {
@@ -4126,6 +4159,8 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
         unit: i.unit,
         unitPrice: i.unitPrice,
         discount: i.discountPercent || 0,
+        taxPercent: i.taxPercent !== undefined && i.taxPercent !== null ? Number(i.taxPercent) : undefined,
+        itemCode: i.productId ? (itemCodeById.get(i.productId) || null) : null,
       };
     });
 
@@ -4177,6 +4212,9 @@ async function buildPdfBuffer(docData: any, companyId: string, type: 'quotation'
     hidePrices: !!docData.hidePrices,
     manualTotal: docData.manualTotal != null ? Number(docData.manualTotal) : undefined,
     zatcaQrCodeImage,
+    customFieldValues: (() => {
+      try { const v = typeof docData.customFieldValues === 'string' ? JSON.parse(docData.customFieldValues) : docData.customFieldValues; return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+    })(),
   };
 
   const element = React.createElement(QuotePdfDocument, { quote, settings, type });

@@ -4,6 +4,7 @@ import { Customer, Product, LineItem, Quotation } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useDraft } from '../hooks/useDraft';
+import { CustomFieldsCard } from '../components/CustomFieldsCard';
 import { fetchDocumentDefaults } from '../utils/documentDefaults';
 import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
@@ -84,6 +85,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
   const [watermarkText, setWatermarkText] = useState('DRAFT');
   const [watermarkType, setWatermarkType] = useState<'none' | 'center' | 'multi'>('none');
   const [hidePrices, setHidePrices] = useState(false);
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
   const [manualTotal, setManualTotal] = useState<number | ''>('');
 
   // Form Utility States
@@ -119,6 +121,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     setWatermarkText(s.watermarkText ?? 'DRAFT');
     setWatermarkType(s.watermarkType ?? 'none');
     setHidePrices(s.hidePrices ?? false);
+    setCustomFieldValues(s.customFieldValues ?? {});
     setManualTotal(s.manualTotal !== undefined && s.manualTotal !== null ? s.manualTotal : '');
     if (s.markup !== undefined && s.markup !== null) setMarkup(s.markup);
   };
@@ -170,6 +173,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
 
       setWatermarkType('none');
       setHidePrices(false);
+      setCustomFieldValues({});
       setManualTotal('');
       setIsDirty(false);
       return;
@@ -201,6 +205,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       setWatermarkText(existingQuote.watermarkText || 'DRAFT');
       setWatermarkType(existingQuote.watermarkType || 'none');
       setHidePrices(existingQuote.hidePrices || false);
+      setCustomFieldValues((existingQuote as any).customFieldValues ?? {});
       setManualTotal(existingQuote.manualTotal !== undefined && existingQuote.manualTotal !== null ? existingQuote.manualTotal : '');
       setIsDirty(false);
     }
@@ -238,11 +243,11 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     if (!isDirty) return;
     draft.save({
       number, customerId, date, validUntil, status, lineItems, notes, terms,
-      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices,
+      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices, customFieldValues,
       manualTotal, markup,
     });
   }, [isDirty, number, customerId, date, validUntil, status, lineItems, notes, terms,
-      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices, manualTotal, markup]);
+      subject, subjectAr, currency, watermarkText, watermarkType, hidePrices, customFieldValues, manualTotal, markup]);
 
   // Height synchronization states for side-by-side Analysis Sidebar
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
@@ -451,6 +456,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       watermarkText,
       watermarkType,
       hidePrices,
+      customFieldValues,
       manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
     };
   };
@@ -683,6 +689,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
       watermarkText,
       watermarkType,
       hidePrices,
+      customFieldValues,
       manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
     };
 
@@ -885,6 +892,7 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     watermarkText,
     watermarkType,
     hidePrices,
+    customFieldValues,
     manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
   };
 
@@ -1207,6 +1215,8 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
                 />
               </div>
             </div>
+
+            <CustomFieldsCard docType="quotation" values={customFieldValues} onChange={(v) => { setCustomFieldValues(v); setIsDirty(true); }} />
 
             {/* Customer select combobox */}
             <div className="mb-6">

@@ -4,6 +4,7 @@ import { Customer, Product, LineItem, Invoice, Payment } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useDraft } from '../hooks/useDraft';
+import { CustomFieldsCard } from '../components/CustomFieldsCard';
 import { fetchDocumentDefaults } from '../utils/documentDefaults';
 import { getLineNumber } from '../utils/lineNumber';
 import type { LineNumberFormat } from '../utils/lineNumber';
@@ -90,6 +91,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
   const [watermarkText, setWatermarkText] = useState('PAID');
   const [watermarkType, setWatermarkType] = useState<'none' | 'center' | 'multi'>('none');
   const [hidePrices, setHidePrices] = useState(false);
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
   const [manualTotal, setManualTotal] = useState<string>('');
   const [zatcaQrCode, setZatcaQrCode] = useState<string | null>(null);
 
@@ -133,6 +135,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     setWatermarkText(s.watermarkText ?? 'PAID');
     setWatermarkType(s.watermarkType ?? 'none');
     setHidePrices(!!s.hidePrices);
+    setCustomFieldValues(s.customFieldValues ?? {});
     setManualTotal(s.manualTotal !== undefined && s.manualTotal !== null ? String(s.manualTotal) : '');
     if (s.markup !== undefined && s.markup !== null) setMarkup(s.markup);
   };
@@ -189,6 +192,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       setWatermarkText('PAID');
       setWatermarkType('none');
       setHidePrices(false);
+      setCustomFieldValues({});
       setManualTotal('');
       setIsDirty(false);
       return;
@@ -222,6 +226,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       setWatermarkText(existingInv.watermarkText || 'PAID');
       setWatermarkType(existingInv.watermarkType || 'none');
       setHidePrices(!!existingInv.hidePrices);
+      setCustomFieldValues((existingInv as any).customFieldValues ?? {});
       setManualTotal(existingInv.manualTotal !== undefined && existingInv.manualTotal !== null ? String(existingInv.manualTotal) : '');
       setIsDirty(false);
     }
@@ -267,10 +272,10 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     if (!isDirty) return;
     draft.save({
       number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
-      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal, markup,
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, customFieldValues, manualTotal, markup,
     });
   }, [isDirty, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms,
-      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, manualTotal, markup]);
+      currency, linkedQuoteId, subject, subjectAr, watermarkText, watermarkType, hidePrices, customFieldValues, manualTotal, markup]);
 
   // Height synchronization states for side-by-side Analysis Sidebar
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
@@ -483,6 +488,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
       watermarkText,
       watermarkType,
       hidePrices,
+      customFieldValues,
       manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
     };
   };
@@ -796,6 +802,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
     watermarkText,
     watermarkType,
     hidePrices,
+    customFieldValues,
     manualTotal: manualTotal !== '' ? Number(manualTotal) : undefined
   };
 
@@ -1184,6 +1191,8 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                 />
               </div>
             </div>
+
+            <CustomFieldsCard docType="invoice" values={customFieldValues} onChange={(v) => { setCustomFieldValues(v); setIsDirty(true); }} />
 
             <div className="mb-6">
               <CustomerCombobox selectedCustomerId={customerId} onSelect={(id) => {

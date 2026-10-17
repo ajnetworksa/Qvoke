@@ -116,7 +116,7 @@ export interface PDFTemplateConfig {
   };
   tableColumns: PDFTableColumnsConfig;
   typography: {
-    fontFamily: 'Tajawal' | 'Outfit' | 'Inter' | 'Geist';
+    fontFamily: 'Tajawal' | 'Helvetica' | 'Times-Roman' | 'Courier' | 'Outfit' | 'Inter' | 'Geist';
     bodyFontSize: number;
     titleFontSize: number;
   };
@@ -340,6 +340,8 @@ export interface Quotation {
   manualTotal?: number;
   followUpDate?: string | null;
   followUpNote?: string | null;
+  /** Values for template custom fields, keyed by CustomFieldDefinition.key */
+  customFieldValues?: Record<string, string>;
 }
 
 export interface Invoice {
@@ -373,6 +375,8 @@ export interface Invoice {
   manualTotal?: number;
   followUpDate?: string | null;
   followUpNote?: string | null;
+  /** Values for template custom fields, keyed by CustomFieldDefinition.key */
+  customFieldValues?: Record<string, string>;
 }
 
 export interface Payment {

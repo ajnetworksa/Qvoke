@@ -1,1278 +1,548 @@
-import React, { useState } from 'react';
-import { useERPStore, DEFAULT_PDF_TEMPLATE } from '../store';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { pdf } from '@react-pdf/renderer';
+import QRCode from 'qrcode';
 import {
-  PDFTemplateConfig,
-  PDFSectionItem,
-  PDFSectionField,
-  CustomFieldDefinition
-} from '../types';
-import {
-  Sparkles,
-  GripVertical,
-  ChevronDown,
-  ChevronRight,
-  Eye,
-  EyeOff,
-  Palette,
-  Layout,
-  Type,
-  ShieldCheck,
-  FileText,
-  Save,
-  RotateCcw,
-  Sliders,
-  Check,
-  QrCode,
-  Plus,
-  Trash2,
-  Edit2,
-  Lock,
-  Columns,
-  Maximize2,
-  Receipt,
-  FileSpreadsheet,
-  X,
-  Layers,
-  Settings as SettingsIcon
+  Palette, Layout as LayoutIcon, Columns, Type, Droplets, FileText, Save, RotateCcw, Eye, EyeOff,
+  ChevronUp, ChevronDown, Plus, Trash2, Edit2, Lock, Download, Upload, Copy, Loader2, Check, AlertTriangle, ListPlus
 } from 'lucide-react';
+import { useERPStore } from '../store';
+import { QuotePdfDocument, registerPdfFonts } from '../pdf/quote-document';
+import {
+  DEFAULT_PDF_TEMPLATE, PDF_PRESETS, PDF_FONT_OPTIONS, applyPreset, resolveTemplate, sectionsFor, sampleDocument, safeColor,
+  type PdfDocType
+} from '../pdf/template';
+import type { PDFTemplateConfig, PDFSectionItem, CustomFieldDefinition } from '../types';
+
+type Tab = 'design' | 'layout' | 'table' | 'fields';
+
+const inputCls = 'w-full p-2 rounded-lg bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text)]';
+const labelCls = 'text-[11px] font-bold text-[var(--color-text)] block mb-1';
+
+const slug = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+
+// ── Live preview: renders the REAL PDF document with sample data ───────────────
+const LivePreview: React.FC<{ template: PDFTemplateConfig; docType: PdfDocType }> = ({ template, docType }) => {
+  const { company, token } = useERPStore();
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [logo, setLogo] = useState<string | null>(null);
+  const [footer, setFooter] = useState<string | null>(null);
+  const lastUrl = useRef<string | null>(null);
+
+  useEffect(() => {
+    registerPdfFonts('/fonts');
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch('/api/settings/logo', { headers }).then((r) => r.json()).then((d) => setLogo(d?.value || null)).catch(() => {});
+    fetch('/api/settings/footerImage', { headers }).then((r) => r.json()).then((d) => setFooter(d?.value || null)).catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true);
+    const timer = setTimeout(async () => {
+      try {
+        const doc: any = sampleDocument(docType);
+        if (docType === 'invoice') {
+          doc.zatcaQrCodeImage = await QRCode.toDataURL('SAMPLE-ZATCA-TLV', { margin: 1 });
+        }
+        const addr = company.address ? [company.address.street, company.address.district, company.address.city].filter(Boolean).join(', ') : null;
+        const settings = {
+          companyName: company.name || 'Your Company',
+          email: company.email || null,
+          phone: company.phone || null,
+          address: addr,
+          logoUrl: logo || company.logo || null,
+          footerImageUrl: footer || null,
+          brandColor: template.colors.primary,
+          taxLabel: `VAT ${Number.isFinite(Number(company.defaultTax)) ? Number(company.defaultTax) : 15}%`,
+          vatNumber: company.vatNumber || null,
+          crNumber: company.crNumber || null,
+          bankName: company.bankName || 'Sample Bank',
+          bankAccount: company.bankAccount || '000000000000',
+          bankIban: company.bankIban || 'SA0000000000000000000000',
+          pdfTemplate: template,
+        };
+        const blob = await pdf(
+          <QuotePdfDocument quote={doc} settings={settings} type={docType} amountPaid={docType === 'invoice' ? 2000 : 0} amountDue={docType === 'invoice' ? doc.total - 2000 : 0} />
+        ).toBlob();
+        if (cancelled) return;
+        const next = URL.createObjectURL(blob);
+        if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
+        lastUrl.current = next;
+        setUrl(next);
+        setError(null);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || 'Render failed');
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [template, docType, company, logo, footer]);
+
+  useEffect(() => () => { if (lastUrl.current) URL.revokeObjectURL(lastUrl.current); }, []);
+
+  return (
+    <div className="relative rounded-xl border border-[var(--color-border)] bg-neutral-100 overflow-hidden h-[78vh] min-h-[520px]">
+      {error ? (
+        <div className="h-full flex flex-col items-center justify-center gap-2 p-6 text-center text-xs text-[var(--color-error)]">
+          <AlertTriangle className="w-6 h-6" /> <b>Preview failed</b>
+          <span className="text-[var(--color-text-muted)]">{error}</span>
+        </div>
+      ) : url ? (
+        <iframe title="PDF template preview" src={`${url}#toolbar=0&navpanes=0`} className="w-full h-full border-0 bg-white" />
+      ) : (
+        <div className="h-full flex items-center justify-center text-xs text-[var(--color-text-muted)]">Rendering preview…</div>
+      )}
+      {busy && (
+        <span className="absolute top-2 right-2 flex items-center gap-1 text-[10px] font-bold bg-[var(--color-surface)]/90 border border-[var(--color-border)] rounded-full px-2 py-1">
+          <Loader2 className="w-3 h-3 animate-spin" /> Updating
+        </span>
+      )}
+    </div>
+  );
+};
+
+const ColorField: React.FC<{ label: string; value: string; onChange: (v: string) => void }> = ({ label, value, onChange }) => (
+  <div>
+    <label className={labelCls}>{label}</label>
+    <div className="flex items-center gap-2">
+      <input type="color" value={safeColor(value, '#000000')} onChange={(e) => onChange(e.target.value)} className="w-9 h-9 rounded-lg cursor-pointer border border-[var(--color-border)] p-0.5 bg-transparent" aria-label={`${label} picker`} />
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className={`${inputCls} font-mono`} aria-label={label} />
+    </div>
+  </div>
+);
 
 export const PDFTemplateStudio: React.FC = () => {
   const { company, updateCompany } = useERPStore();
-  const currentTemplate: PDFTemplateConfig = company.pdfTemplate || DEFAULT_PDF_TEMPLATE;
 
-  const [template, setTemplate] = useState<PDFTemplateConfig>({
-    ...DEFAULT_PDF_TEMPLATE,
-    ...currentTemplate,
-    sections: currentTemplate.sections || DEFAULT_PDF_TEMPLATE.sections,
-    customFields: currentTemplate.customFields || DEFAULT_PDF_TEMPLATE.customFields || [],
-    colors: { ...DEFAULT_PDF_TEMPLATE.colors, ...(currentTemplate.colors || {}) },
-    tableColumns: { ...DEFAULT_PDF_TEMPLATE.tableColumns, ...(currentTemplate.tableColumns || {}) },
-    typography: { ...DEFAULT_PDF_TEMPLATE.typography, ...(currentTemplate.typography || {}) },
-    watermark: { ...DEFAULT_PDF_TEMPLATE.watermark, ...(currentTemplate.watermark || {}) },
-    page: { ...DEFAULT_PDF_TEMPLATE.page, ...(currentTemplate.page || {}) }
-  });
+  // Normalise whatever was saved so the editor always works on a complete template.
+  const initial = useMemo(() => {
+    const raw = company.pdfTemplate;
+    const base = { ...DEFAULT_PDF_TEMPLATE, ...(raw || {}) } as PDFTemplateConfig;
+    const q = resolveTemplate(raw, 'quotation');
+    const i = resolveTemplate(raw, 'invoice');
+    return { ...base, colors: q.colors, tableColumns: q.tableColumns, typography: q.typography, watermark: q.watermark, page: q.page, customFields: q.customFields, quoteSections: q.sections, invoiceSections: i.sections } as PDFTemplateConfig;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Top-level Navigation: General | Layout | Custom Fields
-  const [topTab, setTopTab] = useState<'general' | 'layout' | 'custom_fields'>('layout');
-  
-  // Document Type Mode in Layout: Invoice vs Quote
-  const [docMode, setDocMode] = useState<'invoice' | 'quote'>('invoice');
+  const [template, setTemplate] = useState<PDFTemplateConfig>(initial);
+  const [tab, setTab] = useState<Tab>('design');
+  const [docType, setDocType] = useState<PdfDocType>('quotation');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [dirty, setDirty] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>('customer');
+  const [fieldDraft, setFieldDraft] = useState<Partial<CustomFieldDefinition> & { optionsText?: string } | null>(null);
+  const [newSection, setNewSection] = useState<{ name: string; nameAr: string; content: string; width: 'full' | 'half' } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  // Expanded state for accordion section cards
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    header: true,
-    customer: true,
-    vehicle: true,
-    line_items: false,
-    summary: false,
-    zatca_qr: false,
-    payment_terms: false,
-    signatures: false,
-    footer: false
-  });
+  const edit = (patch: Partial<PDFTemplateConfig>) => { setTemplate((t) => ({ ...t, ...patch })); setDirty(true); };
 
-  const [savedSuccess, setSavedSuccess] = useState(false);
-  const [draggedSectionIndex, setDraggedSectionIndex] = useState<number | null>(null);
-  const [draggedFieldIndex, setDraggedFieldIndex] = useState<{ sectionId: string; index: number } | null>(null);
+  const sectionKey = docType === 'invoice' ? 'invoiceSections' : 'quoteSections';
+  const sections: PDFSectionItem[] = useMemo(
+    () => [...sectionsFor(template, docType)].sort((a, b) => (a.order || 0) - (b.order || 0)),
+    [template, docType]
+  );
+  const setSections = (list: PDFSectionItem[]) => edit({ [sectionKey]: list.map((s, i) => ({ ...s, order: i + 1 })) } as any);
+  const patchSection = (id: string, patch: Partial<PDFSectionItem>) => setSections(sections.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  const move = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir;
+    if (j < 0 || j >= sections.length) return;
+    const next = [...sections];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setSections(next);
+  };
+  const toggleField = (secId: string, fieldId: string) =>
+    setSections(sections.map((s) => (s.id === secId ? { ...s, fields: s.fields.map((f) => (f.id === fieldId ? { ...f, enabled: !f.enabled } : f)) } : s)));
 
-  // Custom Field Modals & Filters
-  const [customFieldFilter, setCustomFieldFilter] = useState<'all' | 'quotation' | 'invoice'>('all');
-  const [isFieldModalOpen, setIsFieldModalOpen] = useState(false);
-  const [editingField, setEditingField] = useState<CustomFieldDefinition | null>(null);
-  const [fieldNameInput, setFieldNameInput] = useState('');
-  const [fieldKeyInput, setFieldKeyInput] = useState('');
-  const [fieldTypeInput, setFieldTypeInput] = useState<'text' | 'number' | 'select' | 'checkbox' | 'date' | 'textarea'>('text');
-  const [fieldAppliesToInput, setFieldAppliesToInput] = useState<'all' | 'quotation' | 'invoice'>('all');
-  const [fieldOptionsInput, setFieldOptionsInput] = useState('');
-  const [fieldTargetSection, setFieldTargetSection] = useState('vehicle');
-
-  // Section Add Modal
-  const [isAddSectionModalOpen, setIsAddSectionModalOpen] = useState(false);
-  const [newSectionName, setNewSectionName] = useState('');
-  const [newSectionNameAr, setNewSectionNameAr] = useState('');
-  const [newSectionWidth, setNewSectionWidth] = useState<'full' | 'half'>('full');
-
-  // Accordion Toggle
-  const toggleAccordion = (sectionId: string) => {
-    setExpandedSections((prev) => ({
-      ...prev,
-      [sectionId]: !prev[sectionId]
-    }));
+  const copyLayout = () => {
+    const from = docType === 'invoice' ? 'quotation' : 'invoice';
+    if (!confirm(`Replace this ${docType} layout with the ${from} layout?`)) return;
+    const src = sectionsFor(template, from);
+    setSections(JSON.parse(JSON.stringify(src)));
   };
 
-  // Section Width Toggle ('full' <-> 'half')
-  const toggleSectionWidth = (sectionId: string) => {
-    const newSections = template.sections.map((sec) => {
-      if (sec.id === sectionId) {
-        return { ...sec, width: sec.width === 'half' ? ('full' as const) : ('half' as const) };
-      }
-      return sec;
-    });
-    setTemplate({ ...template, sections: newSections });
+  const addSection = () => {
+    if (!newSection?.name.trim()) return;
+    const id = `custom_${Date.now()}`;
+    setSections([
+      ...sections,
+      { id, name: newSection.name.trim(), nameAr: newSection.nameAr.trim(), enabled: true, width: newSection.width, order: sections.length + 1, isCustom: true, customTitle: newSection.name.trim(), customTitleAr: newSection.nameAr.trim(), customContent: newSection.content, fields: [] }
+    ]);
+    setNewSection(null);
+    setExpanded(id);
   };
 
-  // Section Visibility Toggle
-  const toggleSectionVisibility = (sectionId: string) => {
-    const newSections = template.sections.map((sec) => {
-      if (sec.id === sectionId) {
-        return { ...sec, enabled: !sec.enabled };
-      }
-      return sec;
-    });
-    setTemplate({ ...template, sections: newSections });
-  };
-
-  // Field Visibility Toggle inside Section
-  const toggleFieldVisibility = (sectionId: string, fieldId: string) => {
-    const newSections = template.sections.map((sec) => {
-      if (sec.id === sectionId && sec.fields) {
-        const newFields = sec.fields.map((f) => (f.id === fieldId ? { ...f, enabled: !f.enabled } : f));
-        return { ...sec, fields: newFields };
-      }
-      return sec;
-    });
-    setTemplate({ ...template, sections: newSections });
-  };
-
-  // Section Drag and Drop Handlers
-  const handleSectionDragStart = (index: number) => {
-    setDraggedSectionIndex(index);
-  };
-
-  const handleSectionDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    if (draggedSectionIndex === null || draggedSectionIndex === index) return;
-
-    const newSections = [...template.sections];
-    const draggedItem = newSections[draggedSectionIndex];
-    newSections.splice(draggedSectionIndex, 1);
-    newSections.splice(index, 0, draggedItem);
-
-    newSections.forEach((sec, idx) => {
-      sec.order = idx + 1;
-    });
-
-    setDraggedSectionIndex(index);
-    setTemplate({ ...template, sections: newSections });
-  };
-
-  const handleSectionDragEnd = () => {
-    setDraggedSectionIndex(null);
-  };
-
-  // Field Drag and Drop Handlers inside a Section
-  const handleFieldDragStart = (sectionId: string, index: number) => {
-    setDraggedFieldIndex({ sectionId, index });
-  };
-
-  const handleFieldDragOver = (e: React.DragEvent, sectionId: string, index: number) => {
-    e.preventDefault();
-    if (!draggedFieldIndex || draggedFieldIndex.sectionId !== sectionId || draggedFieldIndex.index === index) return;
-
-    const newSections = template.sections.map((sec) => {
-      if (sec.id === sectionId && sec.fields) {
-        const newFields = [...sec.fields];
-        const draggedField = newFields[draggedFieldIndex.index];
-        newFields.splice(draggedFieldIndex.index, 1);
-        newFields.splice(index, 0, draggedField);
-        newFields.forEach((f, idx) => {
-          f.order = idx + 1;
-        });
-        return { ...sec, fields: newFields };
-      }
-      return sec;
-    });
-
-    setDraggedFieldIndex({ sectionId, index });
-    setTemplate({ ...template, sections: newSections });
-  };
-
-  const handleFieldDragEnd = () => {
-    setDraggedFieldIndex(null);
-  };
-
-  // Add a new section
-  const handleCreateSection = () => {
-    if (!newSectionName.trim()) return;
-    const newId = `sec_${Date.now()}`;
-    const newSec: PDFSectionItem = {
-      id: newId,
-      name: newSectionName.trim(),
-      nameAr: newSectionNameAr.trim() || newSectionName.trim(),
-      enabled: true,
-      width: newSectionWidth,
-      order: template.sections.length + 1,
-      isCustom: true,
-      fields: [
-        {
-          id: `f_${Date.now()}`,
-          key: `custom_${Date.now()}`,
-          label: `${newSectionName.trim()} Details`,
-          labelAr: 'التفاصيل',
-          enabled: true,
-          order: 1
-        }
-      ]
+  const saveField = () => {
+    if (!fieldDraft?.name?.trim()) return;
+    const key = slug(fieldDraft.key || fieldDraft.name);
+    if (!key) return;
+    const existing = (template.customFields || []).find((f) => f.key === key && f.id !== fieldDraft.id);
+    if (existing) { alert('A custom field with this key already exists.'); return; }
+    const options = fieldDraft.type === 'select' ? (fieldDraft.optionsText || '').split(',').map((o) => o.trim()).filter(Boolean) : undefined;
+    const def: CustomFieldDefinition = {
+      id: fieldDraft.id || `cf_${Date.now()}`,
+      name: fieldDraft.name.trim(),
+      key,
+      type: fieldDraft.type || 'text',
+      appliesTo: fieldDraft.appliesTo || 'all',
+      options,
+      sectionId: fieldDraft.sectionId || 'vehicle',
+      sectionName: sections.find((s) => s.id === (fieldDraft.sectionId || 'vehicle'))?.name
     };
-
-    setTemplate({
-      ...template,
-      sections: [...template.sections, newSec]
-    });
-    setExpandedSections((prev) => ({ ...prev, [newId]: true }));
-    setNewSectionName('');
-    setNewSectionNameAr('');
-    setIsAddSectionModalOpen(false);
+    const list = template.customFields || [];
+    edit({ customFields: list.some((f) => f.id === def.id) ? list.map((f) => (f.id === def.id ? def : f)) : [...list, def] });
+    setFieldDraft(null);
   };
 
-  // Delete a section
-  const handleDeleteSection = (sectionId: string) => {
-    const newSections = template.sections.filter((s) => s.id !== sectionId);
-    newSections.forEach((s, idx) => {
-      s.order = idx + 1;
-    });
-    setTemplate({ ...template, sections: newSections });
+  const save = async () => {
+    setStatus('saving');
+    const ok = await updateCompany({ pdfTemplate: template });
+    setStatus(ok ? 'saved' : 'error');
+    if (ok) setDirty(false);
+    setTimeout(() => setStatus('idle'), 2500);
   };
 
-  // Add field to a section
-  const handleAddFieldToSection = (sectionId: string) => {
-    const fieldLabel = prompt('Enter Field Name (e.g. Project Code, Technician Name):');
-    if (!fieldLabel) return;
-
-    const newField: PDFSectionField = {
-      id: `f_${Date.now()}`,
-      key: fieldLabel.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-      label: fieldLabel,
-      labelAr: fieldLabel,
-      enabled: true,
-      isCustom: true,
-      order: 99
-    };
-
-    const newSections = template.sections.map((sec) => {
-      if (sec.id === sectionId) {
-        return { ...sec, fields: [...(sec.fields || []), newField] };
-      }
-      return sec;
-    });
-
-    setTemplate({ ...template, sections: newSections });
+  const reset = () => {
+    if (!confirm('Reset the whole template (design, layout, columns and custom fields) to the factory default?')) return;
+    const q = resolveTemplate(DEFAULT_PDF_TEMPLATE, 'quotation');
+    setTemplate({ ...DEFAULT_PDF_TEMPLATE, quoteSections: q.sections, invoiceSections: q.sections });
+    setDirty(true);
   };
 
-  // Custom Fields Management
-  const handleOpenFieldModal = (field?: CustomFieldDefinition) => {
-    if (field) {
-      setEditingField(field);
-      setFieldNameInput(field.name);
-      setFieldKeyInput(field.key);
-      setFieldTypeInput(field.type);
-      setFieldAppliesToInput(field.appliesTo);
-      setFieldOptionsInput((field.options || []).join(', '));
-      setFieldTargetSection(field.sectionId || 'vehicle');
-    } else {
-      setEditingField(null);
-      setFieldNameInput('');
-      setFieldKeyInput('');
-      setFieldTypeInput('text');
-      setFieldAppliesToInput('all');
-      setFieldOptionsInput('');
-      setFieldTargetSection('vehicle');
-    }
-    setIsFieldModalOpen(true);
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `pdf-template-${slug(company.name || 'company')}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
-
-  const handleSaveCustomField = () => {
-    if (!fieldNameInput.trim()) return;
-    const key = fieldKeyInput.trim() || fieldNameInput.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const options = fieldTypeInput === 'select'
-      ? fieldOptionsInput.split(',').map((s) => s.trim()).filter(Boolean)
-      : undefined;
-
-    const currentCustomFields = template.customFields || [];
-
-    if (editingField) {
-      const updated = currentCustomFields.map((f) =>
-        f.id === editingField.id
-          ? {
-              ...f,
-              name: fieldNameInput.trim(),
-              key,
-              type: fieldTypeInput,
-              appliesTo: fieldAppliesToInput,
-              options,
-              sectionId: fieldTargetSection
-            }
-          : f
-      );
-      setTemplate({ ...template, customFields: updated });
-    } else {
-      const newField: CustomFieldDefinition = {
-        id: `cf_${Date.now()}`,
-        name: fieldNameInput.trim(),
-        key,
-        type: fieldTypeInput,
-        appliesTo: fieldAppliesToInput,
-        options,
-        sectionId: fieldTargetSection,
-        sectionName: template.sections.find((s) => s.id === fieldTargetSection)?.name || 'Project Specs'
-      };
-      setTemplate({ ...template, customFields: [...currentCustomFields, newField] });
-    }
-
-    setIsFieldModalOpen(false);
-  };
-
-  const handleDeleteCustomField = (id: string) => {
-    const updated = (template.customFields || []).filter((f) => f.id !== id);
-    setTemplate({ ...template, customFields: updated });
-  };
-
-  // Save to Company Profile
-  const handleSaveLayout = async () => {
-    await updateCompany({ pdfTemplate: template });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
-  };
-
-  // Reset to Default Template
-  const handleResetToDefault = () => {
-    if (confirm('Reset template layout and fields to factory default?')) {
-      setTemplate(DEFAULT_PDF_TEMPLATE);
+  const importJson = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (!parsed || typeof parsed !== 'object' || !parsed.colors) throw new Error('Not a template file');
+      const q = resolveTemplate(parsed, 'quotation');
+      const i = resolveTemplate(parsed, 'invoice');
+      setTemplate({ ...DEFAULT_PDF_TEMPLATE, ...parsed, colors: q.colors, tableColumns: q.tableColumns, typography: q.typography, watermark: q.watermark, page: q.page, customFields: q.customFields, quoteSections: q.sections, invoiceSections: i.sections });
+      setDirty(true);
+    } catch (e: any) {
+      alert(`Import failed: ${e.message}`);
     }
   };
 
-  // Filtered Custom Fields
-  const filteredCustomFields = (template.customFields || []).filter((f) => {
-    if (customFieldFilter === 'all') return true;
-    return f.appliesTo === 'all' || f.appliesTo === customFieldFilter;
-  });
+  const TabBtn = ({ id, icon: Icon, label }: { id: Tab; icon: any; label: string }) => (
+    <button
+      type="button"
+      onClick={() => setTab(id)}
+      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer ${tab === id ? 'bg-[var(--color-surface)] text-[var(--color-primary)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+    >
+      <Icon className="w-3.5 h-3.5" /> {label}
+    </button>
+  );
+
+  const col = (key: keyof PDFTemplateConfig['tableColumns'], label: string, locked = false) => (
+    <label key={key} className={`flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[var(--color-border)] text-xs font-semibold ${locked ? 'opacity-60' : 'cursor-pointer hover:bg-[var(--color-surface-offset)]'}`}>
+      <span>{label}</span>
+      <input type="checkbox" disabled={locked} checked={!!template.tableColumns[key]} onChange={(e) => edit({ tableColumns: { ...template.tableColumns, [key]: e.target.checked } })} />
+    </label>
+  );
 
   return (
-    <div className="space-y-6 text-left animate-fade-in select-text">
-      {/* Top Segmented Navigation: General | Layout | Custom Fields */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm">
+    <div className="text-left space-y-4">
+      {/* Header + global actions */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
         <div>
-          <h2 className="text-lg font-black text-[var(--color-text)] flex items-center gap-2">
-            Invoice &amp; Quotes Studio
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-primary)]/20 text-[var(--color-primary)] font-black uppercase tracking-wider">
-              Bilingual Layout Engine
-            </span>
-          </h2>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Define custom fields, drag sections, toggle side-by-side columns, and preview live.
-          </p>
+          <h2 className="text-base font-black text-[var(--color-text)]">Invoice &amp; Quotation Template Studio</h2>
+          <p className="text-xs text-[var(--color-text-muted)]">Everything here drives the real PDF (preview, download, email and share). Changes preview live; click Save to apply to all documents.</p>
         </div>
-
-        {/* Segmented Pill Tabs */}
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)]">
-          <button
-            onClick={() => setTopTab('general')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              topTab === 'general'
-                ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm font-extrabold'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            General
-          </button>
-          <button
-            onClick={() => setTopTab('layout')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              topTab === 'layout'
-                ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm font-extrabold'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            Layout
-          </button>
-          <button
-            onClick={() => setTopTab('custom_fields')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              topTab === 'custom_fields'
-                ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm font-extrabold'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            Custom Fields
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={exportJson} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs font-bold hover:bg-[var(--color-surface-offset)] cursor-pointer"><Download className="w-3.5 h-3.5" /> Export</button>
+          <button type="button" onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs font-bold hover:bg-[var(--color-surface-offset)] cursor-pointer"><Upload className="w-3.5 h-3.5" /> Import</button>
+          <input ref={fileRef} type="file" accept="application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = ''; }} />
+          <button type="button" onClick={reset} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs font-bold hover:bg-[var(--color-surface-offset)] cursor-pointer"><RotateCcw className="w-3.5 h-3.5" /> Reset</button>
+          <button type="button" onClick={save} disabled={status === 'saving' || !dirty} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {status === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : status === 'saved' ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+            {status === 'saved' ? 'Saved' : status === 'error' ? 'Save failed – retry' : dirty ? 'Save template' : 'No changes'}
           </button>
         </div>
       </div>
 
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {/* 1. LAYOUT TAB (MATCHING USER SCREENSHOT 1) */}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {topTab === 'layout' && (
-        <div className="space-y-4">
-          {/* Layout Action Top Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
-            {/* Invoice / Quote Toggle Pills */}
-            <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--color-surface-offset)] border border-[var(--color-border)]">
-              <button
-                onClick={() => setDocMode('invoice')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                  docMode === 'invoice'
-                    ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm'
-                    : 'text-[var(--color-text-muted)]'
-                }`}
-              >
-                Invoice
-              </button>
-              <button
-                onClick={() => setDocMode('quote')}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                  docMode === 'quote'
-                    ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm'
-                    : 'text-[var(--color-text-muted)]'
-                }`}
-              >
-                Quote
-              </button>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
+        {/* ── Controls ─────────────────────────────────────────────────── */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)]">
+              <TabBtn id="design" icon={Palette} label="Design" />
+              <TabBtn id="layout" icon={LayoutIcon} label="Layout" />
+              <TabBtn id="table" icon={Columns} label="Table" />
+              <TabBtn id="fields" icon={ListPlus} label="Custom fields" />
             </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsAddSectionModalOpen(true)}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-surface-offset)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5 text-[var(--color-primary)]" />
-                <span>+ Add Section</span>
-              </button>
-
-              <button
-                onClick={handleResetToDefault}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-surface-offset)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text-muted)] flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset to Default</span>
-              </button>
-
-              <button
-                onClick={handleSaveLayout}
-                className={`px-4 py-1.5 rounded-lg text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer ${
-                  savedSuccess ? 'bg-emerald-600' : 'bg-[#d97706] hover:bg-[#b45309]'
-                }`}
-              >
-                {savedSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-                <span>{savedSuccess ? 'Saved!' : 'Save Layout'}</span>
-              </button>
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--color-surface-offset)] border border-[var(--color-border)]" role="group" aria-label="Document type">
+              {(['quotation', 'invoice'] as PdfDocType[]).map((t) => (
+                <button key={t} type="button" onClick={() => setDocType(t)} className={`px-3 py-1.5 rounded-md text-xs font-bold cursor-pointer ${docType === t ? 'bg-[var(--color-surface)] text-[var(--color-primary)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>
+                  {t === 'quotation' ? 'Quotation' : 'Invoice'}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Subtitle instructions */}
-          <p className="text-xs text-[var(--color-text-muted)] italic px-1">
-            Drag to reorder. Use the width toggle to place sections side-by-side. Consecutive half-width sections (L/R) will render in two columns.
-          </p>
-
-          {/* Grid: Left Editor (Hierarchical Accordions) | Right Multi-page Canvas Preview */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Sections & Nested Fields Hierarchy (6 Cols) */}
-            <div className="lg:col-span-6 space-y-3">
-              {template.sections.map((section, sIdx) => {
-                const isExpanded = expandedSections[section.id] ?? false;
-                const isHalfWidth = section.width === 'half';
-
-                return (
-                  <div
-                    key={section.id}
-                    draggable
-                    onDragStart={() => handleSectionDragStart(sIdx)}
-                    onDragOver={(e) => handleSectionDragOver(e, sIdx)}
-                    onDragEnd={handleSectionDragEnd}
-                    className={`rounded-2xl border transition-all ${
-                      section.enabled
-                        ? 'bg-[var(--color-surface)] border-[var(--color-border)] shadow-sm'
-                        : 'bg-[var(--color-surface)]/50 border-[var(--color-border)]/50 opacity-60'
-                    } ${draggedSectionIndex === sIdx ? 'ring-2 ring-[var(--color-primary)] bg-[var(--color-primary)]/10' : ''}`}
-                  >
-                    {/* Section Top Header Row */}
-                    <div className="flex items-center justify-between p-3.5 select-none">
-                      <div className="flex items-center gap-2">
-                        {/* Drag Handle */}
-                        <div className="cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1">
-                          <GripVertical className="w-4 h-4" />
-                        </div>
-
-                        {/* Expand / Collapse Chevron */}
-                        <button
-                          onClick={() => toggleAccordion(section.id)}
-                          className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] cursor-pointer"
-                        >
-                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                        </button>
-
-                        <span className="font-extrabold text-sm text-[var(--color-text)]">
-                          {section.name}
+          <div className="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] space-y-5">
+            {tab === 'design' && (
+              <>
+                <div>
+                  <span className="text-[11px] font-black uppercase tracking-wider block mb-2">Presets</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {PDF_PRESETS.map((p) => (
+                      <button key={p.id} type="button" onClick={() => { setTemplate((t) => applyPreset(t, p.id)); setDirty(true); }}
+                        className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${template.preset === p.id ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10' : 'border-[var(--color-border)] hover:bg-[var(--color-surface-offset)]'}`}>
+                        <span className="flex gap-1 mb-1.5">
+                          {[p.patch.colors.headerBgStart, p.patch.colors.primary, p.patch.colors.zebraRowBg].map((c, i) => <i key={i} style={{ background: c }} className="w-4 h-4 rounded border border-black/10 inline-block" />)}
                         </span>
-                      </div>
+                        <b className="block">{p.label}</b>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">{p.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-                      {/* Controls: Width Toggle | Eye Toggle | Switch Toggle */}
-                      <div className="flex items-center gap-2">
-                        {/* Width Toggle: [|| L] / [== Full] */}
-                        <button
-                          onClick={() => toggleSectionWidth(section.id)}
-                          className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center gap-1 border transition-all cursor-pointer ${
-                            isHalfWidth
-                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
-                              : 'bg-[var(--color-surface-offset)] border-[var(--color-border)] text-[var(--color-text-muted)]'
-                          }`}
-                          title={isHalfWidth ? 'Half Width (Side-by-Side)' : 'Full Width'}
-                        >
-                          <Columns className="w-3 h-3" />
-                          <span>{isHalfWidth ? '|| L' : 'FULL'}</span>
+                <div>
+                  <span className="text-[11px] font-black uppercase tracking-wider block mb-2">Header style</span>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['gradient', 'solid', 'boxed', 'minimal'] as const).map((h) => (
+                      <button key={h} type="button" onClick={() => edit({ headerStyle: h })} className={`p-2 rounded-lg border text-xs font-bold capitalize cursor-pointer ${template.headerStyle === h ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}>{h}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ColorField label="Accent / headings" value={template.colors.primary} onChange={(v) => edit({ colors: { ...template.colors, primary: v } })} />
+                  <ColorField label="Box borders" value={template.colors.accentBorder} onChange={(v) => edit({ colors: { ...template.colors, accentBorder: v } })} />
+                  <ColorField label="Header start" value={template.colors.headerBgStart} onChange={(v) => edit({ colors: { ...template.colors, headerBgStart: v } })} />
+                  <ColorField label="Header end (gradient)" value={template.colors.headerBgEnd} onChange={(v) => edit({ colors: { ...template.colors, headerBgEnd: v } })} />
+                  <ColorField label="Header text" value={template.colors.headerText} onChange={(v) => edit({ colors: { ...template.colors, headerText: v } })} />
+                  <ColorField label="Table header background" value={template.colors.tableHeaderBg} onChange={(v) => edit({ colors: { ...template.colors, tableHeaderBg: v } })} />
+                  <ColorField label="Table header text" value={template.colors.tableHeaderText} onChange={(v) => edit({ colors: { ...template.colors, tableHeaderText: v } })} />
+                  <ColorField label="Zebra row / section tint" value={template.colors.zebraRowBg} onChange={(v) => edit({ colors: { ...template.colors, zebraRowBg: v } })} />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelCls}><Type className="inline w-3 h-3 mr-1" />Font family</label>
+                    <select value={template.typography.fontFamily} onChange={(e) => edit({ typography: { ...template.typography, fontFamily: e.target.value as any } })} className={inputCls}>
+                      {PDF_FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                    </select>
+                    <p className="text-[10px] text-[var(--color-text-muted)] mt-1">{PDF_FONT_OPTIONS.find((f) => f.value === template.typography.fontFamily)?.note}. Arabic text always uses Tajawal.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className={labelCls}>Body size ({template.typography.bodyFontSize}pt)</label>
+                      <input type="range" min={7} max={12} step={0.5} value={template.typography.bodyFontSize} onChange={(e) => edit({ typography: { ...template.typography, bodyFontSize: Number(e.target.value) } })} className="w-full" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Title size ({template.typography.titleFontSize}pt)</label>
+                      <input type="range" min={14} max={34} step={1} value={template.typography.titleFontSize} onChange={(e) => edit({ typography: { ...template.typography, titleFontSize: Number(e.target.value) } })} className="w-full" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Page size</label>
+                    <select value={template.page.size} onChange={(e) => edit({ page: { ...template.page, size: e.target.value as any } })} className={inputCls}>
+                      <option value="A4">A4</option><option value="LETTER">US Letter</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Margins</label>
+                    <select value={template.page.margins} onChange={(e) => edit({ page: { ...template.page, margins: e.target.value as any } })} className={inputCls}>
+                      <option value="compact">Compact</option><option value="normal">Normal</option><option value="spacious">Spacious</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg border border-[var(--color-border)] space-y-3">
+                  <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
+                    <input type="checkbox" checked={template.watermark.enabled} onChange={(e) => edit({ watermark: { ...template.watermark, enabled: e.target.checked } })} />
+                    <Droplets className="w-3.5 h-3.5" /> Always print a watermark
+                  </label>
+                  {template.watermark.enabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div><label className={labelCls}>Text</label><input className={inputCls} maxLength={40} value={template.watermark.text} onChange={(e) => edit({ watermark: { ...template.watermark, text: e.target.value } })} /></div>
+                      <div><label className={labelCls}>Opacity ({Math.round(template.watermark.opacity * 100)}%)</label><input type="range" min={0.02} max={0.4} step={0.01} value={template.watermark.opacity} onChange={(e) => edit({ watermark: { ...template.watermark, opacity: Number(e.target.value) } })} className="w-full" /></div>
+                      <div><label className={labelCls}>Angle ({template.watermark.angle}°)</label><input type="range" min={-75} max={75} step={5} value={template.watermark.angle} onChange={(e) => edit({ watermark: { ...template.watermark, angle: Number(e.target.value) } })} className="w-full" /></div>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-[var(--color-text-muted)]">A watermark chosen inside an individual quotation/invoice overrides this one.</p>
+                </div>
+              </>
+            )}
+
+            {tab === 'layout' && (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] text-[var(--color-text-muted)]">Editing the <b>{docType}</b> layout. Reorder with the arrows, show/hide sections and fields, and set half-width sections to sit side by side.</p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={copyLayout} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-offset)] cursor-pointer"><Copy className="w-3 h-3" /> Copy from {docType === 'invoice' ? 'quotation' : 'invoice'}</button>
+                    <button type="button" onClick={() => setNewSection({ name: '', nameAr: '', content: '', width: 'full' })} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-bold cursor-pointer"><Plus className="w-3 h-3" /> Add section</button>
+                  </div>
+                </div>
+
+                <ul className="space-y-2">
+                  {sections.map((s, idx) => (
+                    <li key={s.id} className={`rounded-lg border ${s.enabled ? 'border-[var(--color-border)]' : 'border-dashed border-[var(--color-border)] opacity-70'}`}>
+                      <div className="flex items-center gap-2 p-2.5">
+                        <div className="flex flex-col">
+                          <button type="button" aria-label={`Move ${s.name} up`} disabled={idx === 0} onClick={() => move(idx, -1)} className="p-0.5 disabled:opacity-30 cursor-pointer"><ChevronUp className="w-3.5 h-3.5" /></button>
+                          <button type="button" aria-label={`Move ${s.name} down`} disabled={idx === sections.length - 1} onClick={() => move(idx, 1)} className="p-0.5 disabled:opacity-30 cursor-pointer"><ChevronDown className="w-3.5 h-3.5" /></button>
+                        </div>
+                        <button type="button" onClick={() => setExpanded(expanded === s.id ? null : s.id)} className="flex-1 text-left cursor-pointer">
+                          <span className="text-xs font-bold block">{s.name}</span>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">{s.nameAr}{s.isCustom ? ' · custom' : ''}</span>
                         </button>
-
-                        {/* Visibility Eye Icon */}
-                        <button
-                          onClick={() => toggleSectionVisibility(section.id)}
-                          className={`p-1 rounded-md cursor-pointer transition-colors ${
-                            section.enabled ? 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]' : 'text-slate-400'
-                          }`}
-                        >
-                          {section.enabled ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                        </button>
-
-                        {/* Switch Toggle */}
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={section.enabled}
-                            onChange={() => toggleSectionVisibility(section.id)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-8 h-4 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500"></div>
-                        </label>
-
-                        {/* Delete button if custom */}
-                        {section.isCustom && (
-                          <button
-                            onClick={() => handleDeleteSection(section.id)}
-                            className="p-1 rounded text-rose-500 hover:bg-rose-500/10 cursor-pointer"
-                            title="Delete Section"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
+                        {s.id !== 'header' && s.id !== 'line_items' && s.id !== 'footer' && (
+                          <button type="button" onClick={() => patchSection(s.id, { width: s.width === 'half' ? 'full' : 'half' })} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[10px] font-bold cursor-pointer" title="Half-width sections sit side by side with the next half-width section">
+                            {s.width === 'half' ? '½ width' : 'Full width'}
                           </button>
                         )}
-                      </div>
-                    </div>
-
-                    {/* Accordion Body: Nested Fields List */}
-                    {isExpanded && (
-                      <div className="px-4 pb-4 pt-1 space-y-2 border-t border-[var(--color-divider)]/40 bg-[var(--color-surface-offset)]/30 rounded-b-2xl">
-                        {section.fields && section.fields.map((field, fIdx) => (
-                          <div
-                            key={field.id}
-                            draggable
-                            onDragStart={() => handleFieldDragStart(section.id, fIdx)}
-                            onDragOver={(e) => handleFieldDragOver(e, section.id, fIdx)}
-                            onDragEnd={handleFieldDragEnd}
-                            className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
-                              field.enabled
-                                ? 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40'
-                                : 'bg-[var(--color-surface)]/40 border-[var(--color-border)]/40 opacity-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="cursor-grab active:cursor-grabbing text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-0.5">
-                                <GripVertical className="w-3.5 h-3.5" />
-                              </div>
-                              <span className="text-xs font-semibold text-[var(--color-text)]">
-                                {field.label}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              {/* Field Eye */}
-                              <button
-                                onClick={() => toggleFieldVisibility(section.id, field.id)}
-                                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                              >
-                                {field.enabled ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                              </button>
-
-                              {/* Field Switch Toggle */}
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={field.enabled}
-                                  onChange={() => toggleFieldVisibility(section.id, field.id)}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-7 h-3.5 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500"></div>
-                              </label>
-
-                              {/* Lock or Trash */}
-                              {field.isLocked ? (
-                                <Lock className="w-3.5 h-3.5 text-slate-400" />
-                              ) : (
-                                <span className="w-3.5 h-3.5" />
-                              )}
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* + Add Field Button at bottom of section */}
-                        <button
-                          onClick={() => handleAddFieldToSection(section.id)}
-                          className="w-full py-2 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-surface)] border border-dashed border-[var(--color-border)] rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>+ add field</span>
+                        <button type="button" aria-label={s.enabled ? `Hide ${s.name}` : `Show ${s.name}`} onClick={() => patchSection(s.id, { enabled: !s.enabled })} className="p-1.5 rounded-md hover:bg-[var(--color-surface-offset)] cursor-pointer">
+                          {s.enabled ? <Eye className="w-4 h-4 text-[var(--color-primary)]" /> : <EyeOff className="w-4 h-4 text-[var(--color-text-faint)]" />}
                         </button>
+                        {s.isCustom && (
+                          <button type="button" aria-label={`Delete ${s.name}`} onClick={() => { if (confirm(`Delete section "${s.name}"?`)) setSections(sections.filter((x) => x.id !== s.id)); }} className="p-1.5 rounded-md hover:bg-[var(--color-error)]/10 text-[var(--color-error)] cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
 
-            {/* Right Column: High-Fidelity Multi-Page Preview on Dark Canvas (6 Cols) */}
-            <div className="lg:col-span-6 sticky top-6">
-              <div className="rounded-2xl bg-[#1e2329] p-6 border border-slate-700/80 shadow-2xl space-y-6">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-700 text-slate-300">
-                  <span className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Preview ({docMode === 'invoice' ? 'Invoice / فاتورة' : 'Quote / عرض سعر'})
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-400">A4 Document Simulation</span>
-                </div>
-
-                {/* Simulated White Sheet: Page 1 */}
-                <div className="bg-white text-slate-900 rounded-lg shadow-xl p-6 min-h-[500px] text-left font-sans text-xs space-y-4 border border-slate-300">
-                  {/* Header Section */}
-                  {template.sections.find((s) => s.id === 'header')?.enabled && (
-                    <div className="flex justify-between items-start pb-4 border-b border-amber-500">
-                      <div>
-                        <h3 className="font-black text-base text-[#b45309]">
-                          {company.name || 'Your Workshop / المؤسسة'}
-                        </h3>
-                        <div className="text-[9px] text-slate-600 space-y-0.5 mt-1">
-                          <p>CR: {company.crNumber || '1010456789'} | VAT: {company.vatNumber || '310123456700003'}</p>
-                          <p>{company.address?.city || 'Riyadh, Saudi Arabia'}</p>
-                          <p>{company.phone || '+966 50 123 4567'} • {company.email || 'billing@ajnetwork.sa'}</p>
+                      {expanded === s.id && (
+                        <div className="px-3 pb-3 pt-1 border-t border-[var(--color-divider)] space-y-2">
+                          {s.isCustom && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div><label className={labelCls}>Title (EN)</label><input className={inputCls} value={s.customTitle || ''} onChange={(e) => patchSection(s.id, { customTitle: e.target.value, name: e.target.value || s.name })} /></div>
+                              <div><label className={labelCls}>Title (AR)</label><input dir="rtl" className={inputCls} value={s.customTitleAr || ''} onChange={(e) => patchSection(s.id, { customTitleAr: e.target.value, nameAr: e.target.value })} /></div>
+                              <div className="sm:col-span-2"><label className={labelCls}>Content (one paragraph per line)</label><textarea rows={4} className={inputCls} value={s.customContent || ''} onChange={(e) => patchSection(s.id, { customContent: e.target.value })} /></div>
+                            </div>
+                          )}
+                          {s.fields.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {s.fields.map((f) => (
+                                <button key={f.id} type="button" disabled={f.isLocked} onClick={() => toggleField(s.id, f.id)}
+                                  className={`flex items-center justify-between gap-2 p-2 rounded-md border text-[11px] font-semibold text-left ${f.enabled ? 'border-[var(--color-border)]' : 'border-dashed opacity-60'} ${f.isLocked ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--color-surface-offset)]'}`}>
+                                  <span>{f.label} <span className="text-[var(--color-text-faint)]">{f.labelAr}</span></span>
+                                  {f.isLocked ? <Lock className="w-3 h-3" /> : f.enabled ? <Eye className="w-3.5 h-3.5 text-[var(--color-primary)]" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {(template.customFields || []).filter((cf) => cf.sectionId === s.id).length > 0 && (
+                            <p className="text-[10px] text-[var(--color-text-muted)]">Custom fields printed here: {(template.customFields || []).filter((cf) => cf.sectionId === s.id).map((cf) => cf.name).join(', ')}</p>
+                          )}
+                          {!s.isCustom && s.fields.length === 0 && (template.customFields || []).filter((cf) => cf.sectionId === s.id).length === 0 && (
+                            <p className="text-[10px] text-[var(--color-text-muted)]">This section prints the custom fields assigned to it (see the Custom fields tab).</p>
+                          )}
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="font-black text-sm uppercase tracking-wider block">
-                          {docMode === 'invoice' ? 'TAX INVOICE' : 'QUOTATION'}
-                        </span>
-                        <span className="font-mono text-[10px] font-bold text-slate-600 block">
-                          {docMode === 'invoice' ? 'INV-2026-0042' : 'QT-2026-0089'}
-                        </span>
-                        <span className="text-[9px] text-slate-500">Date: 2026-08-30</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Side-by-side Customer & Vehicle / Specs Sections */}
-                  <div className="grid grid-cols-2 gap-3">
-                    {/* Customer Box */}
-                    {template.sections.find((s) => s.id === 'customer')?.enabled && (
-                      <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[9px] space-y-1">
-                        <span className="font-bold text-amber-800 uppercase block pb-0.5 border-b border-amber-500/20">
-                          Customer
-                        </span>
-                        <p className="font-bold text-slate-900">Ahmed Mohammed Al-Arfaj</p>
-                        <p className="text-slate-600">Al Olaya District, Riyadh</p>
-                        <p className="text-slate-600">VAT: 300123456700003</p>
-                      </div>
-                    )}
-
-                    {/* Vehicle / Project Specs Box */}
-                    {template.sections.find((s) => s.id === 'vehicle')?.enabled && (
-                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-[9px] space-y-1">
-                        <span className="font-bold text-slate-700 uppercase block pb-0.5 border-b border-slate-200">
-                          Project / Service Specs
-                        </span>
-                        <p className="text-slate-700"><strong>PO #:</strong> PO-998811</p>
-                        <p className="text-slate-700"><strong>Ref:</strong> Smart City IP CCTV</p>
-                        <p className="text-slate-700"><strong>Contact:</strong> Eng. Fahad (+966500000000)</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Line Items Table */}
-                  {template.sections.find((s) => s.id === 'line_items')?.enabled && (
-                    <div className="overflow-x-auto rounded border border-slate-200 mt-2">
-                      <table className="w-full text-left text-[9px] border-collapse">
-                        <thead>
-                          <tr className="bg-amber-500/10 text-slate-900 font-bold border-b border-slate-200">
-                            <th className="p-1.5">Description</th>
-                            <th className="p-1.5 text-right">Qty</th>
-                            <th className="p-1.5 text-right">Price</th>
-                            <th className="p-1.5 text-right">VAT (15%)</th>
-                            <th className="p-1.5 text-right">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-slate-700">
-                          <tr>
-                            <td className="p-1.5 font-medium">Periodic Maintenance &amp; Commissioning</td>
-                            <td className="p-1.5 text-right font-mono">1</td>
-                            <td className="p-1.5 text-right font-mono">1,500.00</td>
-                            <td className="p-1.5 text-right font-mono">225.00</td>
-                            <td className="p-1.5 text-right font-mono font-bold">1,725.00</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1.5 font-medium">Hardware Filter &amp; Sensor Replacement</td>
-                            <td className="p-1.5 text-right font-mono">2</td>
-                            <td className="p-1.5 text-right font-mono">450.00</td>
-                            <td className="p-1.5 text-right font-mono">135.00</td>
-                            <td className="p-1.5 text-right font-mono font-bold">1,035.00</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Totals & ZATCA QR Row */}
-                  <div className="grid grid-cols-2 gap-4 pt-2">
-                    {/* ZATCA QR */}
-                    {template.sections.find((s) => s.id === 'zatca_qr')?.enabled ? (
-                      <div className="flex items-center gap-2 p-2 rounded bg-slate-50 border border-slate-200">
-                        <QrCode className="w-10 h-10 text-slate-800" />
-                        <div className="text-[8px] text-slate-600">
-                          <span className="font-bold text-emerald-700 block">ZATCA Compliant</span>
-                          <p>Phase 2 QR &amp; Bank Transfer</p>
-                        </div>
-                      </div>
-                    ) : <div />}
-
-                    {/* Summary Totals */}
-                    {template.sections.find((s) => s.id === 'summary')?.enabled && (
-                      <div className="space-y-1 text-[9px] p-2 bg-amber-500/5 rounded border border-amber-500/20 text-right">
-                        <div className="flex justify-between text-slate-600">
-                          <span>Subtotal:</span>
-                          <span className="font-mono font-bold">2,400.00 SAR</span>
-                        </div>
-                        <div className="flex justify-between text-slate-600">
-                          <span>VAT (15%):</span>
-                          <span className="font-mono font-bold">360.00 SAR</span>
-                        </div>
-                        <div className="flex justify-between font-black text-[11px] text-[#b45309] border-t border-amber-500/30 pt-1">
-                          <span>Total:</span>
-                          <span className="font-mono">2,760.00 SAR</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Simulated White Sheet: Page 2 (Terms & Signatures) */}
-                <div className="bg-white text-slate-900 rounded-lg shadow-xl p-6 min-h-[320px] text-left font-sans text-xs space-y-4 border border-slate-300">
-                  <div className="flex justify-between text-[9px] text-slate-400 pb-2 border-b border-slate-100">
-                    <span>Page 2 of 2</span>
-                    <span>Document #{docMode === 'invoice' ? 'INV-2026-0042' : 'QT-2026-0089'}</span>
-                  </div>
-
-                  {/* Terms Section */}
-                  {template.sections.find((s) => s.id === 'payment_terms')?.enabled && (
-                    <div className="p-3 rounded bg-slate-50 border border-slate-200 text-[9px] space-y-1">
-                      <span className="font-bold text-slate-900 block">Terms &amp; Warranties / الشروط والضمان:</span>
-                      <p className="text-slate-600">• Payment is due within 14 days of invoice issue date.</p>
-                      <p className="text-slate-600">• Warranty coverage valid for 24 months from commissioning.</p>
-                    </div>
-                  )}
-
-                  {/* Signatures Block */}
-                  {template.sections.find((s) => s.id === 'signatures')?.enabled && (
-                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 text-[9px]">
-                      <div className="p-3 rounded border border-dashed border-slate-300 text-center">
-                        <span className="text-slate-500 block mb-6">Authorized Signatory</span>
-                        <div className="border-t border-slate-400 pt-1 font-bold text-slate-800">
-                          {company.name || 'Qvoke Networks'}
-                        </div>
-                      </div>
-                      <div className="p-3 rounded border border-dashed border-slate-300 text-center">
-                        <span className="text-slate-500 block mb-6">Customer Approval</span>
-                        <div className="border-t border-slate-400 pt-1 font-bold text-slate-800">
-                          Ahmed Mohammed Al-Arfaj
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Footer */}
-                  {template.sections.find((s) => s.id === 'footer')?.enabled && (
-                    <div className="text-center pt-2 text-[8px] text-slate-400">
-                      <span>{company.email || 'info@ajnetwork.sa'} • www.qvoke.com • Kingdom of Saudi Arabia</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {/* 2. CUSTOM FIELDS TAB (MATCHING USER SCREENSHOT 2) */}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {topTab === 'custom_fields' && (
-        <div className="space-y-4">
-          <div className="p-5 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm space-y-4">
-            <div>
-              <h3 className="text-base font-extrabold text-[var(--color-text)]">Invoice &amp; Quotes</h3>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                Define custom fields that appear on service records and quotes.
-              </p>
-            </div>
-
-            {/* Filter Pills + Add Field Button Row */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-[var(--color-divider)]">
-              {/* Filter Pills */}
-              <div className="flex items-center gap-2 text-xs font-bold">
-                <button
-                  onClick={() => setCustomFieldFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    customFieldFilter === 'all'
-                      ? 'bg-[var(--color-primary)] text-white shadow-sm'
-                      : 'bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                  }`}
-                >
-                  All ({template.customFields?.length || 0})
-                </button>
-                <button
-                  onClick={() => setCustomFieldFilter('invoice')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    customFieldFilter === 'invoice'
-                      ? 'bg-[var(--color-primary)] text-white shadow-sm'
-                      : 'bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                  }`}
-                >
-                  Invoice ({(template.customFields || []).filter((f) => f.appliesTo === 'invoice' || f.appliesTo === 'all').length})
-                </button>
-                <button
-                  onClick={() => setCustomFieldFilter('quotation')}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    customFieldFilter === 'quotation'
-                      ? 'bg-[var(--color-primary)] text-white shadow-sm'
-                      : 'bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
-                  }`}
-                >
-                  Quote ({(template.customFields || []).filter((f) => f.appliesTo === 'quotation' || f.appliesTo === 'all').length})
-                </button>
-              </div>
-
-              {/* + Add Field Button */}
-              <button
-                onClick={() => handleOpenFieldModal()}
-                className="px-4 py-2 rounded-xl bg-[#d97706] hover:bg-[#b45309] text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Add Field</span>
-              </button>
-            </div>
-
-            {/* Custom Field Cards List */}
-            <div className="space-y-3 pt-2">
-              {filteredCustomFields.map((field) => (
-                <div
-                  key={field.id}
-                  className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)]/40 hover:bg-[var(--color-surface-offset)] transition-all flex items-center justify-between"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-extrabold text-[var(--color-text)]">
-                        {field.name}
-                      </span>
-                      <span className="text-xs text-[var(--color-text-muted)]">• {field.type.toUpperCase()}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-1">
-                      <span className="font-mono text-[11px]">{field.key}</span>
-                      <span>•</span>
-                      <span className="capitalize">{field.appliesTo === 'all' ? 'Invoice & Quote' : field.appliesTo}</span>
-                      <span>•</span>
-                      <span className="text-slate-400">Assigned: {field.sectionName || 'Project Specs'}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleOpenFieldModal(field)}
-                      className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
-                      title="Edit Field"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteCustomField(field.id)}
-                      className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                      title="Delete Field"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {filteredCustomFields.length === 0 && (
-                <div className="p-8 text-center text-xs text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-2xl">
-                  No custom fields defined yet. Click <strong>+ Add Field</strong> to create dynamic fields for quotes and invoices.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {/* 3. GENERAL SETTINGS TAB */}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {topTab === 'general' && (
-        <div className="p-6 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm space-y-6">
-          <div>
-            <h3 className="text-base font-extrabold text-[var(--color-text)]">General PDF Preferences</h3>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              Customize global brand palette, font sizing, page margins, and security watermark.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-[var(--color-divider)]">
-            {/* Brand Color Pickers */}
-            <div className="space-y-4">
-              <span className="text-xs font-black uppercase text-[var(--color-text)] block">
-                Brand Colors &amp; Gradients
-              </span>
-              <div>
-                <label className="text-xs font-bold text-[var(--color-text)] block mb-1">
-                  Primary Accent Color
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={template.colors.primary}
-                    onChange={(e) =>
-                      setTemplate({
-                        ...template,
-                        colors: { ...template.colors, primary: e.target.value }
-                      })
-                    }
-                    className="w-9 h-9 rounded-xl cursor-pointer border-0"
-                  />
-                  <input
-                    type="text"
-                    value={template.colors.primary}
-                    onChange={(e) =>
-                      setTemplate({
-                        ...template,
-                        colors: { ...template.colors, primary: e.target.value }
-                      })
-                    }
-                    className="flex-1 p-2 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-mono font-bold"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[var(--color-text)] block mb-1">
-                  Header Gradient Palette
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="color"
-                    value={template.colors.headerBgStart}
-                    onChange={(e) =>
-                      setTemplate({
-                        ...template,
-                        colors: { ...template.colors, headerBgStart: e.target.value }
-                      })
-                    }
-                    className="w-full h-9 rounded-xl cursor-pointer border-0"
-                  />
-                  <input
-                    type="color"
-                    value={template.colors.headerBgEnd}
-                    onChange={(e) =>
-                      setTemplate({
-                        ...template,
-                        colors: { ...template.colors, headerBgEnd: e.target.value }
-                      })
-                    }
-                    className="w-full h-9 rounded-xl cursor-pointer border-0"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Typography & Watermark */}
-            <div className="space-y-4">
-              <span className="text-xs font-black uppercase text-[var(--color-text)] block">
-                Typography &amp; Document Sizing
-              </span>
-              <div>
-                <label className="text-xs font-bold text-[var(--color-text)] block mb-1">
-                  Bilingual Font Family
-                </label>
-                <select
-                  value={template.typography.fontFamily}
-                  onChange={(e: any) =>
-                    setTemplate({
-                      ...template,
-                      typography: { ...template.typography, fontFamily: e.target.value }
-                    })
-                  }
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-bold"
-                >
-                  <option value="Tajawal">Tajawal (Saudi ZATCA Official)</option>
-                  <option value="Outfit">Outfit (Modern Clean SaaS)</option>
-                  <option value="Inter">Inter (Corporate Dense)</option>
-                  <option value="Geist">Geist (Minimalist Technical)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[var(--color-text)] block mb-1">
-                  Watermark Stamp Text
-                </label>
-                <input
-                  type="text"
-                  value={template.watermark.text}
-                  onChange={(e) =>
-                    setTemplate({
-                      ...template,
-                      watermark: { ...template.watermark, text: e.target.value }
-                    })
-                  }
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs font-bold"
-                  placeholder="e.g. PAID, OFFICIAL, CONFIDENTIAL"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-4 border-t border-[var(--color-divider)]">
-            <button
-              onClick={handleSaveLayout}
-              className="px-6 py-2.5 rounded-xl bg-[#d97706] hover:bg-[#b45309] text-white text-xs font-bold flex items-center gap-2 shadow-lg cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              <span>Save General Preferences</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {/* CUSTOM FIELD CREATE/EDIT MODAL */}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {isFieldModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-md w-full rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-6 space-y-4 animate-scale-in text-left">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-divider)]">
-              <h3 className="text-sm font-extrabold text-[var(--color-text)]">
-                {editingField ? 'Edit Custom Field' : 'Create Custom Field'}
-              </h3>
-              <button
-                onClick={() => setIsFieldModalOpen(false)}
-                className="p-1 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Field Display Name
-                </label>
-                <input
-                  type="text"
-                  value={fieldNameInput}
-                  onChange={(e) => setFieldNameInput(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                  placeholder="e.g. Purchase order number, Site contact"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Field Key (Internal Identifier)
-                </label>
-                <input
-                  type="text"
-                  value={fieldKeyInput}
-                  onChange={(e) => setFieldKeyInput(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-mono text-xs"
-                  placeholder="e.g. purchase_order, site_contact"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-[var(--color-text)] block mb-1">
-                    Field Type
-                  </label>
-                  <select
-                    value={fieldTypeInput}
-                    onChange={(e: any) => setFieldTypeInput(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                  >
-                    <option value="text">Text</option>
-                    <option value="number">Number</option>
-                    <option value="select">Select (Dropdown)</option>
-                    <option value="checkbox">Checkbox</option>
-                    <option value="date">Date</option>
-                    <option value="textarea">Textarea</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-[var(--color-text)] block mb-1">
-                    Applies To
-                  </label>
-                  <select
-                    value={fieldAppliesToInput}
-                    onChange={(e: any) => setFieldAppliesToInput(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                  >
-                    <option value="all">Invoice &amp; Quote (All)</option>
-                    <option value="quotation">Quote Only</option>
-                    <option value="invoice">Invoice Only</option>
-                  </select>
-                </div>
-              </div>
-
-              {fieldTypeInput === 'select' && (
-                <div>
-                  <label className="font-bold text-[var(--color-text)] block mb-1">
-                    Dropdown Options (Comma separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={fieldOptionsInput}
-                    onChange={(e) => setFieldOptionsInput(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] text-xs"
-                    placeholder="Bay 1, Bay 2, Bay 3, On-Site"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Assign to Section
-                </label>
-                <select
-                  value={fieldTargetSection}
-                  onChange={(e) => setFieldTargetSection(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                >
-                  {template.sections.map((sec) => (
-                    <option key={sec.id} value={sec.id}>
-                      {sec.name} ({sec.nameAr})
-                    </option>
+                      )}
+                    </li>
                   ))}
-                </select>
-              </div>
-            </div>
+                </ul>
+              </>
+            )}
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--color-divider)]">
-              <button
-                onClick={() => setIsFieldModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[var(--color-surface-offset)] hover:bg-[var(--color-surface-2)] text-xs font-bold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveCustomField}
-                className="px-5 py-2 rounded-xl bg-[#d97706] hover:bg-[#b45309] text-white text-xs font-bold shadow-md cursor-pointer"
-              >
-                Save Field
-              </button>
+            {tab === 'table' && (
+              <>
+                <p className="text-[11px] text-[var(--color-text-muted)]">Choose the columns of the line-items table. Item code only shows when at least one line has a product code.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {col('showIndex', '# (serial number)')}
+                  {col('showItemCode', 'Item code')}
+                  {col('showDescEn', 'Description (English)')}
+                  {col('showDescAr', 'Description (Arabic)')}
+                  {col('showQty', 'Quantity')}
+                  {col('showUnit', 'Unit')}
+                  {col('showUnitPrice', 'Unit price')}
+                  {col('showDiscount', 'Discount %')}
+                  {col('showTax', 'VAT % (total includes VAT)')}
+                  {col('showTotal', 'Line total')}
+                </div>
+              </>
+            )}
+
+            {tab === 'fields' && (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-[var(--color-text-muted)]">Custom fields appear as inputs in the quotation/invoice editor and are printed inside the section you assign them to.</p>
+                  <button type="button" onClick={() => setFieldDraft({ type: 'text', appliesTo: 'all', sectionId: 'vehicle', name: '', key: '' })} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-bold cursor-pointer shrink-0"><Plus className="w-3 h-3" /> New field</button>
+                </div>
+                {(template.customFields || []).length === 0 ? (
+                  <p className="text-xs italic text-[var(--color-text-muted)] py-4 text-center">No custom fields yet.</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {(template.customFields || []).map((cf) => (
+                      <li key={cf.id} className="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--color-border)] text-xs">
+                        <div className="flex-1">
+                          <b>{cf.name}</b> <code className="text-[10px] text-[var(--color-text-faint)]">{cf.key}</code>
+                          <div className="text-[10px] text-[var(--color-text-muted)]">{cf.type} · {cf.appliesTo === 'all' ? 'quotes & invoices' : `${cf.appliesTo}s only`} · prints in “{sections.find((s) => s.id === cf.sectionId)?.name || cf.sectionName || cf.sectionId}”</div>
+                        </div>
+                        <button type="button" aria-label={`Edit ${cf.name}`} onClick={() => setFieldDraft({ ...cf, optionsText: (cf.options || []).join(', ') })} className="p-1.5 rounded-md hover:bg-[var(--color-surface-offset)] cursor-pointer"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button type="button" aria-label={`Delete ${cf.name}`} onClick={() => { if (confirm(`Delete custom field "${cf.name}"? Stored values on documents are kept but no longer printed.`)) edit({ customFields: (template.customFields || []).filter((f) => f.id !== cf.id) }); }} className="p-1.5 rounded-md hover:bg-[var(--color-error)]/10 text-[var(--color-error)] cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── Live preview ─────────────────────────────────────────────── */}
+        <div className="space-y-2 xl:sticky xl:top-4 self-start">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)]"><FileText className="w-3.5 h-3.5" /> Live preview – real PDF, sample data</div>
+          <LivePreview template={template} docType={docType} />
+        </div>
+      </div>
+
+      {/* Custom field modal */}
+      {fieldDraft && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-label="Custom field">
+          <div className="w-full max-w-md rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 space-y-3">
+            <h3 className="text-sm font-black">{fieldDraft.id ? 'Edit custom field' : 'New custom field'}</h3>
+            <div><label className={labelCls}>Name</label><input autoFocus className={inputCls} value={fieldDraft.name || ''} onChange={(e) => setFieldDraft({ ...fieldDraft, name: e.target.value })} placeholder="e.g. Purchase order number" /></div>
+            <div><label className={labelCls}>Key (internal)</label><input className={`${inputCls} font-mono`} value={fieldDraft.key || ''} onChange={(e) => setFieldDraft({ ...fieldDraft, key: e.target.value })} placeholder={slug(fieldDraft.name || '') || 'auto from name'} disabled={!!fieldDraft.id} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className={labelCls}>Type</label>
+                <select className={inputCls} value={fieldDraft.type} onChange={(e) => setFieldDraft({ ...fieldDraft, type: e.target.value as any })}>
+                  <option value="text">Text</option><option value="textarea">Long text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Dropdown</option><option value="checkbox">Checkbox</option>
+                </select></div>
+              <div><label className={labelCls}>Applies to</label>
+                <select className={inputCls} value={fieldDraft.appliesTo} onChange={(e) => setFieldDraft({ ...fieldDraft, appliesTo: e.target.value as any })}>
+                  <option value="all">Quotes &amp; invoices</option><option value="quotation">Quotations only</option><option value="invoice">Invoices only</option>
+                </select></div>
+            </div>
+            {fieldDraft.type === 'select' && <div><label className={labelCls}>Options (comma separated)</label><input className={inputCls} value={fieldDraft.optionsText || ''} onChange={(e) => setFieldDraft({ ...fieldDraft, optionsText: e.target.value })} /></div>}
+            <div><label className={labelCls}>Print in section</label>
+              <select className={inputCls} value={fieldDraft.sectionId} onChange={(e) => setFieldDraft({ ...fieldDraft, sectionId: e.target.value })}>
+                {sections.filter((s) => !['line_items', 'footer', 'signatures', 'zatca_qr', 'summary', 'payment_terms', 'bank_details'].includes(s.id)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select></div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setFieldDraft(null)} className="px-4 py-2 rounded-lg text-xs font-bold border border-[var(--color-border)] cursor-pointer">Cancel</button>
+              <button type="button" onClick={saveField} className="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] text-white cursor-pointer">Save field</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {/* ADD SECTION MODAL */}
-      {/* ────────────────────────────────────────────────────────────────────── */}
-      {isAddSectionModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-md w-full rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-6 space-y-4 animate-scale-in text-left">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-divider)]">
-              <h3 className="text-sm font-extrabold text-[var(--color-text)]">
-                Add New Document Section
-              </h3>
-              <button
-                onClick={() => setIsAddSectionModalOpen(false)}
-                className="p-1 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+      {/* Add section modal */}
+      {newSection && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-label="Add section">
+          <div className="w-full max-w-md rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] p-5 space-y-3">
+            <h3 className="text-sm font-black">Add a custom section</h3>
+            <div><label className={labelCls}>Title (EN)</label><input autoFocus className={inputCls} value={newSection.name} onChange={(e) => setNewSection({ ...newSection, name: e.target.value })} placeholder="Scope of work" /></div>
+            <div><label className={labelCls}>Title (AR)</label><input dir="rtl" className={inputCls} value={newSection.nameAr} onChange={(e) => setNewSection({ ...newSection, nameAr: e.target.value })} placeholder="نطاق العمل" /></div>
+            <div><label className={labelCls}>Content</label><textarea rows={4} className={inputCls} value={newSection.content} onChange={(e) => setNewSection({ ...newSection, content: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['full', 'half'] as const).map((w) => (
+                <button key={w} type="button" onClick={() => setNewSection({ ...newSection, width: w })} className={`p-2 rounded-lg border text-xs font-bold cursor-pointer ${newSection.width === w ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}>{w === 'full' ? 'Full width' : 'Half width'}</button>
+              ))}
             </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Section Title (English)
-                </label>
-                <input
-                  type="text"
-                  value={newSectionName}
-                  onChange={(e) => setNewSectionName(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                  placeholder="e.g. Scope of Work, Equipment Checklist"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Section Title (Arabic)
-                </label>
-                <input
-                  type="text"
-                  dir="rtl"
-                  value={newSectionNameAr}
-                  onChange={(e) => setNewSectionNameAr(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[var(--color-surface-offset)] border border-[var(--color-border)] font-bold text-xs"
-                  placeholder="نطاق العمل ومواصفات التجهيز"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[var(--color-text)] block mb-1">
-                  Layout Width
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setNewSectionWidth('full')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                      newSectionWidth === 'full'
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
-                        : 'border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
-                    }`}
-                  >
-                    <Maximize2 className="w-3.5 h-3.5" />
-                    <span>Full Width</span>
-                  </button>
-
-                  <button
-                    onClick={() => setNewSectionWidth('half')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                      newSectionWidth === 'half'
-                        ? 'border-amber-500 bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                        : 'border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]'
-                    }`}
-                  >
-                    <Columns className="w-3.5 h-3.5" />
-                    <span>Half Width (|| L)</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--color-divider)]">
-              <button
-                onClick={() => setIsAddSectionModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[var(--color-surface-offset)] hover:bg-[var(--color-surface-2)] text-xs font-bold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateSection}
-                className="px-5 py-2 rounded-xl bg-[#d97706] hover:bg-[#b45309] text-white text-xs font-bold shadow-md cursor-pointer"
-              >
-                Create Section
-              </button>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setNewSection(null)} className="px-4 py-2 rounded-lg text-xs font-bold border border-[var(--color-border)] cursor-pointer">Cancel</button>
+              <button type="button" onClick={addSection} disabled={!newSection.name.trim()} className="px-4 py-2 rounded-lg text-xs font-bold bg-[var(--color-primary)] text-white cursor-pointer disabled:opacity-50">Add section</button>
             </div>
           </div>
         </div>
@@ -1280,3 +550,5 @@ export const PDFTemplateStudio: React.FC = () => {
     </div>
   );
 };
+
+export default PDFTemplateStudio;
