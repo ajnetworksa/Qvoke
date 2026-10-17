@@ -525,11 +525,11 @@ export const Tracking: React.FC = () => {
               className="w-full premium-input pl-10 pr-4 py-2"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <label className="text-[var(--color-text-muted)] font-semibold">From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="premium-input py-1.5" />
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="premium-input py-1.5 min-w-0 flex-1 sm:flex-none" />
             <label className="text-[var(--color-text-muted)] font-semibold">To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="premium-input py-1.5" />
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="premium-input py-1.5 min-w-0 flex-1 sm:flex-none" />
           </div>
         </div>
 

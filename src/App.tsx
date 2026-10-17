@@ -272,8 +272,10 @@ export const App: React.FC = () => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard / الرئيسية', icon: LayoutDashboard, category: 'GENERAL / عام' },
     { id: 'tasks', label: 'My Tasks / مهامي', icon: CheckSquare, category: 'GENERAL / عام', feature: 'tasks' },
-    { id: 'quote-editor', label: 'Current Quote / العرض الحالي', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'quotations' },
-    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة الحالية', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'invoices' },
+    { id: 'quotations', label: 'Quotations / عروض الأسعار', icon: FileSpreadsheet, category: 'SALES / المبيعات', feature: 'quotations' },
+    { id: 'invoices', label: 'Invoices / الفواتير', icon: FileText, category: 'SALES / المبيعات', feature: 'invoices' },
+    { id: 'quote-editor', label: 'Current Quote / العرض', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'quotations' },
+    { id: 'invoice-editor', label: 'Current Invoice / الفاتورة', icon: FilePlus2, category: 'SALES / المبيعات', feature: 'invoices' },
     { id: 'recurring', label: 'Recurring / الاشتراكات', icon: Receipt, category: 'SALES / المبيعات', feature: 'recurring' },
     { id: 'tracking', label: 'Tracking / المتابعة', icon: Radar, category: 'SALES / المبيعات', feature: 'tracking' },
     { id: 'boq', label: 'BOQ & BOM / الكميات والمواد', icon: ClipboardList, category: 'SALES / المبيعات', feature: 'boq' },
@@ -284,7 +286,7 @@ export const App: React.FC = () => {
     { id: 'suppliers', label: 'Suppliers / الموردين', icon: Building, category: 'CATALOG / الكتالوج', feature: 'suppliers' },
     { id: 'products', label: 'Catalog / المنتجات', icon: Package, category: 'CATALOG / الكتالوج', feature: 'products' },
     { id: 'inventory', label: 'Inventory / المخزون', icon: Package, category: 'CATALOG / الكتالوج', feature: 'inventory' },
-    { id: 'showcase', label: 'Showcase / المعرض التسويقي', icon: Sparkles, category: 'SYSTEM / النظام' },
+    { id: 'showcase', label: 'Showcase / المعرض', icon: Sparkles, category: 'SYSTEM / النظام' },
     { id: 'recycle-bin', label: 'Recycle Bin / سلة المهملات', icon: ShieldCheck, category: 'SYSTEM / النظام' },
     { id: 'settings', label: 'Settings / الإعدادات', icon: SettingsIcon, category: 'SYSTEM / النظام' }
   ];
@@ -569,7 +571,7 @@ export const App: React.FC = () => {
                           <div className="absolute left-0 top-1 bottom-1 w-1 bg-[var(--color-primary)] rounded-r" />
                         )}
                         <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'}`} />
-                        {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                        {!sidebarCollapsed && <span className="truncate" title={item.label}>{item.label}</span>}
 
                         {sidebarCollapsed && (
                           <div className="absolute left-full ml-3 px-2 py-1 bg-[var(--color-text)] text-[var(--color-bg)] text-[10px] font-bold rounded shadow opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">

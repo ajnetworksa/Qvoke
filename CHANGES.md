@@ -24,6 +24,13 @@
 
 - Per-company document numbering: `UNIQUE(companyId, number)` on quotations/invoices/BOQ/expenses/recurring, and a `sequences` table keyed by (companyId, docType). One-time, transactional, idempotent migration with an automatic `VACUUM INTO` backup and row-count checks. Verified on a legacy DB copy with two companies.
 
+**UI pass from live screenshots**
+- Dashboard KPI "vs last month" badges were hard-coded fake numbers; now real month-over-month for revenue/profit and hidden for counts. "Total Revenue" renamed "Collected Revenue" (it sums payments received).
+- Sidebar gained Quotations and Invoices list entries (Kanban/list were only reachable via Ctrl+K); long bilingual labels shortened and given tooltips.
+- PageHeader wraps actions under long titles instead of crushing the title.
+- Numbering settings: next-number preview now matches the real format (`QT-2026-0004`), document types are labelled and ordered.
+- Invoice Kanban uses a responsive grid; amounts use 2 decimals; Tracking date filters fit on phones.
+
 **Synced from Dynamic Quotation**
 - Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
 - Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.

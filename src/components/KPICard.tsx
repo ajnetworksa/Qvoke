@@ -4,7 +4,8 @@ import { LucideIcon, TrendingUp, TrendingDown } from 'lucide-react';
 interface KPICardProps {
   label: string;
   value: number;
-  change: number;
+  /** Month-over-month % change; omit when there is no meaningful comparison. */
+  change?: number | null;
   icon: LucideIcon;
   format?: 'currency' | 'number';
   currency?: string;
@@ -74,7 +75,8 @@ export const KPICard: React.FC<KPICardProps> = ({
     }).format(num);
   };
 
-  const isPositive = change >= 0;
+  const hasChange = typeof change === 'number' && Number.isFinite(change);
+  const isPositive = (change ?? 0) >= 0;
 
   return (
     <div className={`kpi-card kpi-card--${tone} premium-card p-6 flex flex-col justify-between transition-all duration-[var(--transition-interactive)] hover:shadow-md`}>
@@ -90,7 +92,7 @@ export const KPICard: React.FC<KPICardProps> = ({
           {formatNumber(displayValue)}
         </span>
         
-        <span
+        {hasChange && <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${
             isPositive
               ? 'bg-[var(--color-success)]/10 border-[var(--color-success)]/20 text-[var(--color-success)]'
@@ -102,13 +104,15 @@ export const KPICard: React.FC<KPICardProps> = ({
           ) : (
             <TrendingDown className="w-3 h-3 mr-0.5" />
           )}
-          {Math.abs(change)}%
-        </span>
+          {Math.abs(change as number)}%
+        </span>}
       </div>
 
-      <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-        vs last month / مقارنة بالشهر السابق
-      </div>
+      {hasChange && (
+        <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+          vs last month / مقارنة بالشهر السابق
+        </div>
+      )}
     </div>
   );
 };

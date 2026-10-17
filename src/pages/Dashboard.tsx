@@ -58,26 +58,39 @@ export const Dashboard: React.FC = () => {
   const overdueInvoices = invoices.filter(i => i.status === 'overdue').length;
   const lowStockCount = products.filter(p => p.type === 'product' && (Number(p.stockQuantity) || 0) <= (Number(p.minStockLevel) || 5)).length;
 
-  const stats = [
+  // Real month-over-month change (current calendar month vs previous), null when last month had no data.
+  const monthOf = (iso: string, offset: number) => {
+    const d = new Date(iso);
+    const ref = new Date(new Date().getFullYear(), new Date().getMonth() - offset, 1);
+    return !isNaN(d.getTime()) && d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
+  };
+  const pctChange = (cur: number, prev: number): number | null =>
+    prev === 0 ? null : Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10;
+  const revenueIn = (offset: number) => invoices.filter((i) => monthOf(i.date as any, offset)).reduce((s, i) => s + (i.amountPaid || 0), 0);
+  const expensesIn = (offset: number) => expenses.filter((e: any) => monthOf(e.date, offset)).reduce((s, e: any) => s + (Number(e.total) || 0), 0);
+  const revenueChange = pctChange(revenueIn(0), revenueIn(1));
+  const profitChange = pctChange(revenueIn(0) - expensesIn(0), revenueIn(1) - expensesIn(1));
+
+  const stats: { label: string; value: number; change?: number | null; icon: any; format: 'currency' | 'number' }[] = [
     ...(canViewRevenue ? [
       {
-        label: 'Total Revenue / إجمالي الإيرادات',
+        label: 'Collected Revenue / الإيرادات المحصّلة',
         value: totalRevenue,
-        change: 12.4,
+        change: revenueChange,
         icon: DollarSign,
         format: 'currency' as const
       },
       {
         label: 'Net Operating Profit / صافي الربح',
         value: netProfit,
-        change: netProfit >= 0 ? 8.2 : -5.4,
+        change: profitChange,
         icon: TrendingUp,
         format: 'currency' as const
       }
     ] : []),
-    { label: 'Open Quotes / العروض المفتوحة', value: openQuotes, change: 4.8, icon: FileSpreadsheet, format: 'number' as const },
-    { label: 'Unpaid Invoices / فواتير غير مدفوعة', value: unpaidInvoices, change: -2.1, icon: Clock, format: 'number' as const },
-    { label: 'Overdue Invoices / فواتير متأخرة', value: overdueInvoices, change: 8.5, icon: AlertTriangle, format: 'number' as const }
+    { label: 'Open Quotes / العروض المفتوحة', value: openQuotes, icon: FileSpreadsheet, format: 'number' as const },
+    { label: 'Unpaid Invoices / فواتير غير مدفوعة', value: unpaidInvoices, icon: Clock, format: 'number' as const },
+    { label: 'Overdue Invoices / فواتير متأخرة', value: overdueInvoices, icon: AlertTriangle, format: 'number' as const }
   ];
 
   // ── Real 12-month revenue series, bucketed from invoice dates ───────────────

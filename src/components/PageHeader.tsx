@@ -21,8 +21,8 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   const { theme } = useERPStore();
 
   return (
-    <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-[var(--color-border)]/50 pb-6 mb-6">
-      <div className="flex flex-col text-left">
+    <div className="flex flex-col md:flex-row md:flex-wrap md:items-center md:justify-between gap-y-3 border-b border-[var(--color-border)]/50 pb-6 mb-6">
+      <div className="flex flex-col text-left min-w-0 md:flex-1 md:basis-[28rem]">
         {/* Breadcrumb Odoo-style state trail */}
         <nav className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-medium mb-2.5">
           {breadcrumbs.map((item, idx) => (
@@ -51,7 +51,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
       </div>
 
       {actions && (
-        <div className="mt-4 md:mt-0 flex items-center gap-3">
+        <div className="mt-1 md:mt-0 flex flex-wrap items-center gap-3 md:shrink-0">
           {actions}
         </div>
       )}

@@ -1857,8 +1857,12 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   quotation: 'Quotation',
   invoice: 'Invoice',
   boq: 'BOQ',
-  bom: 'BOM'
+  bom: 'BOM',
+  expense: 'Expense',
+  recurring: 'Recurring Invoice',
+  po: 'Purchase Order'
 };
+const DOC_TYPE_ORDER = ['quotation', 'invoice', 'boq', 'bom', 'expense', 'recurring', 'po'];
 
 const NumberingSequencesPanel: React.FC = () => {
   const token = useERPStore((s) => s.token);
@@ -1871,7 +1875,10 @@ const NumberingSequencesPanel: React.FC = () => {
   const load = async () => {
     try {
       const res = await fetch('/api/sequences', { headers: authH });
-      if (res.ok) setRows(await res.json());
+      if (res.ok) {
+        const data: SequenceRow[] = await res.json();
+        setRows(data.sort((a, b) => DOC_TYPE_ORDER.indexOf(a.docType) - DOC_TYPE_ORDER.indexOf(b.docType)));
+      }
     } catch { /* ignore */ }
   };
 
@@ -1899,9 +1906,12 @@ const NumberingSequencesPanel: React.FC = () => {
 
   // Mirror the server's PREFIX-[YYYY-]NNNN format so admins see the next number live.
   const preview = (row: SequenceRow) => {
-    const next = String((row.lastNumber || 0) + 1).padStart(Number(row.padding) || 4, '0');
-    const year = row.resetPeriod === 'yearly' ? `${new Date().getFullYear()}-` : '';
-    return `${row.prefix}${year}${next}`;
+    const currentYear = new Date().getFullYear();
+    const yearly = row.resetPeriod === 'yearly';
+    // A yearly counter restarts at 1 when the stored year is not the current one (same rule as the server).
+    const n = yearly && (row as any).lastYear !== currentYear ? 1 : (row.lastNumber || 0) + 1;
+    const next = String(n).padStart(Number(row.padding) || 4, '0');
+    return yearly ? `${row.prefix}-${currentYear}-${next}` : `${row.prefix}-${next}`;
   };
 
   return (

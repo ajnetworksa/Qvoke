@@ -207,7 +207,7 @@ export const Invoices: React.FC = () => {
         />
       ) : kanbanView ? (
         /* Kanban Board */
-        <div className="flex gap-5 overflow-x-auto pb-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 2xl:grid-cols-6 gap-4">
           {columns.map((col) => {
             const colInvoices = filteredInvoices.filter((i) => i.status === col.status);
             return (
@@ -265,7 +265,7 @@ export const Invoices: React.FC = () => {
                           {new Date(inv.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </span>
                         <span className="text-xs font-bold text-[var(--color-text)]">
-                          {(Number(inv.total) || 0).toLocaleString()} {inv.currency}
+                          {(Number(inv.total) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {inv.currency}
                         </span>
                       </div>
                     </div>

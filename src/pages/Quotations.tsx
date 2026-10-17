@@ -292,7 +292,7 @@ export const Quotations: React.FC = () => {
                           {new Date(q.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </span>
                         <span className="text-xs font-bold text-[var(--color-text)]">
-                          {(Number(q.total) || 0).toLocaleString()} {q.currency}
+                          {(Number(q.total) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {q.currency}
                         </span>
                       </div>
                     </div>
