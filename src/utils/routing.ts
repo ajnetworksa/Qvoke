@@ -12,7 +12,8 @@ export function routeToPath(page: string, id?: string | null): string {
   if (page === 'products') return '/products';
   if (page === 'suppliers') return '/suppliers';
   if (page === 'expenses') return '/expenses';
-  if (page === 'recurring-invoices') return '/recurring-invoices';
+  if (page === 'recurring' || page === 'recurring-invoices') return '/recurring';
+  if (page === 'showcase' || page === 'marketing') return '/showcase';
   if (page === 'inventory') return '/inventory';
   if (page === 'pos') return '/pos';
   if (page === 'tracking') return '/tracking';
@@ -22,7 +23,6 @@ export function routeToPath(page: string, id?: string | null): string {
   if (page === 'companies') return '/companies';
   if (page === 'recycle-bin') return '/recycle-bin';
   if (page === 'settings') return '/settings';
-  if (page === 'marketing') return '/marketing';
   if (page === 'platform-admin') return '/platform-admin';
   return `/${page}`;
 }
@@ -56,7 +56,8 @@ export function pathToRoute(pathname: string): { page: string; id: string | null
     products: 'products',
     suppliers: 'suppliers',
     expenses: 'expenses',
-    'recurring-invoices': 'recurring-invoices',
+    recurring: 'recurring',
+    'recurring-invoices': 'recurring',
     inventory: 'inventory',
     pos: 'pos',
     tracking: 'tracking',
@@ -66,7 +67,8 @@ export function pathToRoute(pathname: string): { page: string; id: string | null
     companies: 'companies',
     'recycle-bin': 'recycle-bin',
     settings: 'settings',
-    marketing: 'marketing',
+    showcase: 'showcase',
+    marketing: 'showcase',
     'platform-admin': 'platform-admin'
   };
 

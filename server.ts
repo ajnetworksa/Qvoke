@@ -1080,7 +1080,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Restrict /api/admin endpoints to the dedicated admin port
+// Database maintenance (backup/restore/optimize) is used from the normal Settings screen, so only the
+// platform-management routes are pinned to the admin port. Maintenance routes are still permission-gated.
 app.use('/api/admin', (req, res, next) => {
+  if (/^\/(backups?|restore|optimize)(\/|$)/.test(req.path)) return next();
   if (req.socket.localPort !== ADMIN_PORT) {
     return res.status(403).json({ error: 'Access Denied: Admin Panel endpoints must be accessed via the dedicated admin port.' });
   }
@@ -1385,6 +1388,7 @@ app.get('/api/customers', requireAuth, (req, res) => {
 
 app.post('/api/customers', requireAuth, (req, res) => {
   const { id, companyName, contactPerson, email, phone, vatNumber, billingAddress } = req.body;
+  if (!companyName || !String(companyName).trim()) return res.status(400).json({ error: 'Company name is required' });
   try {
     const custId = id || `cust-${Date.now()}`;
     db.prepare(`
@@ -1394,8 +1398,8 @@ app.post('/api/customers', requireAuth, (req, res) => {
       custId,
       companyName,
       contactPerson || '',
-      email,
-      phone,
+      email || '',
+      phone || '',
       vatNumber || '',
       JSON.stringify(billingAddress || {}),
       new Date().toISOString(),
@@ -1409,30 +1413,45 @@ app.post('/api/customers', requireAuth, (req, res) => {
 
 app.put('/api/customers/:id', requireAuth, (req, res) => {
   const { companyName, contactPerson, email, phone, vatNumber, billingAddress } = req.body;
+  if (!companyName || !String(companyName).trim()) return res.status(400).json({ error: 'Company name is required' });
   try {
-    db.prepare(`
+    const result = db.prepare(`
       UPDATE customers
       SET companyName = ?, contactPerson = ?, email = ?, phone = ?, vatNumber = ?, billingAddress = ?
       WHERE id = ? AND companyId = ?
     `).run(
       companyName,
       contactPerson || '',
-      email,
-      phone,
+      email || '',
+      phone || '',
       vatNumber || '',
       JSON.stringify(billingAddress || {}),
       req.params.id,
       (req as any).companyId
     );
+    if (result.changes === 0) return res.status(404).json({ error: 'Customer not found' });
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// Delete a catalog row, turning "still referenced" foreign-key failures into a clear 409.
+function deleteReferenced(res: express.Response, table: string, id: string, companyId: string, what: string) {
+  try {
+    const r = db.prepare(`DELETE FROM ${table} WHERE id = ? AND companyId = ?`).run(id, companyId);
+    if (r.changes === 0) return res.status(404).json({ error: `${what} not found` });
+    return res.json({ success: true });
+  } catch (e: any) {
+    if (String(e?.message).includes('FOREIGN KEY')) {
+      return res.status(409).json({ error: `This ${what.toLowerCase()} is used by existing documents or stock history and cannot be deleted.` });
+    }
+    return res.status(500).json({ error: 'Delete failed' });
+  }
+}
+
 app.delete('/api/customers/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
-  db.prepare('DELETE FROM customers WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
-  res.json({ success: true });
+  deleteReferenced(res, 'customers', req.params.id, (req as any).companyId, 'Customer');
 });
 
 // ── SUPPLIERS CRUD ────────────────────────────────────────────────────────────
@@ -1557,8 +1576,7 @@ app.put('/api/products/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/products/:id', requireAuth, requirePermission('canDeleteData'), (req, res) => {
-  db.prepare('DELETE FROM products WHERE id = ? AND companyId = ?').run(req.params.id, (req as any).companyId);
-  res.json({ success: true });
+  return deleteReferenced(res, 'products', req.params.id, (req as any).companyId, 'Product');
 });
 
 // ── QUOTATIONS CRUD ───────────────────────────────────────────────────────────
@@ -1644,10 +1662,48 @@ function recomputeTotals(body: any): void {
   body.total = roundMoney(roundMoney(subtotal - discountTotal) + roundMoney(taxTotal));
   if (body.amountPaid !== undefined) body.amountDue = roundMoney(body.total - (Number(body.amountPaid) || 0));
 }
+
+// Invoices: paid/due are derived from the payments ledger, never trusted from the client.
+function deriveInvoiceAmounts(body: any): void {
+  if (!body || !Array.isArray(body.payments)) return;
+  const paid = roundMoney(body.payments.reduce((s: number, p: any) => s + (Number(p?.amount) || 0), 0));
+  const mt = body.manualTotal;
+  const total = Number(mt !== undefined && mt !== null && mt !== '' ? mt : body.total) || 0;
+  body.amountPaid = paid;
+  body.amountDue = Math.max(0, roundMoney(total - paid));
+}
+const QUOTE_STATUSES = ['draft', 'sent', 'confirmed', 'expired', 'cancelled'];
+const INVOICE_STATUSES = ['draft', 'posted', 'partial', 'paid', 'overdue', 'cancelled'];
+app.use((req, res, next) => {
+  if ((req.method === 'POST' && /^\/api\/(quotes|invoices)\/?$/.test(req.path)) ||
+      (req.method === 'PUT' && /^\/api\/(quotes|invoices)\/[^/]+\/?$/.test(req.path))) {
+    const allowed = req.path.startsWith('/api/quotes') ? QUOTE_STATUSES : INVOICE_STATUSES;
+    if (req.body?.status !== undefined && !allowed.includes(String(req.body.status))) {
+      return res.status(400).json({ error: `Invalid status. Allowed: ${allowed.join(', ')}` });
+    }
+  }
+  next();
+});
+// Sensible defaults for required columns so a minimal API payload never causes a raw 500.
+app.use((req, res, next) => {
+  if (req.method === 'POST' && /^\/api\/(quotes|invoices)\/?$/.test(req.path) && req.body && typeof req.body === 'object') {
+    const b = req.body;
+    if (!b.customerId) return res.status(400).json({ error: 'customerId is required' });
+    const today = new Date().toISOString();
+    const inDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString();
+    b.date = b.date || today;
+    b.status = b.status || 'draft';
+    b.currency = b.currency || 'SAR';
+    if (req.path.startsWith('/api/quotes')) b.validUntil = b.validUntil || inDays(15);
+    else { b.dueDate = b.dueDate || inDays(30); b.paymentTerms = b.paymentTerms ?? ''; }
+  }
+  next();
+});
 app.use((req, _res, next) => {
   if ((req.method === 'POST' && /^\/api\/(quotes|invoices)\/?$/.test(req.path)) ||
       (req.method === 'PUT' && /^\/api\/(quotes|invoices)\/[^/]+\/?$/.test(req.path))) {
     recomputeTotals(req.body);
+    if (/^\/api\/invoices/.test(req.path)) deriveInvoiceAmounts(req.body);
   }
   next();
 });
@@ -1800,6 +1856,51 @@ app.get('/api/invoices', requireAuth, (req, res) => {
   res.json(parsed);
 });
 
+// ── INVENTORY: keep stock in sync with invoice commitments ────────────────────
+// An invoice "commits" stock once it is posted/partial/paid/overdue or has payments. We diff the
+// committed quantities before vs after every save, so draft→posted deducts, edits adjust by the
+// difference and cancelling/deleting back to draft restores - never double-counting.
+const STOCK_COMMITTED = new Set(['posted', 'partial', 'paid', 'overdue']);
+function committedQuantities(status: string | undefined, payments: any, lineItems: any): Map<string, number> {
+  const out = new Map<string, number>();
+  const pays = Array.isArray(payments) ? payments : [];
+  if (!(STOCK_COMMITTED.has(String(status)) || pays.length > 0)) return out;
+  if (status === 'cancelled') return out;
+  for (const item of Array.isArray(lineItems) ? lineItems : []) {
+    if (item?.productId && (item.type === 'item' || !item.type)) {
+      out.set(item.productId, (out.get(item.productId) || 0) + (Number(item.quantity) || 0));
+    }
+  }
+  return out;
+}
+function applyInvoiceStockDelta(
+  invoiceId: string, companyId: string, user: any,
+  before: { status?: string; payments?: any; lineItems?: any } | null,
+  after: { status?: string; payments?: any; lineItems?: any }
+) {
+  const was = before ? committedQuantities(before.status, before.payments, before.lineItems) : new Map<string, number>();
+  const now = committedQuantities(after.status, after.payments, after.lineItems);
+  const ids = new Set([...was.keys(), ...now.keys()]);
+  for (const productId of ids) {
+    const delta = (now.get(productId) || 0) - (was.get(productId) || 0); // >0 deduct, <0 restore
+    if (!delta) continue;
+    const prod = db.prepare('SELECT id, stockQuantity, trackStock FROM products WHERE id = ? AND companyId = ?').get(productId, companyId) as any;
+    if (!prod || prod.trackStock === 0) continue;
+    const prev = Number(prod.stockQuantity) || 0;
+    const next = Math.max(0, prev - delta);
+    db.prepare('UPDATE products SET stockQuantity = ? WHERE id = ? AND companyId = ?').run(next, productId, companyId);
+    db.prepare(`
+      INSERT INTO inventory_transactions (id, companyId, productId, type, quantity, previousStock, newStock, referenceDocType, referenceDocId, notes, createdBy, createdByName, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?, ?, ?)
+    `).run(
+      `invlog-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, companyId, productId,
+      delta > 0 ? 'out' : 'in', Math.abs(prev - next), prev, next, invoiceId,
+      delta > 0 ? 'Deducted on invoice posting' : 'Restored after invoice change',
+      user?.id || null, user?.name || null, new Date().toISOString()
+    );
+  }
+}
+
 app.post('/api/invoices', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
@@ -1840,7 +1941,7 @@ app.post('/api/invoices', requireAuth, (req, res) => {
       linkedQuoteId || null,
       JSON.stringify(payments || []),
       amountPaid || 0,
-      amountDue || total,
+      amountDue ?? total,
       new Date().toISOString(),
       new Date().toISOString(),
       salespersonId || '',
@@ -1853,38 +1954,10 @@ app.post('/api/invoices', requireAuth, (req, res) => {
     );
     logDocumentActivity('invoice', invId, number, 'created', user, (req as any).companyId);
 
-    // Auto-adjust inventory for products with stock tracking
-    if (status === 'posted' || (payments && payments.length > 0)) {
-      try {
-        for (const item of (lineItems || [])) {
-          if (item.productId && (item.type === 'item' || !item.type)) {
-            const prod = db.prepare('SELECT id, stockQuantity, trackStock FROM products WHERE id = ? AND companyId = ?').get(item.productId, (req as any).companyId) as any;
-            if (prod && (prod.trackStock === 1 || prod.trackStock === undefined)) {
-              const qty = Number(item.quantity) || 0;
-              const prev = Number(prod.stockQuantity) || 0;
-              const nextStock = Math.max(0, prev - qty);
-              db.prepare('UPDATE products SET stockQuantity = ? WHERE id = ? AND companyId = ?').run(nextStock, item.productId, (req as any).companyId);
-              db.prepare(`
-                INSERT INTO inventory_transactions (id, companyId, productId, type, quantity, previousStock, newStock, referenceDocType, referenceDocId, notes, createdBy, createdByName, createdAt)
-                VALUES (?, ?, ?, 'out', ?, ?, ?, 'invoice', ?, 'Deducted on invoice posting', ?, ?, ?)
-              `).run(
-                `invlog-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                (req as any).companyId,
-                item.productId,
-                qty,
-                prev,
-                nextStock,
-                invId,
-                user?.id || null,
-                user?.name || null,
-                new Date().toISOString()
-              );
-            }
-          }
-        }
-      } catch (stockErr) {
-        console.error('Inventory auto-deduction error:', stockErr);
-      }
+    try {
+      applyInvoiceStockDelta(invId, (req as any).companyId, user, null, { status, payments, lineItems });
+    } catch (stockErr) {
+      console.error('Inventory auto-deduction error:', stockErr);
     }
 
     saveCustomFieldValues('invoices', invId, (req as any).companyId, req.body.customFieldValues);
@@ -1935,7 +2008,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
       linkedQuoteId || null,
       JSON.stringify(payments || []),
       amountPaid || 0,
-      amountDue || total,
+      amountDue ?? total,
       new Date().toISOString(),
       salespersonId || '',
       watermarkText || 'PAID',
@@ -1945,6 +2018,13 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
       user.id, user.name,
       req.params.id, (req as any).companyId
     );
+    try {
+      const prevItems = (() => { try { return JSON.parse(before.lineItems || '[]'); } catch { return []; } })();
+      const prevPays = (() => { try { return JSON.parse(before.payments || '[]'); } catch { return []; } })();
+      applyInvoiceStockDelta(req.params.id, (req as any).companyId, user, { status: before.status, payments: prevPays, lineItems: prevItems }, { status, payments, lineItems });
+    } catch (stockErr) {
+      console.error('Inventory sync error:', stockErr);
+    }
     if (before) {
       const changes = computeDocumentDiff(
         before,
@@ -4533,11 +4613,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   const done = db.prepare("SELECT value FROM settings WHERE key = 'numberingPerCompany'").get() as any;
   if (done?.value === 'true' && sequencesArePerCompany()) return;
 
-  const backupDir = path.resolve('backups');
-  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-  const backupFile = path.join(backupDir, `pre_numbering_migration_${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
-  db.prepare('VACUUM INTO ?').run(backupFile); // synchronous, consistent copy
-  console.log(`🗄️  Pre-migration backup written to ${backupFile}`);
+  // Only back up when there is real data to protect (a brand-new database has nothing to lose).
+  const hasData = ['quotations', 'invoices', 'boq', 'expenses', 'recurring_invoices'].some((t) => {
+    try { return !!db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get(); } catch { return false; }
+  });
+  if (hasData) {
+    const backupDir = path.resolve('backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    const backupFile = path.join(backupDir, `pre_numbering_migration_${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+    db.prepare('VACUUM INTO ?').run(backupFile); // synchronous, consistent copy
+    console.log(`🗄️  Pre-migration backup written to ${backupFile}`);
+  }
 
   db.pragma('foreign_keys = OFF');
   try {

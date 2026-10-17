@@ -25,7 +25,15 @@ export default function POS() {
   const [completedInvoice, setCompletedInvoice] = useState<Invoice | null>(null);
   const [zatcaQrCode, setZatcaQrCode] = useState<string | null>(null);
 
-  if (!features.pos) {
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) =>
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      (p.itemCode && p.itemCode.toLowerCase().includes(search.toLowerCase()))
+    );
+  }, [products, search]);
+
+  // A feature is on unless explicitly disabled (same rule as the rest of the app); hooks above stay unconditional.
+  if (features.pos === false) {
     return (
       <div className="p-8">
         <EmptyState
@@ -37,7 +45,7 @@ export default function POS() {
     );
   }
 
-  if (!user?.isSuperAdmin && activeCompany?.role !== 'admin' && activeCompany?.role !== 'owner' && user?.permissions?.canUsePOS !== true) {
+  if (!user?.isSuperAdmin && user?.role !== 'admin' && activeCompany?.role !== 'admin' && activeCompany?.role !== 'owner' && user?.permissions?.canUsePOS !== true) {
     return (
       <div className="p-8">
         <EmptyState
@@ -48,13 +56,6 @@ export default function POS() {
       </div>
     );
   }
-
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.itemCode && p.itemCode.toLowerCase().includes(search.toLowerCase()))
-    );
-  }, [products, search]);
 
   const addToCart = (product: any) => {
     setCart((prev) => {

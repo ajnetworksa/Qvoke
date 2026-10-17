@@ -125,13 +125,22 @@ export const DatabaseBackupDB: React.FC = () => {
   };
 
   // Download a backup file
-  const handleDownload = (filename: string) => {
-    const link = document.createElement('a');
-    link.href = `/api/admin/backup/download/${encodeURIComponent(filename)}`;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = async (filename: string) => {
+    try {
+      // A plain <a href> cannot send the auth header, so fetch the file and save the blob.
+      const res = await fetch(`/api/admin/backup/download/${encodeURIComponent(filename)}`, { headers: authHeaders() });
+      if (!res.ok) throw new Error(String(res.status));
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      showToast('Could not download the backup.', 'error');
+    }
   };
 
   // Delete a backup file

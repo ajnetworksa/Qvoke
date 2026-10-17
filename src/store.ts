@@ -568,7 +568,10 @@ export const useERPStore = create<ERPState>((set, get) => ({
     try {
       const res = await apiFetch(`/customers/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
-        set({ customers: customers.filter((c) => c.id !== id) });
+        set((st) => ({ customers: st.customers.filter((c) => c.id !== id) }));
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Could not delete this customer.');
       }
     } catch (err) {
       console.error(err);
@@ -669,7 +672,10 @@ export const useERPStore = create<ERPState>((set, get) => ({
     try {
       const res = await apiFetch(`/products/${id}`, { method: 'DELETE' }, token);
       if (res.ok) {
-        set({ products: products.filter((p) => p.id !== id) });
+        set((st) => ({ products: st.products.filter((p) => p.id !== id) }));
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Could not delete this product.');
       }
     } catch (err) {
       console.error(err);
