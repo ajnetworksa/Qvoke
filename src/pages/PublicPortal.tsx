@@ -113,6 +113,9 @@ export const PublicPortal: React.FC<{ token: string; docType: 'quotation' | 'inv
             share: { ...data.share, status: 'accepted', acceptedByName: clientName }
           });
         }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Could not record your approval. Please try again.');
       }
     } catch (err) {
       console.error(err);
@@ -135,6 +138,9 @@ export const PublicPortal: React.FC<{ token: string; docType: 'quotation' | 'inv
         if (data) {
           setData({ ...data, share: { ...data.share, status: 'declined' } });
         }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Could not send your response. Please try again.');
       }
     } catch (err) {
       console.error(err);

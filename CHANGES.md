@@ -40,6 +40,17 @@
 - Tajawal (Arabic + Latin) is bundled in `public/fonts` (OFL) instead of loading from a CDN, so PDFs render offline; Arabic always uses Tajawal even when a Latin font is chosen. Non-embeddable options (Outfit/Inter/Geist) were replaced by Helvetica/Times/Courier.
 - Removed another company's hard-coded defaults (AJ logo/footer images and sample terms) from the PDF mapper.
 
+**Second audit (found by API smoke tests + a full-app browser crawl)**
+- Inventory: stock was only deducted when an invoice was *created* as posted; draft→posted via edit never deducted, and cancelling/editing never restored. Stock now follows invoice commitments by diffing before/after on every save (draft→posted deducts, edits adjust, cancel restores, re-saves are idempotent).
+- Invoices: `amountDue || total` turned a fully paid invoice (due 0) back into "due = total"; paid/due are now derived server-side from the payments ledger.
+- Recurring billing: ignored line discounts, taxed 0% lines at 15%, didn't touch stock, processed paused/ended profiles, and Jan 31 + 1 month became Mar 3. All fixed.
+- POS page crashed (React #310: hook after an early return) and treated a not-yet-loaded feature list as "disabled".
+- Reloading `/recurring` or `/showcase` landed on the Dashboard (route mapping mismatch).
+- Settings → Database & Backups always returned 403 on the main port (admin-port restriction applied to maintenance routes); backup download now sends the auth header.
+- `GET /api/users` leaked every tenant's users (emails, permissions) to any logged-in user; now company-scoped, minimal fields for non-managers. New users were not added to the active company (silently fell into the default company); fixed, plus password ≥ 8 chars and role validation.
+- Public portal: links never expired, could be accepted twice/after decline, could confirm cancelled/expired quotes, were unthrottled, and encoded a placeholder VAT number in the QR. Guarded, rate-limited, and the page now shows errors.
+- Invalid statuses/missing required fields returned raw 500s; customers/products in use now return a clear 409; customer email/phone are optional.
+
 **Synced from Dynamic Quotation**
 - Translation uses `sl=en`, preserves account numbers/IBANs, keeps line structure, concise `الآيبان:`.
 - Settings → Document: default notes & terms per document type with a "pre-fill new documents" toggle; fetched fresh when a new document is opened; broadcasts `document-terms-updated`.

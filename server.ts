@@ -1264,18 +1264,28 @@ app.get('/api/me', requireAuth, (req, res) => {
 
 // ── USER MANAGEMENT API (RBAC) ────────────────────────────────────────────────
 app.get('/api/users', requireAuth, (req, res) => {
-  const users = db.prepare('SELECT id, username, name, email, role, permissions, avatar FROM users').all() as any[];
-  const parsed = users.map(u => ({
-    ...u,
-    permissions: (() => { try { return JSON.parse(u.permissions || '{}'); } catch { return {}; } })()
-  }));
-  res.json(parsed);
+  // Only members of the active company are visible (never other tenants' users).
+  const requester = (req as any).user;
+  const companyId = (req as any).companyId;
+  const users = db.prepare(`
+    SELECT u.id, u.username, u.name, u.email, u.role, u.permissions, u.avatar
+    FROM users u JOIN user_companies uc ON uc.userId = u.id
+    WHERE uc.companyId = ?
+  `).all(companyId) as any[];
+  const canManage = requester.role === 'admin' || requester.isSuperAdmin === 1 || requester.permissions?.canManageUsers === true;
+  res.json(users.map((u) => canManage
+    ? { ...u, permissions: (() => { try { return JSON.parse(u.permissions || '{}'); } catch { return {}; } })() }
+    // Everyone else gets just enough to show names (e.g. salesperson pickers) - no emails or permissions.
+    : { id: u.id, username: u.username, name: u.name, avatar: u.avatar, role: u.role }));
 });
 
 app.post('/api/users', requireAuth, requirePermission('canManageUsers'), async (req, res) => {
   const { username, name, email, password, role, permissions } = req.body;
+  if (!name || !email || !/^\S+@\S+\.\S+$/.test(String(email))) return res.status(400).json({ error: 'A name and a valid email are required.' });
+  if (!password || String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (!['admin', 'accountant', 'sales_manager', 'salesperson'].includes(String(role))) return res.status(400).json({ error: 'Invalid role.' });
   try {
-    const hashed = await bcrypt.hash(password || 'admin123', BCRYPT_ROUNDS);
+    const hashed = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
     const userId = `u-${Date.now()}`;
     db.prepare(`
       INSERT INTO users (id, username, name, email, password, role, permissions, avatar)
@@ -1290,6 +1300,9 @@ app.post('/api/users', requireAuth, requirePermission('canManageUsers'), async (
       JSON.stringify(permissions || {}),
       'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=100&q=80'
     );
+    // Without a membership the user would silently fall back to the default company (wrong tenant).
+    db.prepare('INSERT OR IGNORE INTO user_companies (userId, companyId, role) VALUES (?, ?, ?)')
+      .run(userId, (req as any).companyId, role === 'admin' ? 'admin' : 'member');
     res.json({ id: userId });
   } catch (error: any) {
     res.status(400).json({ error: 'User creation failed: email or username might exist.' });
@@ -2611,24 +2624,27 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
   const profile = db.prepare('SELECT * FROM recurring_invoices WHERE id = ? AND companyId = ?').get(req.params.id, companyId) as any;
 
   if (!profile) return res.status(404).json({ error: 'Recurring profile not found' });
+  if (profile.status && profile.status !== 'active') {
+    return res.status(400).json({ error: `This subscription is ${profile.status}; activate it before generating invoices.` });
+  }
+  if (profile.endDate && new Date(profile.endDate).getTime() < Date.now() - 86400000) {
+    db.prepare("UPDATE recurring_invoices SET status = 'completed', updatedAt = ? WHERE id = ? AND companyId = ?").run(new Date().toISOString(), profile.id, companyId);
+    return res.status(400).json({ error: 'This subscription has passed its end date and was marked completed.' });
+  }
 
   try {
-    const invoiceId = `inv-${Date.now()}`;
+    const invoiceId = `inv-${crypto.randomUUID()}`;
     const invoiceNumber = getNextDocumentNumber('invoice', (req as any).companyId);
     const today = new Date().toISOString().slice(0, 10);
     const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const timestamp = new Date().toISOString();
 
     const items = typeof profile.lineItems === 'string' ? JSON.parse(profile.lineItems) : (profile.lineItems || []);
-    let subtotal = 0, taxTotal = 0;
-    for (const it of items) {
-      if (it.type === 'item') {
-        const lineSub = (Number(it.quantity) || 1) * (Number(it.unitPrice) || 0);
-        subtotal += lineSub;
-        taxTotal += lineSub * ((Number(it.taxPercent) || 15) / 100);
-      }
-    }
-    const total = Math.round((subtotal + taxTotal) * 100) / 100;
+    // Same maths as every other document: discounts honoured, tax-exempt (0%) lines stay exempt.
+    const calc: any = { lineItems: items };
+    recomputeTotals(calc);
+    const subtotal = calc.subtotal, taxTotal = calc.taxTotal, total = calc.total;
+    const discountTotal = calc.discountTotal;
 
     // Create the invoice
     db.prepare(`
@@ -2637,18 +2653,19 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
         notes, terms, currency, subtotal, discountTotal, taxTotal, total,
         payments, amountPaid, amountDue, createdAt, updatedAt, companyId,
         createdBy, createdByName
-      ) VALUES (?, ?, ?, ?, ?, 'posted', 'Net 30', ?, ?, ?, ?, ?, 0, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, 'posted', 'Net 30', ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?)
     `).run(
       invoiceId,
       invoiceNumber,
       profile.customerId,
       today,
       due,
-      typeof profile.lineItems === 'string' ? profile.lineItems : JSON.stringify(profile.lineItems),
+      JSON.stringify(items),
       profile.notes || `Generated from recurring subscription ${profile.number}`,
       profile.terms || '',
       profile.currency || 'SAR',
       subtotal,
+      discountTotal,
       taxTotal,
       total,
       total,
@@ -2661,14 +2678,22 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
 
     // Compute next run date
     const currentRun = new Date(profile.nextRunDate || today);
-    const nextDate = new Date(currentRun);
+    const addMonths = (d: Date, n: number) => {
+      // Clamp to the last day of the target month (Jan 31 + 1 month = Feb 28/29, not Mar 3).
+      const day = d.getUTCDate();
+      const r = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
+      const last = new Date(Date.UTC(r.getUTCFullYear(), r.getUTCMonth() + 1, 0)).getUTCDate();
+      r.setUTCDate(Math.min(day, last));
+      return r;
+    };
+    let nextDate = new Date(currentRun);
     switch (profile.frequency) {
-      case 'weekly': nextDate.setDate(nextDate.getDate() + 7); break;
-      case 'monthly': nextDate.setMonth(nextDate.getMonth() + 1); break;
-      case 'quarterly': nextDate.setMonth(nextDate.getMonth() + 3); break;
-      case 'semi_annual': nextDate.setMonth(nextDate.getMonth() + 6); break;
-      case 'yearly': nextDate.setFullYear(nextDate.getFullYear() + 1); break;
-      default: nextDate.setMonth(nextDate.getMonth() + 1); break;
+      case 'weekly': nextDate = new Date(currentRun.getTime() + 7 * 86400000); break;
+      case 'monthly': nextDate = addMonths(currentRun, 1); break;
+      case 'quarterly': nextDate = addMonths(currentRun, 3); break;
+      case 'semi_annual': nextDate = addMonths(currentRun, 6); break;
+      case 'yearly': nextDate = addMonths(currentRun, 12); break;
+      default: nextDate = addMonths(currentRun, 1); break;
     }
 
     const nextRunStr = nextDate.toISOString().slice(0, 10);
@@ -2679,6 +2704,7 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
       WHERE id = ? AND companyId = ?
     `).run(invoiceId, timestamp, nextRunStr, timestamp, profile.id, companyId);
 
+    try { applyInvoiceStockDelta(invoiceId, companyId, user, null, { status: 'posted', payments: [], lineItems: items }); } catch (e) { console.error('Recurring stock sync error:', e); }
     logDocumentActivity('invoice', invoiceId, invoiceNumber, 'created', { id: user?.id, name: 'Subscription Engine' }, companyId);
 
     res.json({
@@ -2796,6 +2822,21 @@ app.post('/api/portal/generate-link/:docType/:docId', requireAuth, (req, res) =>
 });
 
 // Public GET portal document (No auth required)
+// ── PUBLIC PORTAL GUARDS ──────────────────────────────────────────────────────
+const portalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  message: { error: 'Too many requests. Please try again later.' }
+});
+/** Finds a share link and rejects expired ones (410). Returns null after sending the response. */
+function getLiveShare(res: express.Response, docType: string, token: string): any | null {
+  const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
+  if (!share) { res.status(404).json({ error: 'Public link invalid or expired.' }); return null; }
+  const expired = share.status === 'expired' || (share.expiresAt && new Date(share.expiresAt).getTime() < Date.now());
+  if (expired) { res.status(410).json({ error: 'This link has expired. Please ask the sender for a new one.' }); return null; }
+  return share;
+}
+
 app.get('/api/portal/:docType/:token', (req, res) => {
   const { docType, token } = req.params;
   if (docType !== 'quotation' && docType !== 'invoice') {
@@ -2803,8 +2844,8 @@ app.get('/api/portal/:docType/:token', (req, res) => {
   }
 
   try {
-    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
-    if (!share) return res.status(404).json({ error: 'Public link invalid or expired.' });
+    const share = getLiveShare(res, docType, token);
+    if (!share) return;
 
     // Increment view count
     db.prepare('UPDATE public_shares SET viewsCount = viewsCount + 1, lastViewedAt = ? WHERE id = ?').run(new Date().toISOString(), share.id);
@@ -2819,11 +2860,12 @@ app.get('/api/portal/:docType/:token', (req, res) => {
     const settings = readTenantSettings(share.companyId);
 
     let zatcaQr: string | null = null;
-    if (docType === 'invoice') {
+    // Only encode a QR when the company has a real VAT number (never a placeholder).
+    if (docType === 'invoice' && settings.profile?.vatNumber) {
       try {
         zatcaQr = generateZatcaQRBase64(
           settings.profile?.name || companyRow?.name || 'Qvoke Enterprise',
-          settings.profile?.vatNumber || '300000000000003',
+          settings.profile?.vatNumber || '',
           doc.date,
           doc.total,
           doc.taxTotal
@@ -2873,15 +2915,26 @@ app.get('/api/portal/:docType/:token', (req, res) => {
 });
 
 // Public POST accept quotation / invoice (No auth required)
-app.post('/api/portal/:docType/:token/accept', (req, res) => {
+app.post('/api/portal/:docType/:token/accept', portalLimiter, (req, res) => {
   const { docType, token } = req.params;
   const { clientName, signature } = req.body;
 
-  if (!clientName) return res.status(400).json({ error: 'Signer name is required for approval' });
+  if (!clientName || !String(clientName).trim()) return res.status(400).json({ error: 'Signer name is required for approval' });
+  if (signature && String(signature).length > 300_000) return res.status(413).json({ error: 'Signature image is too large' });
 
   try {
-    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
-    if (!share) return res.status(404).json({ error: 'Public link invalid' });
+    const share = getLiveShare(res, docType, token);
+    if (!share) return;
+    if (share.status === 'accepted' || share.status === 'declined') {
+      return res.status(409).json({ error: `This document was already ${share.status}.` });
+    }
+    if (docType === 'quotation') {
+      const q = db.prepare('SELECT status FROM quotations WHERE id = ?').get(share.docId) as any;
+      if (!q) return res.status(404).json({ error: 'Document not found' });
+      if (q.status !== 'draft' && q.status !== 'sent') {
+        return res.status(409).json({ error: `This quotation can no longer be accepted (status: ${q.status}).` });
+      }
+    }
 
     const timestamp = new Date().toISOString();
     db.prepare(`
@@ -2891,7 +2944,7 @@ app.post('/api/portal/:docType/:token/accept', (req, res) => {
     `).run(timestamp, clientName.trim(), signature || null, share.id);
 
     if (docType === 'quotation') {
-      db.prepare("UPDATE quotations SET status = 'confirmed', updatedAt = ? WHERE id = ?").run(timestamp, share.docId);
+      db.prepare("UPDATE quotations SET status = 'confirmed', updatedAt = ? WHERE id = ? AND companyId = ?").run(timestamp, share.docId, share.companyId);
       logDocumentActivity('quotation', share.docId, null, 'status_changed', { id: 'client-portal', name: `${clientName} (Portal)` }, share.companyId, [
         { field: 'status', from: 'sent', to: 'confirmed' }
       ]);
@@ -2904,13 +2957,16 @@ app.post('/api/portal/:docType/:token/accept', (req, res) => {
 });
 
 // Public POST decline quotation (No auth required)
-app.post('/api/portal/:docType/:token/decline', (req, res) => {
+app.post('/api/portal/:docType/:token/decline', portalLimiter, (req, res) => {
   const { docType, token } = req.params;
-  const { feedbackNote } = req.body;
+  const feedbackNote = typeof req.body?.feedbackNote === 'string' ? req.body.feedbackNote.slice(0, 1000) : '';
 
   try {
-    const share = db.prepare('SELECT * FROM public_shares WHERE token = ? AND docType = ?').get(token, docType) as any;
-    if (!share) return res.status(404).json({ error: 'Public link invalid' });
+    const share = getLiveShare(res, docType, token);
+    if (!share) return;
+    if (share.status === 'accepted' || share.status === 'declined') {
+      return res.status(409).json({ error: `This document was already ${share.status}.` });
+    }
 
     const timestamp = new Date().toISOString();
     db.prepare(`
