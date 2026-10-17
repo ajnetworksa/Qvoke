@@ -7,7 +7,7 @@
 import Database from 'better-sqlite3';
 import { generateZatcaQRBase64 } from './src/utils/zatca';
 
-const DB_PATH = './quotes.db';
+const DB_PATH = process.env.DB_PATH || './quotes.db';
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
@@ -104,25 +104,27 @@ async function runSuite() {
   // ---------------------------------------------------------
   console.log('\n--- SUITE 2: Document Sequence Generators ---');
 
-  await runTest('Sequences', 'Atomic Sequence Generation for all document types (EXP, REC, PO, INV, QT)', () => {
+  await runTest('Sequences', 'Per-company sequences are independent (EXP, REC, PO, INV, QT)', () => {
     const types = ['EXP', 'REC', 'PO', 'INV', 'QT'];
-    for (const type of types) {
-      db.prepare(`
-        INSERT OR REPLACE INTO sequences (docType, prefix, lastNumber, padding, resetPeriod, lastYear)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(type, `${type}-`, 1, 4, 'yearly', 2026);
-
-      // Simulate atomic generation
-      const seq = db.prepare(`SELECT * FROM sequences WHERE docType = ?`).get(type) as any;
-      assert(!!seq, `Sequence for ${type} should exist`);
-      
-      const formatted = `${seq.prefix}${String(seq.lastNumber).padStart(seq.padding, '0')}`;
-      assertEquals(formatted, `${type}-0001`, `Formatted sequence string for ${type}`);
-
-      // Increment
-      db.prepare(`UPDATE sequences SET lastNumber = lastNumber + 1 WHERE docType = ?`).run(type);
-      const updatedSeq = db.prepare(`SELECT lastNumber FROM sequences WHERE docType = ?`).get(type) as any;
-      assertEquals(updatedSeq.lastNumber, 2, `Next number incremented to 2`);
+    const companyA = 'seq_a_' + Date.now();
+    const companyB = 'seq_b_' + Date.now();
+    try {
+      for (const type of types) {
+        for (const c of [companyA, companyB]) {
+          db.prepare(`
+            INSERT INTO sequences (companyId, docType, prefix, lastNumber, padding, resetPeriod, lastYear)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(c, type, `${type}-`, 1, 4, 'yearly', 2026);
+        }
+        // Advancing company A must not move company B.
+        db.prepare(`UPDATE sequences SET lastNumber = lastNumber + 1 WHERE docType = ? AND companyId = ?`).run(type, companyA);
+        const a = db.prepare(`SELECT * FROM sequences WHERE docType = ? AND companyId = ?`).get(type, companyA) as any;
+        const b = db.prepare(`SELECT * FROM sequences WHERE docType = ? AND companyId = ?`).get(type, companyB) as any;
+        assertEquals(`${a.prefix}${String(a.lastNumber).padStart(a.padding, '0')}`, `${type}-0002`, `Company A ${type} advanced`);
+        assertEquals(`${b.prefix}${String(b.lastNumber).padStart(b.padding, '0')}`, `${type}-0001`, `Company B ${type} unchanged`);
+      }
+    } finally {
+      db.prepare(`DELETE FROM sequences WHERE companyId IN (?, ?)`).run(companyA, companyB);
     }
   });
 

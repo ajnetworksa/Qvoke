@@ -2,7 +2,7 @@ import React, { forwardRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-interface SortableTableRowProps extends React.HTMLAttributes<HTMLTableRowElement> {
+interface SortableTableRowProps extends Omit<React.HTMLAttributes<HTMLTableRowElement>, "children"> {
   id: string;
   children: (
     setActivatorNodeRef: (node: HTMLElement | null) => void,
@@ -12,7 +12,7 @@ interface SortableTableRowProps extends React.HTMLAttributes<HTMLTableRowElement
 }
 
 export const SortableTableRow = forwardRef<HTMLTableRowElement, SortableTableRowProps>(
-  ({ id, children, style, ...props }, ref) => {
+  ({ id, children, style, className, ...props }, ref) => {
   const {
     attributes,
     listeners,
@@ -45,7 +45,7 @@ export const SortableTableRow = forwardRef<HTMLTableRowElement, SortableTableRow
     <tr
       ref={setRef}
       style={combinedStyle}
-      className={`${props.className || ''} ${isDragging ? 'bg-[var(--color-primary)]/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-2 ring-[var(--color-primary)] ring-opacity-50 opacity-100 scale-[1.01] backdrop-blur-md' : 'hover:bg-[var(--color-surface-offset)]/50'}`}
+      className={`${className || ''} ${isDragging ? 'bg-[var(--color-primary)]/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-2 ring-[var(--color-primary)] ring-opacity-50 opacity-100 scale-[1.01] backdrop-blur-md' : 'hover:bg-[var(--color-surface-offset)]/50'}`}
       {...props}
     >
       {children(setActivatorNodeRef, listeners, attributes)}

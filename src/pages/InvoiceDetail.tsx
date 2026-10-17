@@ -4,6 +4,9 @@ import { Customer, Product, LineItem, Invoice, Payment } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useDraft } from '../hooks/useDraft';
+import { fetchDocumentDefaults } from '../utils/documentDefaults';
+import { getLineNumber } from '../utils/lineNumber';
+import type { LineNumberFormat } from '../utils/lineNumber';
 import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
@@ -167,12 +170,22 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
           subtotal: 0
         }
       ]);
-      setNotes('Please settle within the payment period.\nالرجاء السداد خلال فترة الدفع المحددة.');
-      setTerms(
-        "BANK DETAILS: ALINMA BANK - Account: 68206662020000\nIBAN: SA0305000068206662020000 ABDULMOSHIN ABDULAZIZ AL-JABR TRADING CO."
-      );
+      const defaultNotesText = 'Please settle within the payment period.\nالرجاء السداد خلال فترة الدفع المحددة.';
+      setNotes(defaultNotesText);
+      const defaultTermsText = [
+          company.bankName && `BANK DETAILS: ${company.bankName}${company.bankAccount ? ` - Account: ${company.bankAccount}` : ''}`,
+          company.bankIban && `IBAN: ${company.bankIban}${company.name ? ` ${company.name}` : ''}`
+        ].filter(Boolean).join('\n');
+      setTerms(defaultTermsText);
       setCurrency(company.currency);
       setLinkedQuoteId(undefined);
+      // Company-configured defaults (fetched fresh); applied only if the user hasn't edited the built-in text yet.
+      fetchDocumentDefaults().then((d) => {
+        if (!d.invoice.enabled) return;
+        if (d.invoice.notes) setNotes((prev) => (prev === defaultNotesText ? d.invoice.notes : prev));
+        if (d.invoice.terms) setTerms((prev) => (prev === defaultTermsText ? d.invoice.terms : prev));
+      });
+
       setWatermarkText('PAID');
       setWatermarkType('none');
       setHidePrices(false);
@@ -1455,7 +1468,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
                         <td className="py-2 px-2 text-center">
                           <button
                             type="button"
-                            onClick={() => handleDeleteLine(item.id)}
+                            onClick={() => removeItem(item.id)}
                             className="p-1 hover:bg-[var(--color-error)]/10 text-[var(--color-text-faint)] hover:text-[var(--color-error)] rounded transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1914,7 +1927,7 @@ export const InvoiceDetail: React.FC<InvoiceDetailProps> = ({ id }) => {
           docType="invoice"
           docId={id}
           docNumber={number}
-          customerPhone={customerObj?.phone}
+          customerPhone={custObj?.phone}
           onClose={() => setShareModalOpen(false)}
         />
       )}

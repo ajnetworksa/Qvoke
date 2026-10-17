@@ -4,6 +4,7 @@ import { Customer, Product, LineItem, Quotation } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { useAutoSave } from '../hooks/useAutoSave';
 import { useDraft } from '../hooks/useDraft';
+import { fetchDocumentDefaults } from '../utils/documentDefaults';
 import { AutoSaveIndicator } from '../components/AutoSaveIndicator';
 import { CustomerCombobox } from '../components/CustomerCombobox';
 import { ProductCombobox } from '../components/ProductCombobox';
@@ -154,12 +155,19 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
           subtotal: 0
         }
       ]);
-      setNotes('Any additional work/device will be considered Change Order.\nسيتم اعتبار أي عمل إضافي بمثابة أمر تغيير.');
-      setTerms(
-        "Payment: 50% Downpayment | Balance Upon Delivery\nمقدم 50% | الرصيد عند التسليم\nWarranty: 2 YEARS limited warranty and/or supplier's recommendation\nضمان محدود لمدة عامين وأو توصية المورد\nManpower: 4 Technicians, 1 Supervisor\nفنيين 1 مشرف 4\nBANK DETAILS: ALINMA BANK - Account: 68206662020000\nIBAN: SA0305000068206662020000 ABDULMOSHIN ABDULAZIZ AL-JABR TRADING CO."
-      );
+      const defaultNotesText = 'Any additional work/device will be considered Change Order.\nسيتم اعتبار أي عمل إضافي بمثابة أمر تغيير.';
+      setNotes(defaultNotesText);
+      const defaultTermsText = "Payment: 50% Downpayment | Balance Upon Delivery\nمقدم 50% | الرصيد عند التسليم\nWarranty: 2 YEARS limited warranty and/or supplier's recommendation\nضمان محدود لمدة عامين وأو توصية المورد\nManpower: 4 Technicians, 1 Supervisor\nفنيين 1 مشرف 4\nBANK DETAILS: ALINMA BANK - Account: 68206662020000\nIBAN: SA0305000068206662020000 ABDULMOSHIN ABDULAZIZ AL-JABR TRADING CO.";
+      setTerms(defaultTermsText);
       setCurrency(company.currency);
       setWatermarkText('DRAFT');
+      // Company-configured defaults (fetched fresh); applied only if the user hasn't edited the built-in text yet.
+      fetchDocumentDefaults().then((d) => {
+        if (!d.quotation.enabled) return;
+        if (d.quotation.notes) setNotes((prev) => (prev === defaultNotesText ? d.quotation.notes : prev));
+        if (d.quotation.terms) setTerms((prev) => (prev === defaultTermsText ? d.quotation.terms : prev));
+      });
+
       setWatermarkType('none');
       setHidePrices(false);
       setManualTotal('');
@@ -690,13 +698,13 @@ export const QuotationDetail: React.FC<QuotationDetailProps> = ({ id }) => {
     alert('Quotation Confirmed! Ready to invoice.');
   };
 
-  const handleConvertToInvoice = () => {
+  const handleConvertToInvoice = async () => {
     if (isDirty) {
       alert('Please save the quotation first / الرجاء حفظ التعديلات أولاً');
       return;
     }
 
-    const invoiceId = convertToInvoice(id);
+    const invoiceId = await convertToInvoice(id);
     if (invoiceId) {
       alert('Quotation successfully converted to Invoice / تم تحويل العرض إلى فاتورة بنجاح');
       setRoute('invoice-detail', invoiceId);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 
 interface ConfirmDialogProps {
@@ -22,6 +22,17 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   cancelText = 'Cancel / إلغاء',
   type = 'info'
 }) => {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
+  // Escape closes the dialog; focus lands on the primary action so keyboard users can act immediately.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    confirmRef.current?.focus();
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const getColorTheme = () => {
@@ -47,7 +58,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   const theme = getColorTheme();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in"
@@ -57,6 +68,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       {/* Modal Box */}
       <div className="relative w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg p-6 overflow-hidden animate-slide-in">
         <button
+          type="button"
+          aria-label="Close"
           onClick={onClose}
           className="absolute top-4 right-4 p-1 hover:bg-[var(--color-surface-offset)] rounded transition-colors"
         >
@@ -66,10 +79,10 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         <div className="flex items-start gap-4">
           <AlertCircle className={`w-6 h-6 flex-shrink-0 mt-0.5 ${theme.icon}`} />
           <div className="flex-1 text-left">
-            <h3 className="text-base font-bold text-[var(--color-text)] mb-2">
+            <h3 id="confirm-dialog-title" className="text-base font-bold text-[var(--color-text)] mb-2">
               {title}
             </h3>
-            <p className="text-sm text-[var(--color-text-muted)] leading-relaxed mb-6">
+            <p id="confirm-dialog-message" className="text-sm text-[var(--color-text-muted)] leading-relaxed mb-6">
               {message}
             </p>
 
@@ -82,6 +95,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                 {cancelText}
               </button>
               <button
+                ref={confirmRef}
                 type="button"
                 onClick={() => {
                   onConfirm();

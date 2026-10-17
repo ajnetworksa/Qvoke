@@ -28,6 +28,7 @@ interface BOQSection {
 }
 interface BOQDoc {
   id: string;
+  createdBy?: string;
   number: string;
   title: string;
   titleAr?: string;

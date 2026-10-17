@@ -17,7 +17,8 @@ import {
   StickyNote,
   Pencil,
   FileText,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Trash2
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 
@@ -43,7 +44,8 @@ const INVOICE_BULK: { label: string; status: Invoice['status']; icon: React.Elem
 export const Tracking: React.FC = () => {
   const {
     quotations, invoices, customers, setRoute,
-    updateQuotation, updateInvoice, setFollowUp
+    updateQuotation, updateInvoice, setFollowUp,
+    deleteQuotation, deleteInvoice
   } = useERPStore();
 
   const [docType, setDocType] = useState<DocType>('quotation');
@@ -100,6 +102,15 @@ export const Tracking: React.FC = () => {
     [docs]
   );
 
+  // Drop selections that the current filters hide, so bulk actions never touch invisible rows.
+  React.useEffect(() => {
+    setSelected((s) => {
+      const visible = new Set(filtered.map((d) => d.id));
+      const next = s.filter((id) => visible.has(id));
+      return next.length === s.length ? s : next;
+    });
+  }, [filtered]);
+
   const switchType = (t: DocType) => { setDocType(t); setSelected([]); setStatusFilter('all'); };
 
   const toggleAll = (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -118,6 +129,40 @@ export const Tracking: React.FC = () => {
       }
     });
     setSelected([]);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.length === 0) return;
+    if (!confirm(`Delete ${selected.length} selected ${docType === 'quotation' ? 'quotation' : 'invoice'}(s)? This cannot be undone.`)) return;
+    const remove = docType === 'quotation' ? deleteQuotation : deleteInvoice;
+    await Promise.all(selected.map((id) => remove(id)));
+    setSelected([]);
+  };
+
+  // CSV export of the filtered rows (or the selection): UTF-8 BOM for Arabic in Excel,
+  // every cell quoted, and formula-leading characters neutralised (CSV injection).
+  const handleExportCsv = () => {
+    const rows = (selected.length ? filtered.filter((d) => selected.includes(d.id)) : filtered) as (Quotation | Invoice)[];
+    if (rows.length === 0) return;
+    const cell = (v: unknown) => {
+      let t = v === null || v === undefined ? '' : String(v);
+      if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+      return '"' + t.replace(/"/g, '""') + '"';
+    };
+    const header = ['Number', 'Customer', 'Status', 'Date', 'Total', 'Currency', 'Follow-up date', 'Follow-up note'];
+    const lines = rows.map((d) => [
+      d.number, getCustomerName(d.customerId), d.status,
+      d.date ? new Date(d.date).toISOString().slice(0, 10) : '',
+      (Number(d.total) || 0).toFixed(2), d.currency,
+      d.followUpDate ? String(d.followUpDate).slice(0, 10) : '', d.followUpNote || ''
+    ].map(cell).join(','));
+    const csv = '\ufeff' + [header.map(cell).join(','), ...lines].join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tracking-${docType}s-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const openEdit = (d: Quotation | Invoice) => {
@@ -434,11 +479,21 @@ export const Tracking: React.FC = () => {
         title="Tracking & Follow-ups / المتابعة"
         breadcrumbs={[{ label: 'Home' }, { label: 'Tracking' }]}
         actions={
-          overdueCount > 0 ? (
-            <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/20 px-3 py-1.5 rounded-full">
-              <Bell className="w-3.5 h-3.5" /> {overdueCount} follow-up{overdueCount > 1 ? 's' : ''} overdue
-            </span>
-          ) : null
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={filtered.length === 0}
+              className="flex items-center gap-1.5 text-xs font-semibold border border-[var(--color-border)] hover:bg-[var(--color-surface-offset)] text-[var(--color-text)] px-3 py-1.5 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            {overdueCount > 0 ? (
+              <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--color-error)] bg-[var(--color-error)]/10 border border-[var(--color-error)]/20 px-3 py-1.5 rounded-full">
+                <Bell className="w-3.5 h-3.5" /> {overdueCount} follow-up{overdueCount > 1 ? 's' : ''} overdue
+              </span>
+            ) : null}
+          </div>
         }
       />
 
@@ -553,7 +608,7 @@ export const Tracking: React.FC = () => {
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" /> <span className="whitespace-nowrap">Merge Excel</span>
             </button>
-            {editTarget?.bulk && (
+            {(
               <button
                 onClick={() => handleBulkDelete()}
                 className="bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-[11px] font-semibold py-1.5 px-3 rounded flex items-center gap-1 transition-colors cursor-pointer ml-auto"

@@ -32,6 +32,7 @@ import UsersDB from '../components/UsersDB';
 import DatabaseBackupDB from '../components/DatabaseBackupDB';
 import { PDFTemplateStudio } from '../components/PDFTemplateStudio';
 import { THEME_PRESETS, UI_THEMES } from '../theme';
+import { DocumentDefaults, EMPTY_DOCUMENT_DEFAULTS, fetchDocumentDefaults, saveDocumentDefaults } from '../utils/documentDefaults';
 
 export const Settings: React.FC = () => {
   const {
@@ -85,13 +86,15 @@ export const Settings: React.FC = () => {
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [updateOutput, setUpdateOutput] = useState('');
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
+  const [docDefaults, setDocDefaults] = useState<DocumentDefaults>(EMPTY_DOCUMENT_DEFAULTS);
+  const [docDefaultsStatus, setDocDefaultsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [selectedIntegration, setSelectedIntegration] = useState<{name: string, type: 'payment'|'accounting'} | null>(null);
 
   const fetchLogs = async () => {
     setLogsLoading(true);
     try {
       const token = useERPStore.getState().token;
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
       const res = await fetch(`/api/logs?limit=200`, { headers });
       if (res.ok) {
         const data = await res.json();
@@ -105,11 +108,25 @@ export const Settings: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (activeSubTab === 'document') fetchDocumentDefaults().then(setDocDefaults);
+  }, [activeSubTab]);
+
+  const updateDocDefault = (kind: 'quotation' | 'invoice', patch: Partial<DocumentDefaults['quotation']>) =>
+    setDocDefaults((d) => ({ ...d, [kind]: { ...d[kind], ...patch } }));
+
+  const handleSaveDocDefaults = async () => {
+    setDocDefaultsStatus('loading');
+    const ok = await saveDocumentDefaults(docDefaults);
+    setDocDefaultsStatus(ok ? 'success' : 'error');
+    setTimeout(() => setDocDefaultsStatus('idle'), 2500);
+  };
+
   // Fetch detailedLogsEnabled and logs
   useEffect(() => {
     if (activeSubTab === 'logs') {
       const token = useERPStore.getState().token;
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
 
       fetch('/api/settings/detailedLogsEnabled', { headers })
         .then(res => res.json())
@@ -141,7 +158,7 @@ export const Settings: React.FC = () => {
     if (!confirm('Are you sure you want to clear all system logs?')) return;
     try {
       const token = useERPStore.getState().token;
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
       const res = await fetch('/api/logs/clear', { method: 'POST', headers });
       if (res.ok) {
         setSystemLogs([]);
@@ -158,7 +175,7 @@ export const Settings: React.FC = () => {
     setUpdateOutput('');
     try {
       const token = useERPStore.getState().token;
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
       const res = await fetch('/api/system/update', { method: 'POST', headers });
       const data = await res.json();
       if (res.ok) {
@@ -868,6 +885,57 @@ export const Settings: React.FC = () => {
               {/* ── Document Numbering Sequences ──────────────────────────── */}
               <div className="border-t border-[var(--color-divider)]/30 pt-6">
                 <NumberingSequencesPanel />
+              </div>
+
+              {/* ── Default Notes & Terms ─────────────────────────────────── */}
+              <div className="border-t border-[var(--color-divider)]/30 pt-6">
+                <h4 className="text-xs font-black uppercase tracking-wider text-[var(--color-text)] mb-1">
+                  Default Notes &amp; Terms / الملاحظات والشروط الافتراضية
+                </h4>
+                <p className="text-[11px] text-[var(--color-text-muted)] mb-4">
+                  Pre-filled on every new quotation or invoice. Existing documents are never changed.
+                </p>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {(['quotation', 'invoice'] as const).map((kind) => (
+                    <div key={kind} className="rounded-xl border border-[var(--color-border)] p-4 flex flex-col gap-3">
+                      <label className="flex items-center gap-2 text-xs font-bold text-[var(--color-text)] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={docDefaults[kind].enabled}
+                          onChange={(e) => updateDocDefault(kind, { enabled: e.target.checked })}
+                        />
+                        Pre-fill new {kind === 'quotation' ? 'quotations' : 'invoices'} with these defaults
+                      </label>
+                      <textarea
+                        value={docDefaults[kind].notes}
+                        onChange={(e) => updateDocDefault(kind, { notes: e.target.value })}
+                        placeholder="Default notes"
+                        rows={3}
+                        className="premium-input text-xs w-full"
+                      />
+                      <textarea
+                        value={docDefaults[kind].terms}
+                        onChange={(e) => updateDocDefault(kind, { terms: e.target.value })}
+                        placeholder="Default terms &amp; conditions"
+                        rows={5}
+                        className="premium-input text-xs w-full"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSaveDocDefaults}
+                    disabled={docDefaultsStatus === 'loading'}
+                    className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold py-2.5 px-4 rounded-md flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {docDefaultsStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Save Defaults
+                  </button>
+                  {docDefaultsStatus === 'success' && <span className="text-emerald-500 text-[10px] font-bold">Saved!</span>}
+                  {docDefaultsStatus === 'error' && <span className="text-red-500 text-[10px] font-bold">Failed to save defaults.</span>}
+                </div>
               </div>
 
               {/* Pricing Settings (Default Markup) */}

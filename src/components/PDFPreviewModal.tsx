@@ -77,11 +77,11 @@ const mapToPdfData = (
     pdfManpower: companyProfile.pdfManpower || "2 Technicians, 1 Supervisor",
     pdfMobilization: companyProfile.pdfMobilization || "3-4 days upon confirmation of payment",
     pdfDuration: companyProfile.pdfDuration || "4-5 Working Days",
-    bankName: companyProfile.bankName || "ALINMA BANK",
-    bankAccount: companyProfile.bankAccount || "68206662020000",
-    bankIban: companyProfile.bankIban || "SA0305000068206662020000",
-    bankAccountName: companyProfile.name || "AJ Network Solutions",
-    footerText: companyProfile.name || "AJ Network Solutions",
+    bankName: companyProfile.bankName || null,
+    bankAccount: companyProfile.bankAccount || null,
+    bankIban: companyProfile.bankIban || null,
+    bankAccountName: companyProfile.name || "",
+    footerText: companyProfile.name || "",
     pdfHeaderBgType: companyProfile.pdfHeaderBgType || 'solid',
     pdfHeaderBgColorStart: companyProfile.pdfHeaderBgColorStart || '#91f0a9',
     pdfHeaderBgColorEnd: companyProfile.pdfHeaderBgColorEnd || '#91f0a9',
@@ -271,7 +271,7 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   const isInvoice = type === 'invoice';
 
   // Get bilingual notes split side-by-side
-  const noteItems = React.useMemo(() => {
+  const noteItems = React.useMemo((): { en: string; ar: string }[] => {
     const notes = documentData.notes || documentData.terms || '';
     const notesAr = documentData.notesAr || '';
     if (notesAr.trim()) {

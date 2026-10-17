@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useERPStore } from '../store';
-import { ShoppingCart, Search, Plus, Minus, Trash2, CreditCard, Receipt, Printer, CheckCircle2, UserCheck, X, DollarSign, ArrowRight } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, CreditCard, Receipt, Printer, CheckCircle2, UserCheck, X, Loader2, DollarSign, ArrowRight } from 'lucide-react';
 import EmptyState from '../components/EmptyState';
 import QRCode from 'qrcode';
 import { generateZatcaQRBase64 } from '../utils/zatca';
@@ -156,13 +156,13 @@ export default function POS() {
       await addInvoice(invPayload);
 
       // Generate ZATCA QR
-      const zatcaTlv = generateZatcaQRBase64({
-        sellerName: company.name || 'Qvoke Store',
-        vatNumber: company.vatNumber || '300000000000003',
-        timestamp: new Date().toISOString(),
-        invoiceTotal: total.toFixed(2),
-        vatTotal: taxTotal.toFixed(2)
-      });
+      const zatcaTlv = generateZatcaQRBase64(
+        company.name || 'Qvoke Store',
+        company.vatNumber || '300000000000003',
+        new Date().toISOString(),
+        total,
+        taxTotal
+      );
       const qrDataUrl = await QRCode.toDataURL(zatcaTlv, { width: 140, margin: 1 });
       setZatcaQrCode(qrDataUrl);
 

@@ -382,7 +382,11 @@ addColumnIfNotExists('products', 'minStockLevel', 'REAL DEFAULT 5');
 addColumnIfNotExists('products', 'trackStock', 'INTEGER DEFAULT 1');
 
 // Seed default numbering sequences
+const sequencesArePerCompany = (): boolean =>
+  (db.prepare("PRAGMA table_info(sequences)").all() as any[]).some((c) => c.name === 'companyId');
+
 const seedSequences = () => {
+  if (sequencesArePerCompany()) return; // migrated: rows are created lazily per company
   const defaults: { docType: string; prefix: string }[] = [
     { docType: 'quotation', prefix: 'QT' },
     { docType: 'invoice', prefix: 'INV' },
@@ -408,6 +412,7 @@ seedSequences();
 // series instead of starting a parallel one. Guarded by a settings flag; after this runs,
 // the sequence config is owned by the user (editable via Settings) and never auto-changed.
 const reconcileSequences = () => {
+  if (sequencesArePerCompany()) return;
   const flag = db.prepare("SELECT value FROM settings WHERE key = 'sequencesReconciled'").get() as { value: string } | undefined;
   if (flag?.value === 'true') return;
 
@@ -459,9 +464,27 @@ reconcileSequences();
 // Atomically reserve and format the next number for a document type.
 // Retry-safe: if the generated number already exists in the target table
 // (e.g. due to manual edits or a race condition), it increments and retries.
-function getNextDocumentNumber(docType: string): string {
-  const MAX_RETRIES = 5;
-  const seq = db.prepare('SELECT * FROM sequences WHERE docType = ?').get(docType) as
+const DEFAULT_SEQUENCE_PREFIX: Record<string, string> = {
+  quotation: 'QT', invoice: 'INV', boq: 'BOQ', bom: 'BOM', expense: 'EXP', recurring: 'REC', po: 'PO'
+};
+
+function ensureCompanySequence(docType: string, companyId: string): void {
+  const have = db.prepare('SELECT 1 FROM sequences WHERE docType = ? AND companyId = ?').get(docType, companyId);
+  if (have) return;
+  // New company: inherit prefix/format from an existing config, but start counting from 0.
+  const tpl = db.prepare('SELECT prefix, padding, resetPeriod FROM sequences WHERE docType = ? LIMIT 1').get(docType) as any;
+  db.prepare(`INSERT OR IGNORE INTO sequences (companyId, docType, prefix, lastNumber, padding, resetPeriod, lastYear)
+              VALUES (?, ?, ?, 0, ?, ?, ?)`)
+    .run(companyId, docType, tpl?.prefix || DEFAULT_SEQUENCE_PREFIX[docType] || docType.toUpperCase(),
+      tpl?.padding ?? 4, tpl?.resetPeriod || 'yearly', new Date().getFullYear());
+}
+
+function getNextDocumentNumber(docType: string, companyId: string): string {
+  const MAX_RETRIES = 1000;
+  if (!DEFAULT_SEQUENCE_PREFIX[docType]) throw new Error(`Unknown document type for numbering: ${docType}`);
+  if (!companyId) throw new Error('companyId is required for numbering');
+  ensureCompanySequence(docType, companyId);
+  const seq = db.prepare('SELECT * FROM sequences WHERE docType = ? AND companyId = ?').get(docType, companyId) as
     | { docType: string; prefix: string; lastNumber: number; padding: number; resetPeriod: string; lastYear: number | null }
     | undefined;
   if (!seq) {
@@ -486,7 +509,7 @@ function getNextDocumentNumber(docType: string): string {
 
     // Check if this number is already taken (e.g. manually imported or race)
     if (table) {
-      const clash = db.prepare(`SELECT 1 FROM ${table} WHERE number = ?`).get(candidate);
+      const clash = db.prepare(`SELECT 1 FROM ${table} WHERE number = ? AND companyId = ?`).get(candidate, companyId);
       if (clash) {
         nextNumber++;
         continue; // try the next number
@@ -495,19 +518,13 @@ function getNextDocumentNumber(docType: string): string {
 
     // Reserve the number
     db.prepare(`
-      UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
-    `).run(nextNumber, currentYear, docType);
+      UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ? AND companyId = ?
+    `).run(nextNumber, currentYear, docType, companyId);
     return candidate;
   }
 
-  // Fallback after all retries (extremely unlikely)
-  db.prepare(`
-    UPDATE sequences SET lastNumber = ?, lastYear = ? WHERE docType = ?
-  `).run(nextNumber, currentYear, docType);
-  const padded = String(nextNumber).padStart(seq.padding, '0');
-  return seq.resetPeriod === 'yearly'
-    ? `${seq.prefix}-${currentYear}-${padded}`
-    : `${seq.prefix}-${padded}`;
+  // Never hand out a number that may already exist (would create duplicate documents).
+  throw new Error(`Could not allocate a free ${docType} number after ${MAX_RETRIES} attempts`);
 }
 
 // ── DOCUMENT ACTIVITY / AUDIT TRAIL ───────────────────────────────────────────
@@ -1545,7 +1562,7 @@ app.delete('/api/products/:id', requireAuth, requirePermission('canDeleteData'),
 // ── DOCUMENT NUMBERING ────────────────────────────────────────────────────────
 app.get('/api/sequences/next/:docType', requireAuth, (req, res) => {
   try {
-    const number = getNextDocumentNumber(req.params.docType);
+    const number = getNextDocumentNumber(req.params.docType, (req as any).companyId);
     res.json({ number });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -1553,7 +1570,9 @@ app.get('/api/sequences/next/:docType', requireAuth, (req, res) => {
 });
 
 app.get('/api/sequences', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM sequences').all();
+  const companyId = (req as any).companyId;
+  for (const dt of Object.keys(DEFAULT_SEQUENCE_PREFIX)) ensureCompanySequence(dt, companyId);
+  const rows = db.prepare('SELECT * FROM sequences WHERE companyId = ?').all(companyId);
   res.json(rows);
 });
 
@@ -1561,8 +1580,8 @@ app.put('/api/sequences/:docType', requireAuth, requirePermission('canManageSett
   const { prefix, padding, resetPeriod } = req.body;
   try {
     db.prepare(`
-      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ? WHERE docType = ?
-    `).run(prefix, padding, resetPeriod, req.params.docType);
+      UPDATE sequences SET prefix = ?, padding = ?, resetPeriod = ? WHERE docType = ? AND companyId = ?
+    `).run(prefix, padding, resetPeriod, req.params.docType, (req as any).companyId);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1584,6 +1603,41 @@ app.get('/api/quotes', requireAuth, (req, res) => {
   res.json(parsed);
 });
 
+// SECURITY/INTEGRITY: never trust client-supplied money fields. Recompute totals from the line items
+// (same rules as the client's calculateTotals) unless a manual total override is in play.
+const roundMoney = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+function recomputeTotals(body: any): void {
+  if (!body || !Array.isArray(body.lineItems)) return;
+  if (body.manualTotal !== undefined && body.manualTotal !== null && body.manualTotal !== '') return;
+  let subtotal = 0, discountTotal = 0, taxTotal = 0;
+  for (const item of body.lineItems) {
+    if (!item || item.type !== 'item') continue;
+    const qty = Math.max(0, Number(item.quantity) || 0);
+    const price = Math.max(0, Number(item.unitPrice) || 0);
+    const disc = Math.min(100, Math.max(0, Number(item.discountPercent) || 0));
+    const tax = Math.max(0, Number(item.taxPercent) || 0);
+    const base = qty * price;
+    const discountAmount = base * (disc / 100);
+    const line = base - discountAmount;
+    item.subtotal = roundMoney(line);
+    subtotal += base;
+    discountTotal += discountAmount;
+    taxTotal += line * (tax / 100);
+  }
+  body.subtotal = roundMoney(subtotal);
+  body.discountTotal = roundMoney(discountTotal);
+  body.taxTotal = roundMoney(taxTotal);
+  body.total = roundMoney(roundMoney(subtotal - discountTotal) + roundMoney(taxTotal));
+  if (body.amountPaid !== undefined) body.amountDue = roundMoney(body.total - (Number(body.amountPaid) || 0));
+}
+app.use((req, _res, next) => {
+  if ((req.method === 'POST' && /^\/api\/(quotes|invoices)\/?$/.test(req.path)) ||
+      (req.method === 'PUT' && /^\/api\/(quotes|invoices)\/[^/]+\/?$/.test(req.path))) {
+    recomputeTotals(req.body);
+  }
+  next();
+});
+
 app.post('/api/quotes', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
@@ -1601,7 +1655,7 @@ app.post('/api/quotes', requireAuth, (req, res) => {
     let qId = id || `qt-${Date.now()}`;
     const existing = db.prepare('SELECT 1 FROM quotations WHERE id = ?').get(qId);
     if (existing) qId = `qt-${crypto.randomUUID()}`;
-    const number = getNextDocumentNumber('quotation');
+    const number = getNextDocumentNumber('quotation', (req as any).companyId);
     db.prepare(`
       INSERT INTO quotations (id, number, customerId, date, validUntil, status, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1643,7 +1697,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
   if (!canOverride) {
-    const existing = db.prepare('SELECT manualTotal, lineItems FROM quotations WHERE id = ?').get(req.params.id);
+    const existing = db.prepare('SELECT manualTotal, lineItems FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId);
     if (!verifyPriceOverrides(req.body, existing)) {
       return res.status(403).json({ error: 'Forbidden: price overrides are not permitted for your user role.' });
     }
@@ -1655,6 +1709,7 @@ app.put('/api/quotes/:id', requireAuth, (req, res) => {
   } = req.body;
   try {
     const before = db.prepare('SELECT * FROM quotations WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+    if (!before) return res.status(404).json({ error: 'Document not found' });
     db.prepare(`
       UPDATE quotations
       SET number = ?, customerId = ?, date = ?, validUntil = ?, status = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedInvoiceId = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
@@ -1743,7 +1798,7 @@ app.post('/api/invoices', requireAuth, (req, res) => {
     let invId = id || `inv-${Date.now()}`;
     const existing = db.prepare('SELECT 1 FROM invoices WHERE id = ?').get(invId);
     if (existing) invId = `inv-${crypto.randomUUID()}`;
-    const number = getNextDocumentNumber('invoice');
+    const number = getNextDocumentNumber('invoice', (req as any).companyId);
     db.prepare(`
       INSERT INTO invoices (id, number, customerId, date, dueDate, status, paymentTerms, lineItems, notes, terms, subject, subjectAr, currency, subtotal, discountTotal, taxTotal, total, linkedQuoteId, payments, amountPaid, amountDue, createdAt, updatedAt, salespersonId, watermarkText, watermarkType, hidePrices, manualTotal, createdBy, createdByName, updatedBy, updatedByName, companyId)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1825,7 +1880,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
   const user = (req as any).user;
   const canOverride = user.role === 'admin' || (user.permissions && user.permissions.canOverridePrice === true);
   if (!canOverride) {
-    const existing = db.prepare('SELECT manualTotal, lineItems FROM invoices WHERE id = ?').get(req.params.id);
+    const existing = db.prepare('SELECT manualTotal, lineItems FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId);
     if (!verifyPriceOverrides(req.body, existing)) {
       return res.status(403).json({ error: 'Forbidden: price overrides are not permitted for your user role.' });
     }
@@ -1837,6 +1892,7 @@ app.put('/api/invoices/:id', requireAuth, (req, res) => {
   } = req.body;
   try {
     const before = db.prepare('SELECT * FROM invoices WHERE id = ? AND companyId = ?').get(req.params.id, (req as any).companyId) as any;
+    if (!before) return res.status(404).json({ error: 'Document not found' });
     db.prepare(`
       UPDATE invoices
       SET number = ?, customerId = ?, date = ?, dueDate = ?, status = ?, paymentTerms = ?, lineItems = ?, notes = ?, terms = ?, subject = ?, subjectAr = ?, currency = ?, subtotal = ?, discountTotal = ?, taxTotal = ?, total = ?, linkedQuoteId = ?, payments = ?, amountPaid = ?, amountDue = ?, updatedAt = ?, salespersonId = ?, watermarkText = ?, watermarkType = ?, hidePrices = ?, manualTotal = ?, updatedBy = ?, updatedByName = ?
@@ -2063,6 +2119,8 @@ app.get('/api/settings/:key', requireAuth, (req, res) => {
   if (tenantSettings[req.params.key] !== undefined) {
     return res.json({ value: tenantSettings[req.params.key] });
   }
+  // Global (non-tenant) fallback: never expose credential-like keys to ordinary users.
+  if (/smtp|secret|password|token|api_?key|credential/i.test(req.params.key)) return res.json({ value: null });
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(req.params.key) as { value: string } | undefined;
   res.json({ value: row?.value || null });
 });
@@ -2092,13 +2150,18 @@ app.get('/api/logs', requireAuth, requirePermission('canManageSettings'), (req, 
     const limit = parseInt(req.query.limit as string) || 200;
     const offset = parseInt(req.query.offset as string) || 0;
     
+    // Logs are platform-wide: company admins only see entries from users of their own company.
+    const isSuper = (req as any).user?.isSuperAdmin === 1 || (req as any).user?.isSuperAdmin === true;
+    const scope = isSuper ? '' : 'WHERE user_id IN (SELECT userId FROM user_companies WHERE companyId = ?)';
+    const scopeArgs = isSuper ? [] : [(req as any).companyId];
+
     const rows = db.prepare(`
-      SELECT * FROM system_logs 
+      SELECT * FROM system_logs ${scope}
       ORDER BY timestamp DESC 
       LIMIT ? OFFSET ?
-    `).all(limit, offset) as any[];
+    `).all(...scopeArgs, limit, offset) as any[];
 
-    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM system_logs`).get() as { count: number };
+    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM system_logs ${scope}`).get(...scopeArgs) as { count: number };
     
     res.json({
       logs: rows,
@@ -2111,6 +2174,10 @@ app.get('/api/logs', requireAuth, requirePermission('canManageSettings'), (req, 
 
 app.post('/api/logs/clear', requireAuth, requirePermission('canManageSettings'), (req, res) => {
   try {
+    const u = (req as any).user;
+    if (!(u?.isSuperAdmin === 1 || u?.isSuperAdmin === true)) {
+      return res.status(403).json({ error: 'Only platform administrators can clear the global system log.' });
+    }
     db.prepare('DELETE FROM system_logs').run();
     logSystemEvent('info', 'System logs cleared', null, (req as any).user?.id, (req as any).user?.username);
     res.json({ success: true });
@@ -2226,7 +2293,7 @@ app.post('/api/expenses', requireAuth, (req, res) => {
 
   try {
     const id = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const number = getNextDocumentNumber('expense');
+    const number = getNextDocumentNumber('expense', (req as any).companyId);
     const amt = Number(amount) || 0;
     const rate = taxRate !== undefined ? Number(taxRate) : 15;
     const taxAmt = Math.round((amt * (rate / 100)) * 100) / 100;
@@ -2353,7 +2420,7 @@ app.post('/api/recurring-invoices', requireAuth, (req, res) => {
 
   try {
     const id = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const number = getNextDocumentNumber('recurring');
+    const number = getNextDocumentNumber('recurring', (req as any).companyId);
     const timestamp = new Date().toISOString();
 
     db.prepare(`
@@ -2448,7 +2515,7 @@ app.post('/api/recurring-invoices/:id/process', requireAuth, (req, res) => {
 
   try {
     const invoiceId = `inv-${Date.now()}`;
-    const invoiceNumber = getNextDocumentNumber('invoice');
+    const invoiceNumber = getNextDocumentNumber('invoice', (req as any).companyId);
     const today = new Date().toISOString().slice(0, 10);
     const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const timestamp = new Date().toISOString();
@@ -2788,9 +2855,17 @@ app.get('/api/currency/rates', (req, res) => {
 
 // ── Translation API ───────────────────────────────────────────────────────────
 // Proxies to Google Translate with chunking + retry for reliability.
-app.post('/api/translate', async (req, res) => {
-  const text = (req.body.text || req.body.q || '').trim();
+app.post('/api/translate', requireAuth, async (req, res) => {
+  const rawText = req.body.text || req.body.q || '';
+  if (typeof rawText !== 'string') return res.status(400).json({ error: 'text must be a string' });
+  const text = rawText.trim();
   if (!text) return res.json({ translation: '', translatedText: '' });
+  // SECURITY: cap input size (this endpoint can fall back to a paid API key).
+  if (text.length > 20000) return res.status(413).json({ error: 'Text too long (max 20000 characters).' });
+  // Default source is English: sl=auto misdetects names/IBANs as other languages and drops numbers.
+  const langCode = (v: any, fallback: string) => (typeof v === 'string' && /^[a-zA-Z-]{2,8}$/.test(v) ? v : fallback);
+  const sl = langCode(req.body.sl ?? req.body.source, 'en');
+  const tl = langCode(req.body.tl ?? req.body.target, 'ar');
 
   // Split on sentence boundaries so each chunk stays under 400 chars
   const splitIntoChunks = (str: string, maxLen = 400): string[] => {
@@ -2813,9 +2888,10 @@ app.post('/api/translate', async (req, res) => {
   const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
   const translateChunk = async (chunk: string, attempt = 0): Promise<string> => {
+    if (!chunk || !chunk.trim()) return '';
     // Strategy 1: Google Chrome Translate API (clients5 - fast & reliable)
     try {
-      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=ar&q=${encodeURIComponent(chunk)}`;
+      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&q=${encodeURIComponent(chunk)}`;
       const response = await fetch(url, {
         headers: { 'User-Agent': BROWSER_UA },
         signal: AbortSignal.timeout(8000),
@@ -2833,7 +2909,7 @@ app.post('/api/translate', async (req, res) => {
 
     // Strategy 2: Google Translate GTX Endpoint with browser UA
     try {
-      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ar&dt=t&q=${encodeURIComponent(chunk)}`;
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(chunk)}`;
       const response = await fetch(url, {
         headers: { 'User-Agent': BROWSER_UA },
         signal: AbortSignal.timeout(8000),
@@ -2892,10 +2968,30 @@ app.post('/api/translate', async (req, res) => {
     throw new Error('Translation failed across all translation backends.');
   };
 
+  // Guarantee account numbers / IBANs are never lost in translation, and use the concise IBAN label.
+  const preserveNumbers = (src: string, trans: string): string => {
+    const numRe = /\b(\d{4,}|[A-Z]{2}\d{10,})\b/g;
+    const cleaned = trans.replace(/رقم الحساب المصرفي الدولي\s*:/g, 'الآيبان:');
+    const srcLines = src.split('\n');
+    const transLines = cleaned.split('\n');
+    const addMissing = (from: string, to: string) => {
+      let out = to;
+      for (const num of from.match(numRe) || []) if (!out.includes(num)) out += ' ' + num;
+      return out;
+    };
+    if (srcLines.length === transLines.length) return transLines.map((t, i) => addMissing(srcLines[i], t)).join('\n');
+    return addMissing(src, cleaned);
+  };
+
   try {
-    const chunks = splitIntoChunks(text);
-    const translated = await Promise.all(chunks.map(c => translateChunk(c)));
-    const finalTranslation = translated.join(' ').trim();
+    // Translate line-by-line so multi-line fields (bank details, terms) keep their structure.
+    const lines = text.split('\n');
+    const translatedLines = await Promise.all(lines.map(async (line) => {
+      if (!line.trim()) return '';
+      const parts = await Promise.all(splitIntoChunks(line.trim()).map(c => translateChunk(c)));
+      return parts.join(' ').trim();
+    }));
+    const finalTranslation = preserveNumbers(text, translatedLines.join('\n')).trim();
     res.json({ translation: finalTranslation, translatedText: finalTranslation });
   } catch (error: any) {
     console.error('Translation error:', error);
@@ -2964,20 +3060,33 @@ app.post('/api/admin/backup', requireAuth, requirePermission('canDatabaseMainten
   }
 });
 
+// Validate a candidate DB file before it replaces the live one, then swap it in (drops stale WAL/SHM).
+function validateAndSwapDatabase(candidatePath: string): void {
+  const probe = new Database(candidatePath, { readonly: true, fileMustExist: true });
+  try {
+    const ok = probe.pragma('integrity_check', { simple: true });
+    const hasCore = probe.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quotations'").get();
+    if (ok !== 'ok' || !hasCore) throw new Error('File is not a valid Qvoke database');
+  } finally {
+    probe.close();
+  }
+  db.close();
+  for (const ext of ['-wal', '-shm']) { try { fs.unlinkSync('quotes.db' + ext); } catch {} }
+  fs.copyFileSync(candidatePath, 'quotes.db');
+}
+
 app.post('/api/admin/restore', requireAuth, requirePermission('canDatabaseMaintenance'), (req, res) => {
   const { filename } = req.body;
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
   try {
-    const backupPath = path.resolve('backups', filename);
+    const backupPath = path.resolve('backups', path.basename(String(filename))); // no path traversal
     if (!fs.existsSync(backupPath)) {
       return res.status(404).json({ error: 'Backup file not found' });
     }
 
-    // Safe SQLite overwrite and hot process restart
-    db.close();
-    fs.copyFileSync(backupPath, 'quotes.db');
+    validateAndSwapDatabase(backupPath);
     res.json({ success: true, message: 'Database restored! System restarting...' });
 
     setTimeout(() => {
@@ -3038,8 +3147,7 @@ app.post('/api/admin/restore/upload', requireAuth, requirePermission('canDatabas
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const uploadedPath = req.file.path;
-    db.close();
-    fs.copyFileSync(uploadedPath, 'quotes.db');
+    validateAndSwapDatabase(uploadedPath);
     res.json({ success: true, message: 'Database restored from upload! Restarting...' });
     setTimeout(() => process.exit(0), 800);
   } catch (error: any) {
@@ -3253,7 +3361,7 @@ app.post('/api/boq', requireAuth, (req, res) => {
   try {
     const boqId = id || `boq-${Date.now()}`;
     const docType = type === 'bom' ? 'bom' : 'boq';
-    const number = getNextDocumentNumber(docType);
+    const number = getNextDocumentNumber(docType, (req as any).companyId);
     db.prepare(`INSERT INTO boq (id, number, title, titleAr, customerId, projectRef, status, sections, notes, currency, subtotal, total, createdAt, updatedAt, createdBy, createdByName, updatedBy, updatedByName, type, companyId)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       boqId, number, title, titleAr || '', customerId || null, projectRef || '',
@@ -4221,6 +4329,20 @@ app.post('/api/rfq/parse', requireAuth, memoryUpload.single('file'), async (req,
   }
 });
 
+// SECURITY: model-written SQL must be a single read-only SELECT over business tables only
+// (never users/sessions/logs/settings), and every table reference must be pinned to the caller's companyId.
+const AI_SQL_TABLES = new Set(['customers', 'products', 'quotations', 'invoices', 'suppliers', 'expenses', 'recurring_invoices', 'inventory_transactions', 'boq']);
+function isSafeAiSql(rawSql: string, companyId: string): boolean {
+  const sql = rawSql.trim().replace(/;\s*$/, '');
+  if (!/^select\b/i.test(sql)) return false;
+  if (/;|--|\/\*|\b(or|union|pragma|attach|load_extension|insert|update|delete|drop|alter|create|replace|vacuum)\b/i.test(sql)) return false;
+  const refs = [...sql.matchAll(/\b(?:from|join)\s+["`\[]?([a-zA-Z_][a-zA-Z0-9_]*)/gi)].map((m) => m[1].toLowerCase());
+  if (refs.length === 0 || refs.some((t) => !AI_SQL_TABLES.has(t))) return false;
+  const escaped = companyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pins = sql.match(new RegExp(`companyId\\s*=\\s*'${escaped}'`, 'gi')) || [];
+  return pins.length >= refs.length;
+}
+
 // ── AI ASSISTANT ENDPOINT ──────────────────────────────────────────────────
 app.post('/api/ai/chat', requireAuth, requireFeature('aiAssistant'), requirePermission('canUseAI'), async (req, res) => {
   try {
@@ -4263,8 +4385,10 @@ Schema:\n\n${schemaStr}`
         if (sql.endsWith('```')) sql = sql.substring(0, sql.length - 3);
         sql = sql.trim();
 
-        if (sql.toUpperCase().startsWith('SELECT')) {
-          const results = db.prepare(sql).all();
+        if (isSafeAiSql(sql, String(companyId))) {
+          const stmt = db.prepare(sql);
+          if (!stmt.reader) throw new Error('Not a read-only query');
+          const results = (stmt.all() as any[]).slice(0, 200);
           const explainCompletion = await openai.chat.completions.create({
             model: isRouter ? 'openai/gpt-4o-mini' : isGemini ? 'gemini-2.0-flash' : 'gpt-4o-mini',
             messages: [
@@ -4339,7 +4463,7 @@ Data: ${JSON.stringify(results).substring(0, 1000)}`
     return res.json({ sql: localSql, query: localSql, results: [overview], data: [overview], explanation, answer: explanation });
   } catch (error: any) {
     console.error('AI Chat error:', error);
-    res.status(500).json({ error: 'AI processing failed: ' + (error.message || 'Unknown error') });
+    res.status(500).json({ error: 'AI processing failed' });
   }
 });
 
@@ -4361,6 +4485,81 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   console.error(err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
+
+// ── MIGRATION: per-company document numbering ────────────────────────────────
+// Numbers were globally UNIQUE and sequences were global, so companies shared one counter.
+// This rebuilds the document tables with UNIQUE(companyId, number) and gives every company its own
+// sequence rows. A consistent file backup is written first; all changes run in one transaction
+// (rolled back automatically on any error) and a settings flag prevents a second run.
+(function migratePerCompanyNumbering() {
+  const done = db.prepare("SELECT value FROM settings WHERE key = 'numberingPerCompany'").get() as any;
+  if (done?.value === 'true' && sequencesArePerCompany()) return;
+
+  const backupDir = path.resolve('backups');
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  const backupFile = path.join(backupDir, `pre_numbering_migration_${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+  db.prepare('VACUUM INTO ?').run(backupFile); // synchronous, consistent copy
+  console.log(`🗄️  Pre-migration backup written to ${backupFile}`);
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      const defaultCompany = (db.prepare('SELECT id FROM companies ORDER BY rowid LIMIT 1').get() as any)?.id;
+      for (const table of ['quotations', 'invoices', 'boq', 'expenses', 'recurring_invoices']) {
+        const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?").get(table) as any;
+        if (!row) continue;
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+        if (cols.some((c) => c.name === 'companyId') && defaultCompany) {
+          // Legacy rows without a tenant belong to the first company.
+          db.prepare(`UPDATE ${table} SET companyId = ? WHERE companyId IS NULL OR companyId = ''`).run(defaultCompany);
+        }
+        const ddl: string = row.sql;
+        if (!/number\s+TEXT\s+UNIQUE\s+NOT\s+NULL/i.test(ddl)) continue; // already rebuilt
+        const rebuilt = ddl
+          .replace(/number\s+TEXT\s+UNIQUE\s+NOT\s+NULL/i, 'number TEXT NOT NULL')
+          .replace(new RegExp(`CREATE TABLE\\s+"?${table}"?`, 'i'), `CREATE TABLE ${table}__new`);
+        const extras = db
+          .prepare("SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index','trigger') AND sql IS NOT NULL")
+          .all(table) as any[];
+        db.exec(rebuilt);
+        db.exec(`INSERT INTO ${table}__new SELECT * FROM ${table}`);
+        const before = (db.prepare(`SELECT COUNT(*) c FROM ${table}`).get() as any).c;
+        const after = (db.prepare(`SELECT COUNT(*) c FROM ${table}__new`).get() as any).c;
+        if (before !== after) throw new Error(`Row count mismatch while rebuilding ${table}: ${before} vs ${after}`);
+        db.exec(`DROP TABLE ${table}`);
+        db.exec(`ALTER TABLE ${table}__new RENAME TO ${table}`);
+        for (const e of extras) db.exec(e.sql);
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_company_number ON ${table}(companyId, number)`);
+      }
+
+      if (!sequencesArePerCompany()) {
+        db.exec(`CREATE TABLE sequences__new (
+          companyId TEXT NOT NULL,
+          docType TEXT NOT NULL,
+          prefix TEXT NOT NULL,
+          lastNumber INTEGER NOT NULL DEFAULT 0,
+          padding INTEGER NOT NULL DEFAULT 4,
+          resetPeriod TEXT NOT NULL DEFAULT 'yearly',
+          lastYear INTEGER,
+          PRIMARY KEY (companyId, docType)
+        )`);
+        const companies = db.prepare('SELECT id FROM companies').all() as any[];
+        const old = db.prepare('SELECT * FROM sequences').all() as any[];
+        const ins = db.prepare(
+          'INSERT INTO sequences__new (companyId, docType, prefix, lastNumber, padding, resetPeriod, lastYear) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        // Every company starts from the old global counter, so no existing number can ever be reissued.
+        for (const c of companies) for (const r of old) ins.run(c.id, r.docType, r.prefix, r.lastNumber, r.padding, r.resetPeriod, r.lastYear);
+        db.exec('DROP TABLE sequences');
+        db.exec('ALTER TABLE sequences__new RENAME TO sequences');
+      }
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('numberingPerCompany', 'true')").run();
+    })();
+    console.log('🔢 Per-company document numbering migration complete');
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+})();
 
 // ── SERVER STARTUP & VITE INTEGRATION ─────────────────────────────────────────
 async function startServer() {
