@@ -11,7 +11,7 @@ import {
   DEFAULT_PDF_TEMPLATE, PDF_PRESETS, PDF_FONT_OPTIONS, applyPreset, resolveTemplate, sectionsFor, sampleDocument, safeColor,
   type PdfDocType
 } from '../pdf/template';
-import type { PDFTemplateConfig, PDFSectionItem, CustomFieldDefinition } from '../types';
+import type { PDFTemplateConfig, PDFSectionItem, PDFSectionStyle, CustomFieldDefinition } from '../types';
 
 type Tab = 'design' | 'layout' | 'table' | 'fields';
 
@@ -114,6 +114,18 @@ const ColorField: React.FC<{ label: string; value: string; onChange: (v: string)
   </div>
 );
 
+/** Optional colour: shows "inherit" until set, with a clear button. */
+const OptColor: React.FC<{ label: string; value?: string; fallback: string; onChange: (v: string | undefined) => void }> = ({ label, value, fallback, onChange }) => (
+  <div>
+    <label className={labelCls}>{label}</label>
+    <div className="flex items-center gap-1.5">
+      <input type="color" value={safeColor(value, fallback)} onChange={(e) => onChange(e.target.value)} className="w-8 h-8 rounded-md cursor-pointer border border-[var(--color-border)] p-0.5 bg-transparent" aria-label={`${label} picker`} />
+      <span className={`flex-1 text-[10px] font-mono ${value ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]'}`}>{value || 'inherit'}</span>
+      {value && <button type="button" onClick={() => onChange(undefined)} className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-error)] cursor-pointer" aria-label={`Clear ${label}`}>clear</button>}
+    </div>
+  </div>
+);
+
 export const PDFTemplateStudio: React.FC = () => {
   const { company, updateCompany } = useERPStore();
 
@@ -153,6 +165,13 @@ export const PDFTemplateStudio: React.FC = () => {
     [next[idx], next[j]] = [next[j], next[idx]];
     setSections(next);
   };
+  const patchStyle = (secId: string, patch: Partial<PDFSectionStyle>) =>
+    setSections(sections.map((s) => {
+      if (s.id !== secId) return s;
+      const next: Record<string, any> = { ...(s.style || {}), ...patch };
+      Object.keys(next).forEach((k) => (next[k] === undefined || next[k] === '') && delete next[k]);
+      return { ...s, style: Object.keys(next).length ? (next as PDFSectionStyle) : undefined };
+    }));
   const toggleField = (secId: string, fieldId: string) =>
     setSections(sections.map((s) => (s.id === secId ? { ...s, fields: s.fields.map((f) => (f.id === fieldId ? { ...f, enabled: !f.enabled } : f)) } : s)));
 
@@ -396,7 +415,7 @@ export const PDFTemplateStudio: React.FC = () => {
                         </div>
                         <button type="button" onClick={() => setExpanded(expanded === s.id ? null : s.id)} className="flex-1 text-left cursor-pointer">
                           <span className="text-xs font-bold block">{s.name}</span>
-                          <span className="text-[10px] text-[var(--color-text-muted)]">{s.nameAr}{s.isCustom ? ' · custom' : ''}</span>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">{s.nameAr}{s.isCustom ? ' · custom' : ''}{s.style ? ' · styled' : ''}</span>
                         </button>
                         {s.id !== 'header' && s.id !== 'line_items' && s.id !== 'footer' && (
                           <button type="button" onClick={() => patchSection(s.id, { width: s.width === 'half' ? 'full' : 'half' })} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[10px] font-bold cursor-pointer" title="Half-width sections sit side by side with the next half-width section">
@@ -431,6 +450,38 @@ export const PDFTemplateStudio: React.FC = () => {
                               ))}
                             </div>
                           )}
+                          {/* Per-section appearance */}
+                          <div className="mt-2 p-2.5 rounded-lg bg-[var(--color-surface-offset)]/60 border border-[var(--color-divider)] space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-wider">Appearance of this section</span>
+                              {s.style && <button type="button" onClick={() => patchSection(s.id, { style: undefined })} className="text-[10px] font-bold text-[var(--color-error)] cursor-pointer">Reset style</button>}
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              <OptColor label="Block background" value={s.style?.bg} fallback="#ffffff" onChange={(v) => patchStyle(s.id, { bg: v })} />
+                              <OptColor label="Text colour" value={s.style?.text} fallback="#18181b" onChange={(v) => patchStyle(s.id, { text: v })} />
+                              <OptColor label="Heading colour" value={s.style?.titleColor} fallback={template.colors.primary} onChange={(v) => patchStyle(s.id, { titleColor: v })} />
+                              <OptColor label={s.id === 'line_items' ? 'Table header bg' : s.id === 'summary' ? 'Total highlight' : 'Heading bar bg'} value={s.style?.headBg} fallback={template.colors.zebraRowBg} onChange={(v) => patchStyle(s.id, { headBg: v })} />
+                              <OptColor label="Border colour" value={s.style?.border} fallback={template.colors.accentBorder} onChange={(v) => patchStyle(s.id, { border: v })} />
+                              {s.id === 'line_items' && <OptColor label="Alternate rows" value={s.style?.altBg} fallback={template.colors.zebraRowBg} onChange={(v) => patchStyle(s.id, { altBg: v })} />}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className={labelCls}>Font</label>
+                                <select className={inputCls} value={s.style?.fontFamily || ''} onChange={(e) => patchStyle(s.id, { fontFamily: (e.target.value || undefined) as any })}>
+                                  <option value="">Inherit</option>
+                                  {PDF_FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className={labelCls}>Font size {s.style?.fontSize ? `(${s.style.fontSize}pt)` : '(inherit)'}</label>
+                                <input type="range" min={6} max={14} step={0.5} value={s.style?.fontSize ?? template.typography.bodyFontSize} onChange={(e) => patchStyle(s.id, { fontSize: Number(e.target.value) })} className="w-full" />
+                              </div>
+                              <div>
+                                <label className={labelCls}>Corners {s.style?.radius !== undefined ? `(${s.style.radius}pt)` : '(default)'}</label>
+                                <input type="range" min={0} max={12} step={1} value={s.style?.radius ?? 2} onChange={(e) => patchStyle(s.id, { radius: Number(e.target.value) })} className="w-full" />
+                              </div>
+                            </div>
+                          </div>
                           {(template.customFields || []).filter((cf) => cf.sectionId === s.id).length > 0 && (
                             <p className="text-[10px] text-[var(--color-text-muted)]">Custom fields printed here: {(template.customFields || []).filter((cf) => cf.sectionId === s.id).map((cf) => cf.name).join(', ')}</p>
                           )}

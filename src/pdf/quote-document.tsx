@@ -258,6 +258,9 @@ function ensureFonts() {
 
 type Fld = { key: string; label: string; labelAr?: string; enabled: boolean };
 
+type SecCtx = { fam?: string; text?: string };
+const StyleCtx = React.createContext<SecCtx>({});
+
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 
 export function QuotePdfDocument({
@@ -277,18 +280,21 @@ export function QuotePdfDocument({
   const isInvoice = type === "invoice";
   const tpl = resolveTemplate(settings.pdfTemplate, type);
   const C = tpl.colors;
-  const body = tpl.typography.bodyFontSize;
+  const baseBody = tpl.typography.bodyFontSize;
+  let body = baseBody; // switched per section (see useSection)
   const family = tpl.typography.fontFamily;
   const M = MARGIN_PT[tpl.page.margins];
-  const base = { fontFamily: family, fontSize: body, color: "#18181b" } as const;
+  const base = { fontFamily: family, fontSize: baseBody, color: "#18181b" } as const;
   const pdfHide = !!quote.hidePrices;
 
-  // Arabic needs the bundled Tajawal font whatever Latin font is chosen; Latin text follows the template font.
+  // Arabic needs the bundled Tajawal font whatever Latin font is chosen; Latin text follows the
+  // section's font. Colour/font overrides travel via context because react-pdf renders lazily.
   const T = ({ style, children, ...rest }: any) => {
+    const ctx = React.useContext(StyleCtx);
     const flat = React.Children.toArray(children).map((c) => (typeof c === "string" || typeof c === "number" ? String(c) : "")).join("");
-    const arabic = hasArabic(flat);
+    const f = hasArabic(flat) ? "Tajawal" : ctx.fam || family;
     return (
-      <Text style={[style, arabic && family !== "Tajawal" ? { fontFamily: "Tajawal" } : {}]} {...rest}>
+      <Text style={[ctx.text ? { color: ctx.text } : {}, style, { fontFamily: f }]} {...rest}>
         {children}
       </Text>
     );
@@ -313,7 +319,7 @@ export function QuotePdfDocument({
 
   const customerAddress = [quote.customer.address, [quote.customer.city, quote.customer.country].filter(Boolean).join(", ")].filter(Boolean).join(", ");
 
-  const S = StyleSheet.create({
+  const mkS = (body: number) => StyleSheet.create({
     page: { ...base, paddingHorizontal: M, paddingTop: M + 10, paddingBottom: M + (enabled("footer") ? 40 : 6) },
     boxTitle: { fontWeight: "bold", fontSize: body + 1.5, color: C.primary, marginBottom: 4 },
     box: { borderWidth: 0.8, borderColor: C.accentBorder, borderRadius: 2 },
@@ -326,14 +332,24 @@ export function QuotePdfDocument({
     td: { fontSize: body - 1, paddingVertical: 4.5, paddingHorizontal: 3 },
     totalRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: "#d4d4d8" },
   });
+  let S = mkS(baseBody);
+  let sx: import("../types").PDFSectionStyle = {};
+  const useSection = (id: string) => {
+    sx = sec(id)?.style || {};
+    body = sx.fontSize || baseBody;
+    S = mkS(body);
+  };
+  const border = () => sx.border || C.accentBorder;
 
   // ── Section renderers (return null when there is nothing to print) ──────────
   const renderHeader = () => {
     const s = sec("header")!;
     const on = (k: string) => fieldOn("header", k);
     const style = tpl.headerStyle;
-    const bandBg = style === "solid" ? C.headerBgStart : null;
-    const textColor = style === "minimal" ? C.primary : style === "boxed" ? "#111827" : readableOn(C.headerBgStart, C.headerText);
+    const solidBg = sx.bg || (style === "solid" ? C.headerBgStart : null);
+    const gradient = style === "gradient" && !sx.bg;
+    const bandBg = solidBg;
+    const textColor = sx.text || (style === "minimal" ? C.primary : style === "boxed" ? "#111827" : readableOn(solidBg || C.headerBgStart, C.headerText));
     const contact = [
       on("address") ? settings.address : null,
       on("phone") ? (settings.phone ? `Tel: ${settings.phone}` : null) : null,
@@ -357,12 +373,12 @@ export function QuotePdfDocument({
           height: bandH,
           justifyContent: "center",
           paddingHorizontal: style === "minimal" ? 0 : 12,
-          ...(style === "boxed" ? { borderWidth: 1.2, borderColor: C.accentBorder, borderRadius: 3 } : {}),
-          ...(style === "minimal" ? { borderBottomWidth: 1.6, borderBottomColor: C.accentBorder } : {}),
-          ...(bandBg ? { backgroundColor: bandBg, borderRadius: 3 } : {}),
+          ...(style === "boxed" ? { borderWidth: 1.2, borderColor: border(), borderRadius: sx.radius ?? 3 } : {}),
+          ...(style === "minimal" ? { borderBottomWidth: 1.6, borderBottomColor: border() } : {}),
+          ...(bandBg ? { backgroundColor: bandBg, borderRadius: sx.radius ?? 3 } : {}),
         }}
       >
-        {style === "gradient" ? (
+        {gradient ? (
           <Svg width={bandW} height={bandH} style={{ position: "absolute", top: 0, left: 0 }}>
             <Defs>
               <LinearGradient id="hdrGrad" x1="0" y1="0" x2="1" y2="0">
@@ -370,7 +386,7 @@ export function QuotePdfDocument({
                 <Stop offset="100%" stopColor={C.headerBgEnd} />
               </LinearGradient>
             </Defs>
-            <Rect x="0" y="0" width={bandW} height={bandH} rx="3" fill="url(#hdrGrad)" />
+            <Rect x="0" y="0" width={bandW} height={bandH} rx={sx.radius ?? 3} fill="url(#hdrGrad)" />
           </Svg>
         ) : null}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -402,10 +418,10 @@ export function QuotePdfDocument({
     customRows("meta").forEach((r) => items.push([r.label, r.value]));
     if (!items.length) return null;
     return (
-      <View key="meta" wrap={false} style={[S.box, { flexDirection: "row", marginBottom: 10 }]}>
+      <View key="meta" wrap={false} style={[S.box, { flexDirection: "row", marginBottom: 10, borderColor: border(), borderRadius: sx.radius ?? 2, ...(sx.bg ? { backgroundColor: sx.bg } : {}) }]}>
         {items.map(([l, v], i) => (
-          <View key={i} style={{ flex: 1, paddingVertical: 5, paddingHorizontal: 8, borderLeftWidth: i ? 0.8 : 0, borderLeftColor: C.accentBorder }}>
-            <T style={{ fontSize: body - 1.5, color: "#6b7280" }}>{l}</T>
+          <View key={i} style={{ flex: 1, paddingVertical: 5, paddingHorizontal: 8, borderLeftWidth: i ? 0.8 : 0, borderLeftColor: border() }}>
+            <T style={{ fontSize: body - 1.5, color: sx.titleColor || "#6b7280" }}>{l}</T>
             <T style={{ fontWeight: "bold", fontSize: body + 0.5 }}>{v}</T>
           </View>
         ))}
@@ -423,10 +439,10 @@ export function QuotePdfDocument({
     if (!rows.length) return null;
     const t = titled(s as any);
     return (
-      <View key={id} wrap={false} style={[S.box, { marginBottom: 10 }, widthStyle]}>
-        <View style={S.boxHead}>
-          <T style={S.boxHeadText}>{t.en}</T>
-          <T style={S.boxHeadText}>{t.ar}</T>
+      <View key={id} wrap={false} style={[S.box, { marginBottom: 10, borderColor: border(), borderRadius: sx.radius ?? 2, ...(sx.bg ? { backgroundColor: sx.bg } : {}) }, widthStyle]}>
+        <View style={[S.boxHead, { borderBottomColor: border(), ...(sx.headBg ? { backgroundColor: sx.headBg } : {}) }]}>
+          <T style={[S.boxHeadText, sx.titleColor ? { color: sx.titleColor } : {}]}>{t.en}</T>
+          <T style={[S.boxHeadText, sx.titleColor ? { color: sx.titleColor } : {}]}>{t.ar}</T>
         </View>
         <View style={S.boxBody}>
           {rows.map((r, i) => (
@@ -475,11 +491,12 @@ export function QuotePdfDocument({
       tax: tc.showTax && showPrice,
       total: tc.showTotal && showPrice,
     };
-    const headBg = C.tableHeaderBg;
-    const headTx = readableOn(headBg, C.tableHeaderText);
+    const headBg = sx.headBg || C.tableHeaderBg;
+    const headTx = readableOn(headBg, sx.titleColor || C.tableHeaderText);
+    const lineClr = sx.border || "#a1a1aa";
     const W = { index: 22, code: 52, qty: 34, unit: 34, unitPrice: 58, discount: 38, tax: 36, total: 66 };
     const cell = (w: number | undefined, children: React.ReactNode, key: string, last = false) => (
-      <View key={key} style={[w ? { width: w } : { flex: 1 }, { justifyContent: "center", borderLeftWidth: 0.5, borderLeftColor: "#a1a1aa", ...(last ? { borderRightWidth: 0.5, borderRightColor: "#a1a1aa" } : {}) }]}>
+      <View key={key} style={[w ? { width: w } : { flex: 1 }, { justifyContent: "center", borderLeftWidth: 0.5, borderLeftColor: lineClr, ...(last ? { borderRightWidth: 0.5, borderRightColor: lineClr } : {}) }]}>
         {children}
       </View>
     );
@@ -507,7 +524,7 @@ export function QuotePdfDocument({
         {quote.lines.map((line, i) => {
           if (line.type === "section") {
             return (
-              <View key={i} wrap={false} style={{ backgroundColor: C.zebraRowBg, borderBottomWidth: 0.5, borderBottomColor: "#a1a1aa", borderLeftWidth: 0.5, borderLeftColor: "#a1a1aa", borderRightWidth: 0.5, borderRightColor: "#a1a1aa", flexDirection: "row", justifyContent: "space-between", paddingVertical: 4, paddingHorizontal: 7 }}>
+              <View key={i} wrap={false} style={{ backgroundColor: C.zebraRowBg, borderBottomWidth: 0.5, borderBottomColor: lineClr, borderLeftWidth: 0.5, borderLeftColor: lineClr, borderRightWidth: 0.5, borderRightColor: lineClr, flexDirection: "row", justifyContent: "space-between", paddingVertical: 4, paddingHorizontal: 7 }}>
                 <T style={{ fontWeight: "bold", color: C.primary, fontSize: body + 0.3 }}>{line.description}</T>
                 {line.descriptionAr ? <T style={{ fontWeight: "bold", color: C.primary, fontSize: body + 0.3, textAlign: "right" }}>{line.descriptionAr}</T> : null}
               </View>
@@ -515,7 +532,7 @@ export function QuotePdfDocument({
           }
           serial += 1;
           const net = lineNetPrice(line);
-          const bg = serial % 2 === 0 ? C.zebraRowBg : "#ffffff";
+          const bg = serial % 2 === 0 ? (sx.altBg || C.zebraRowBg) : (sx.bg || "#ffffff");
           const val: Record<string, React.ReactNode> = {
             index: <T style={[S.td, { textAlign: "center" }]}>{serial}</T>,
             code: <T style={[S.td, { textAlign: "center" }]}>{line.itemCode || ""}</T>,
@@ -534,7 +551,7 @@ export function QuotePdfDocument({
             total: <T style={[S.td, { textAlign: "center", fontWeight: "bold" }]}>{fmt(tpl.tableColumns.showTax && line.taxPercent ? net * (1 + line.taxPercent / 100) : net)}</T>,
           };
           return (
-            <View key={i} wrap={false} style={{ flexDirection: "row", alignItems: "stretch", backgroundColor: bg, borderBottomWidth: 0.5, borderBottomColor: "#a1a1aa" }}>
+            <View key={i} wrap={false} style={{ flexDirection: "row", alignItems: "stretch", backgroundColor: bg, borderBottomWidth: 0.5, borderBottomColor: lineClr }}>
               {order.map((k) => cell(k === "desc" ? undefined : (W as any)[k], val[k], k, k === lastKey))}
             </View>
           );
@@ -547,8 +564,8 @@ export function QuotePdfDocument({
     const noteItems = fieldOn("summary", "notes") ? getBilingualNotes(quote.notes, quote.notesAr) : [];
     const noVat = quote.printMode === "novat";
     const total = quote.manualTotal !== undefined && quote.manualTotal !== null ? quote.manualTotal : quote.total;
-    const totalsBg = C.tableHeaderBg;
-    const totalsTx = readableOn(totalsBg, C.tableHeaderText);
+    const totalsBg = sx.headBg || C.tableHeaderBg;
+    const totalsTx = readableOn(totalsBg, sx.titleColor || C.tableHeaderText);
     const showTotals = !pdfHide;
     if (!noteItems.length && !showTotals) return null;
     return (
@@ -572,7 +589,7 @@ export function QuotePdfDocument({
             ) : null}
           </View>
           {showTotals ? (
-            <View style={[S.box, { width: 172 }]}>
+            <View style={[S.box, { width: 172, borderColor: border(), borderRadius: sx.radius ?? 2 }]}>
               {fieldOn("summary", "subtotal") ? (
                 <View style={S.totalRow}><T style={{ fontWeight: "bold" }}>SUBTOTAL</T><T>{quote.currency} {fmt(quote.subtotal)}</T></View>
               ) : null}
@@ -603,7 +620,7 @@ export function QuotePdfDocument({
     if (!isInvoice || !quote.zatcaQrCodeImage) return null;
     const t = titled(sec("zatca_qr") as any);
     return (
-      <View key="zatca_qr" wrap={false} style={[S.box, { marginBottom: 10, alignItems: "center", paddingVertical: 8 }]}>
+      <View key="zatca_qr" wrap={false} style={[S.box, { marginBottom: 10, alignItems: "center", paddingVertical: 8, borderColor: border(), borderRadius: sx.radius ?? 2, ...(sx.bg ? { backgroundColor: sx.bg } : {}) }]}>
         <Image src={quote.zatcaQrCodeImage} style={{ width: 84, height: 84 }} />
         <T style={{ fontSize: body - 1.5, color: "#6b7280", marginTop: 3 }}>{t.en} / {t.ar}</T>
       </View>
@@ -629,7 +646,7 @@ export function QuotePdfDocument({
     const fs = (settings.termsFontSize ? settings.termsFontSize * 0.53 : body - 0.5);
     return (
       <View key="payment_terms" wrap={false} style={{ marginBottom: 10 }}>
-        <T style={S.boxTitle}>{t.en} / {t.ar}</T>
+        <T style={[S.boxTitle, sx.titleColor ? { color: sx.titleColor } : {}]}>{t.en} / {t.ar}</T>
         {rows.map((r) => (
           <View key={r.label} style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 3.5 }}>
             <T style={{ fontWeight: "bold", width: 84, fontSize: fs }}>{r.label}:</T>
@@ -649,7 +666,7 @@ export function QuotePdfDocument({
       <View key="signatures" wrap={false} style={{ flexDirection: "row", gap: 24, marginTop: 14, marginBottom: 10 }}>
         {boxes.map((b) => (
           <View key={b.key} style={{ flex: 1 }}>
-            <View style={{ height: 42, borderBottomWidth: 0.8, borderBottomColor: "#111827" }} />
+            <View style={{ height: 42, borderBottomWidth: 0.8, borderBottomColor: border() }} />
             <T style={{ fontSize: body - 1, fontWeight: "bold", marginTop: 3 }}>{b.label}</T>
             {b.labelAr ? <T style={{ fontSize: body - 1, color: "#4b5563", textAlign: "right" }}>{b.labelAr}</T> : null}
           </View>
@@ -666,7 +683,7 @@ export function QuotePdfDocument({
     if (!content && !rows.length) return null;
     return (
       <View key={id} wrap={false} style={{ marginBottom: 10 }}>
-        <T style={S.boxTitle}>{t.en}{t.ar ? ` / ${t.ar}` : ""}</T>
+        <T style={[S.boxTitle, sx.titleColor ? { color: sx.titleColor } : {}]}>{t.en}{t.ar ? ` / ${t.ar}` : ""}</T>
         {content.split("\n").map((ln, i) => (
           <T key={i} style={{ marginBottom: 1.5, textAlign: hasArabic(ln) ? "right" : "left" }}>{ln}</T>
         ))}
@@ -693,10 +710,19 @@ export function QuotePdfDocument({
   // Build the body: ordered, enabled sections; consecutive "half" sections share a row.
   const built = tpl.sections
     .filter((s) => s.enabled && s.id !== "footer")
-    .map((s) => ({
-      s,
-      node: s.isCustom ? renderCustomSection(s.id) : renderers[s.id] ? renderers[s.id]() : renderCustomFieldSection(s.id),
-    }))
+    .map((s) => {
+      useSection(s.id);
+      const raw = s.isCustom ? renderCustomSection(s.id) : renderers[s.id] ? renderers[s.id]() : renderCustomFieldSection(s.id);
+      if (!raw) return { s, node: null as React.ReactNode };
+      // Sections that don't draw their own box get the block background/padding from this wrapper.
+      const selfBoxed = ["header", "meta", "customer", "vehicle", "bank_details", "zatca_qr", "line_items"].includes(s.id) && !s.isCustom;
+      const wrapped = sx.bg && !selfBoxed ? (
+        <View wrap={false} style={{ backgroundColor: sx.bg, padding: 6, borderRadius: sx.radius ?? 3, marginBottom: 10, borderWidth: sx.border ? 0.8 : 0, borderColor: sx.border }}>
+          {raw}
+        </View>
+      ) : raw;
+      return { s, node: <StyleCtx.Provider key={`ctx-${s.id}`} value={{ fam: sx.fontFamily, text: sx.text }}>{wrapped}</StyleCtx.Provider> };
+    })
     .filter((x) => x.node);
 
   const blocks: React.ReactNode[] = [];
@@ -727,6 +753,8 @@ export function QuotePdfDocument({
   const pageSize = tpl.page.size === "LETTER" ? "LETTER" : "A4";
   const pageH = pageSize === "LETTER" ? 792 : 842;
   const footerOn = enabled("footer");
+  const fsx = sec("footer")?.style || {};
+  const fBody = fsx.fontSize || baseBody;
 
   return (
     <Document title={`${isInvoice ? "Invoice" : "Quotation"} ${quote.number}`} author={settings.companyName}>
@@ -765,14 +793,14 @@ export function QuotePdfDocument({
           </View>
         ) : null}
         {footerOn ? (
-          <View fixed style={{ position: "absolute", bottom: Math.max(10, M - 14), left: M, right: M, flexDirection: "row", justifyContent: "space-between", borderTopWidth: 0.5, borderTopColor: "#d4d4d8", paddingTop: 4 }}>
-            <T style={{ fontSize: body - 2, color: "#4b5563" }}>
+          <View fixed style={{ position: "absolute", bottom: Math.max(10, M - 14), left: M, right: M, flexDirection: "row", justifyContent: "space-between", borderTopWidth: 0.5, borderTopColor: fsx.border || "#d4d4d8", paddingTop: 4 }}>
+            <Text style={{ fontSize: fBody - 2, color: fsx.text || "#4b5563", fontFamily: fsx.fontFamily || family }}>
               {fieldOn("footer", "footerContact")
                 ? [settings.footerText || settings.companyName, settings.phone ? `Tel: ${settings.phone}` : null, settings.email].filter(Boolean).join(" | ")
                 : ""}
-            </T>
+            </Text>
             {fieldOn("footer", "pageNumbers") ? (
-              <Text style={{ fontSize: body - 2, color: "#4b5563" }} render={({ pageNumber, totalPages }: { pageNumber: number; totalPages: number }) => `Page ${pageNumber} of ${totalPages}`} />
+              <Text style={{ fontSize: fBody - 2, color: fsx.text || "#4b5563", fontFamily: fsx.fontFamily || family }} render={({ pageNumber, totalPages }: { pageNumber: number; totalPages: number }) => `Page ${pageNumber} of ${totalPages}`} />
             ) : null}
           </View>
         ) : null}

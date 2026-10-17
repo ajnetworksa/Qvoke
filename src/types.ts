@@ -69,6 +69,19 @@ export type PDFSectionId =
   | 'footer'
   | string;
 
+/** Per-section visual overrides; every field is optional and falls back to the template defaults. */
+export interface PDFSectionStyle {
+  bg?: string;          // block background colour
+  text?: string;        // body text colour
+  titleColor?: string;  // heading / box-title colour
+  headBg?: string;      // box header (or table header / totals highlight) background
+  border?: string;      // border colour
+  altBg?: string;       // alternate row colour (line items)
+  fontSize?: number;    // body font size in pt
+  fontFamily?: 'Tajawal' | 'Helvetica' | 'Times-Roman' | 'Courier';
+  radius?: number;      // corner radius in pt
+}
+
 export interface PDFSectionItem {
   id: PDFSectionId;
   name: string;
@@ -80,6 +93,7 @@ export interface PDFSectionItem {
   customTitle?: string;
   customTitleAr?: string;
   customContent?: string;
+  style?: PDFSectionStyle;
   fields: PDFSectionField[];
 }
 

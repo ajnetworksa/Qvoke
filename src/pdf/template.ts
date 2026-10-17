@@ -5,6 +5,7 @@
  * the in-app PDF preview and the server-side PDF renderer.
  */
 import type {
+  PDFSectionStyle,
   PDFTemplateConfig,
   PDFSectionItem,
   PDFSectionField
@@ -210,6 +211,23 @@ const clamp = (n: unknown, lo: number, hi: number, fallback: number) => {
   return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : fallback;
 };
 
+const STYLE_COLOR_KEYS = ['bg', 'text', 'titleColor', 'headBg', 'border', 'altBg'] as const;
+const STYLE_FONTS = new Set(['Tajawal', 'Helvetica', 'Times-Roman', 'Courier']);
+
+/** Drops invalid per-section style values so a bad import can never break rendering. */
+export function cleanSectionStyle(raw: any): PDFSectionStyle | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: PDFSectionStyle = {};
+  for (const k of STYLE_COLOR_KEYS) {
+    const v = raw[k];
+    if (typeof v === 'string' && HEX.test(v.trim())) out[k] = v.trim();
+  }
+  if (raw.fontSize !== undefined && raw.fontSize !== '' && Number.isFinite(Number(raw.fontSize))) out.fontSize = clamp(raw.fontSize, 6, 16, 9);
+  if (raw.radius !== undefined && raw.radius !== '' && Number.isFinite(Number(raw.radius))) out.radius = clamp(raw.radius, 0, 14, 2);
+  if (typeof raw.fontFamily === 'string' && STYLE_FONTS.has(raw.fontFamily)) out.fontFamily = raw.fontFamily as PDFSectionStyle['fontFamily'];
+  return Object.keys(out).length ? out : undefined;
+}
+
 const BUILTIN_FONTS = new Set(['Helvetica', 'Times-Roman', 'Courier']);
 
 /** Sections for one document type: per-type override (quoteSections / invoiceSections) or the shared list. */
@@ -242,7 +260,7 @@ export function resolveTemplate(raw: Partial<PDFTemplateConfig> | undefined | nu
   const colors = { ...d.colors, ...(raw?.colors || {}) };
   const font = (raw?.typography?.fontFamily as string) || d.typography.fontFamily;
   const sections = mergeSections(sectionsFor(raw, docType))
-    .map((s) => ({ ...s, fields: [...(s.fields || [])].sort((a, b) => (a.order || 0) - (b.order || 0)) }))
+    .map((s) => ({ ...s, style: cleanSectionStyle(s.style), fields: [...(s.fields || [])].sort((a, b) => (a.order || 0) - (b.order || 0)) }))
     .sort((a, b) => (a.order || 0) - (b.order || 0));
 
   return {
